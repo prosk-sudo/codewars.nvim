@@ -2,6 +2,8 @@
 
 Solve [Codewars](https://www.codewars.com) katas from within Neovim.
 
+![codewars.nvim](mainmenu.png)
+
 ## Requirements
 
 - Neovim >= 0.9.0
@@ -17,16 +19,16 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
 
 ```lua
 {
-    "prosk-sudo/codewars.nvim",
-    lazy = false,
-    dependencies = {
-        "nvim-lua/plenary.nvim",
-        "MunifTanjim/nui.nvim",
-        "nvim-telescope/telescope.nvim",    -- kata picker / language picker
-        -- optional
-        "tadmccorkle/markdown.nvim",        -- markdown rendering in description
-    },
-    opts = {},
+  "prosk-sudo/codewars.nvim",
+  lazy = false,
+  dependencies = {
+    "nvim-lua/plenary.nvim",
+    "MunifTanjim/nui.nvim",
+    "nvim-telescope/telescope.nvim",    -- kata picker / language picker
+    -- optional
+    "tadmccorkle/markdown.nvim",        -- markdown rendering in description
+  },
+  opts = {},
 }
 ```
 
