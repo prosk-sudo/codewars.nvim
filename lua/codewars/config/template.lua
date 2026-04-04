@@ -99,7 +99,7 @@ local M = {
     },
 
     ---@type cw.picker
-    picker = { provider = nil },
+    picker = {},
 
     hooks = {
         ---@type fun()[]

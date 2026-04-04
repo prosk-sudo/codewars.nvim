@@ -60,10 +60,11 @@ function Stats:render(data)
     table.insert(lines, "")
 
     local honor = tostring(data.honor or 0)
-    local position = "#" .. tostring(data.leaderboardPosition or "N/A")
+    local lb = data.leaderboardPosition
+    local position = (lb ~= nil and lb ~= vim.NIL) and ("#" .. tostring(lb)) or "N/A"
     local completed = tostring((data.codeChallenges or {}).totalCompleted or 0)
     local authored = tostring((data.codeChallenges or {}).totalAuthored or 0)
-    local clan = data.clan or ""
+    local clan = (data.clan ~= nil and data.clan ~= vim.NIL) and tostring(data.clan) or ""
 
     table.insert(lines, "  Stats")
     table.insert(highlights, { #lines - 1, 0, -1, "Title" })

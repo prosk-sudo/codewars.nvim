@@ -23,6 +23,7 @@ local config = {
 ---@param cfg cw.UserConfig
 function config.apply(cfg)
     config.user = vim.tbl_deep_extend("force", config.default, cfg or {})
+    config.user.username = "" -- always auto-detect from cookies
 end
 
 function config.setup()

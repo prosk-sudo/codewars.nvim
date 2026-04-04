@@ -100,16 +100,6 @@ description = {
 | `description.position` | `"left"` | Where to place the description: `"left"`, `"right"`, `"top"`, or `"bottom"`. |
 | `description.width` | `"40%"` | Width (or height if top/bottom) of the description split. |
 
-## Picker
-
-```lua
-picker = { provider = nil },
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `picker.provider` | `nil` | Picker backend. `nil` auto-detects telescope. Currently only `"telescope"` is supported. |
-
 ## Keybindings
 
 ```lua
