@@ -18,7 +18,6 @@ That's it. Everything below is optional.
 |---|---|---|---|
 | `arg` | `string` | `"codewars.nvim"` | Standalone mode argument. Launch with `nvim codewars.nvim` to open the dashboard. |
 | `lang` | `string` | `"python"` | Default language for training. Auto-detected from Codewars if empty. Use `:CW lang default <lang>` to persist across restarts. |
-| `username` | `string` | `""` | Your Codewars username. Auto-detected from cookies if empty. |
 | `logging` | `boolean` | `true` | Show notification messages. |
 | `debug` | `boolean` | `false` | Enable debug logging (verbose). |
 

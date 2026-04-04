@@ -87,7 +87,7 @@ function M.check()
 
     local lang_source = config.lang_persisted and "persisted" or "config/auto-detected"
     ok(("Default language: %s (%s)"):format(config.lang, lang_source))
-    ok(("Username: %s"):format(config.user.username ~= "" and config.user.username or "(auto-detect)"))
+    ok(("Username: %s"):format(config.user.username ~= "" and config.user.username or "(not yet detected)"))
     ok(("Storage: %s"):format(config.storage.home and config.storage.home:absolute() or "not set"))
     ok(("Cache: %s"):format(config.storage.cache and config.storage.cache:absolute() or "not set"))
 

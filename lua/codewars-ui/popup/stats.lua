@@ -32,8 +32,8 @@ function Stats:render(data)
     local lines = {}
     local highlights = {} -- { row, col_start, col_end, hl_group }
 
-    local username = data.username or ""
-    local name = data.name or ""
+    local username = (data.username ~= nil and data.username ~= vim.NIL) and tostring(data.username) or ""
+    local name = (data.name ~= nil and data.name ~= vim.NIL) and tostring(data.name) or ""
 
     local header = "  " .. username
     if name ~= "" then

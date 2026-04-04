@@ -59,7 +59,7 @@ local M = {
     lang = "python",
 
     ---@type string
-    --- Leave empty to auto-detect from Codewars when signed in
+    --- Auto-detected from Codewars cookies. Do not set manually.
     username = "",
 
     ---@type cw.storage
