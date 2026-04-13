@@ -340,7 +340,7 @@ function picker._show_kata_list(items, title, completed_set)
         local count_map = {}
         for _, lc in ipairs(lang_counts) do count_map[lc.lang] = lc.count end
 
-        for i, entry in ipairs(available) do
+        for _, entry in ipairs(available) do
             local count = count_map[entry.lang] or 0
             if count > 0 then
                 local prefix = current_lang_filter == entry.lang and "● " or "  "
