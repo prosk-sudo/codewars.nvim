@@ -110,12 +110,14 @@ function completed.enrich(items, cb)
 
     for _, item in ipairs(items) do
         local slug = item.slug or item.id
+        if not slug then goto continue end
         if details[slug] then
             item.rank = details[slug].rank
             item.tags = details[slug].tags
         else
             table.insert(missing, slug)
         end
+        ::continue::
     end
 
     if #missing == 0 then

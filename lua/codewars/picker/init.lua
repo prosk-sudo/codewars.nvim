@@ -115,7 +115,7 @@ local problemlist_utils = require("codewars.cache.problemlist_utils")
 
 -- Persistent filter state (remembered across picker reopens)
 local _saved_sort_idx = 1
-local _saved_lang_filter = nil
+local _saved_lang_filter = config.lang
 local _saved_rank_filter = nil
 
 -- Sort modes
@@ -328,22 +328,30 @@ function picker._show_kata_list(items, title, completed_set)
         local lang_icons = require("codewars.icons").get()
         local current_lang_idx = 0
 
+        local rank_filtered = filter_by_rank(items, current_rank_filter)
         local all_prefix = current_lang_filter == nil and "● " or "  "
         table.insert(lang_entries, {
             _option = true, lang = nil, icon = "", icon_hl = "codewars_normal",
-            label = ("%sAll languages (%d)"):format(all_prefix, #items),
+            label = ("%sAll languages (%d)"):format(all_prefix, #rank_filtered),
         })
         if current_lang_filter == nil then current_lang_idx = 0 end
 
+        local lang_counts = problemlist_utils.collect_languages(rank_filtered)
+        local count_map = {}
+        for _, lc in ipairs(lang_counts) do count_map[lc.lang] = lc.count end
+
         for i, entry in ipairs(available) do
-            local prefix = current_lang_filter == entry.lang and "● " or "  "
-            if current_lang_filter == entry.lang then current_lang_idx = i end
-            local icon = lang_icons["lang_" .. entry.lang] or "#"
-            table.insert(lang_entries, {
-                _option = true, lang = entry.lang, icon = icon,
-                icon_hl = "codewars_lang_" .. entry.lang,
-                label = ("%s%s (%d)"):format(prefix, entry.lang, entry.count),
-            })
+            local count = count_map[entry.lang] or 0
+            if count > 0 then
+                local prefix = current_lang_filter == entry.lang and "● " or "  "
+                if current_lang_filter == entry.lang then current_lang_idx = #lang_entries end
+                local icon = lang_icons["lang_" .. entry.lang] or "#"
+                table.insert(lang_entries, {
+                    _option = true, lang = entry.lang, icon = icon,
+                    icon_hl = "codewars_lang_" .. entry.lang,
+                    label = ("%s%s (%d)"):format(prefix, entry.lang, count),
+                })
+            end
         end
 
         local lang_displayer = t.entry_display.create({

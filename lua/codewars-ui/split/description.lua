@@ -82,7 +82,7 @@ function Description:populate()
     local stats_str = ""
     local stats_hl = nil
     if kata.total_completed and kata.total_attempts and kata.total_attempts > 0 then
-        local pct = kata.total_completed * 100 / kata.total_attempts
+        local pct = math.min(kata.total_completed * 100 / kata.total_attempts, 100)
         stats_str = (" (%d/%d, %.1f%%)"):format(kata.total_completed, kata.total_attempts, pct)
         if pct >= 75 then stats_hl = "codewars_rank_white"
         elseif pct >= 50 then stats_hl = "codewars_rank_yellow"

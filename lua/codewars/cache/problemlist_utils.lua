@@ -7,9 +7,7 @@ local M = {}
 function M.filter_by_language(items, lang)
     if not lang then return items end
     return vim.tbl_filter(function(item)
-        -- Items without language data (old cache format) are included
-        -- to avoid silently hiding katas after a cache format upgrade
-        if not item.languages then return true end
+        if not item.languages then return false end
         return vim.tbl_contains(item.languages, lang)
     end, items)
 end
@@ -21,8 +19,12 @@ function M.collect_languages(items)
     local counts = {}
     for _, item in ipairs(items) do
         if item.languages then
+            local seen = {}
             for _, lang in ipairs(item.languages) do
-                counts[lang] = (counts[lang] or 0) + 1
+                if not seen[lang] then
+                    seen[lang] = true
+                    counts[lang] = (counts[lang] or 0) + 1
+                end
             end
         end
     end
