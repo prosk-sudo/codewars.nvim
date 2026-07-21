@@ -110,7 +110,7 @@ function utils.handle_res(out)
         }
     elseif out.status >= 300 then
         local ok, msg = pcall(function()
-            local dec = vim.json.decode(out.body)
+            local dec = vim.json.decode(out.body, { luanil = { object = true } })
             if dec.reason then
                 return dec.reason
             end
@@ -127,7 +127,12 @@ function utils.handle_res(out)
             msg = "http error " .. out.status .. (ok and ("\n\n" .. msg) or ""),
         }
     else
-        local ok, decoded = pcall(vim.json.decode, out.body)
+        -- luanil object: JSON null fields become plain nil (not vim.NIL) — kills
+        -- the "compare userdata with number" bug class at the decode boundary
+        -- (beta kata carry null rank/stats; see theme.rank_str guards).
+        -- Deliberately NOT array=true: a null array element would become a
+        -- sequence hole and silently truncate #/ipairs.
+        local ok, decoded = pcall(vim.json.decode, out.body, { luanil = { object = true } })
         if ok then
             res = decoded
         else

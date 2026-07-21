@@ -46,7 +46,10 @@ function user.get_current(cb)
             json_str = json_str:gsub('\\"', '"')
             json_str = json_str:gsub('\\\\', '\\')
 
-            local ok, profile = pcall(vim.json.decode, json_str)
+            -- luanil: null fields (e.g. current_language) must decode to nil,
+            -- not vim.NIL — a vim.NIL here would poison config.lang on first-run
+            -- auto-detect (same bug class handled in api.utils.handle_res).
+            local ok, profile = pcall(vim.json.decode, json_str, { luanil = { object = true } })
             if ok and profile then
                 cb(profile)
             else

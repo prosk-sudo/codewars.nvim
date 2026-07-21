@@ -9,7 +9,8 @@ local solutions = {}
 ---@param kata_id string
 ---@param language string
 ---@param cb function callback(solutions_list?)
-function solutions.fetch(kata_id, language, cb)
+---@param opts? { unranked: boolean } unranked (beta) kata have no public solutions until approved
+function solutions.fetch(kata_id, language, cb, opts)
     local url = ("%s/kata/%s/solutions/%s"):format(urls.base, kata_id, language)
     local hdrs = headers_mod.get()
 
@@ -57,7 +58,16 @@ function solutions.fetch(kata_id, language, cb)
 
             local result = solutions.parse_html(body, language)
             if #result == 0 then
-                log.warn("Could not parse solutions from page. Codewars may have changed their HTML format.")
+                if opts and opts.unranked then
+                    -- Canonical signal from the caller's kata data: beta kata
+                    -- ship no server-rendered solutions until approved.
+                    log.info("No community solutions for this kata yet (beta kata show solutions after approval).")
+                elseif body:find('v%-text="solution"') then
+                    -- Page rendered its empty Vue template — no solutions, not drift.
+                    log.info("No community solutions for this kata yet.")
+                else
+                    log.warn("Could not parse solutions from page. Codewars may have changed their HTML format.")
+                end
             end
             cb(result)
         end),

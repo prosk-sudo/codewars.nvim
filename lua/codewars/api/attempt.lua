@@ -102,7 +102,7 @@ function attempt.run(token, code, language, fixture, test_framework, solution_id
                 return cb(nil, { msg = "Empty response from runner" })
             end
 
-            local ok, decoded = pcall(vim.json.decode, out)
+            local ok, decoded = pcall(vim.json.decode, out, { luanil = { object = true } })
             if ok and decoded then
                 cb(decoded)
             else

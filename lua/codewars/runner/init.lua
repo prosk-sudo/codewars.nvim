@@ -146,7 +146,7 @@ function Runner:handle(mode)
                     else
                         log.info("Solutions will be available once the kata is fully completed on codewars.com. Use :CW solutions to check later.")
                     end
-                end)
+                end, { unranked = kata.rank == nil })
             end, 1500)
         end })
     else

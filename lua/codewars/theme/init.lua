@@ -101,9 +101,12 @@ function theme.setup()
     end
 end
 
----@param rank integer kyu rank (negative = kyu, positive = dan)
+---@param rank integer|any kyu rank (negative = kyu, positive = dan); tolerates vim.NIL/nil (beta kata are unranked)
 ---@return string highlight group
 function theme.rank_hl(rank)
+    if type(rank) ~= "number" then
+        return "codewars_rank_purple"
+    end
     if rank >= -8 and rank <= -7 then
         return "codewars_rank_white"
     elseif rank >= -6 and rank <= -5 then
@@ -115,9 +118,12 @@ function theme.rank_hl(rank)
     end
 end
 
----@param rank integer
----@return string display string like "5 kyu" or "1 dan"
+---@param rank integer|any tolerates vim.NIL/nil (beta kata are unranked)
+---@return string display string like "5 kyu", "1 dan", or "beta"
 function theme.rank_str(rank)
+    if type(rank) ~= "number" then
+        return "beta"
+    end
     if rank < 0 then
         return math.abs(rank) .. " kyu"
     else

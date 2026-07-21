@@ -52,6 +52,48 @@ describe("Runner", function()
         end)
     end)
 
+    describe("submit success path", function()
+        local function submit_kata(rank)
+            return {
+                last_attempt_success = true,
+                rank = rank,
+                kata_id = "kid",
+                slug = "s",
+                lang = "python",
+                project_id = "proj",
+                solution_id = "sol",
+            }
+        end
+
+        it("passes unranked flag from kata.rank to solutions.fetch", function()
+            package.loaded["codewars.api.utils"] = {
+                post = function(_, opts) opts.callback({}, nil) end,
+            }
+            package.loaded["codewars.api.urls"] = { finalize = "/x/%s/%s", base = "" }
+            package.loaded["codewars.cache.completed"] = { mark = function() end }
+            package.loaded["codewars.picker"] = { invalidate_completed_cache = function() end }
+            package.loaded["codewars-ui.renderer.menu"] = { refresh_stats = function() end }
+            local captured
+            package.loaded["codewars.api.solutions"] = {
+                fetch = function(_, _, _, opts) captured = opts end,
+            }
+            local real_defer = vim.defer_fn
+            vim.defer_fn = function(fn) fn() end
+
+            Runner.running = false
+            Runner:init(submit_kata(nil)):handle("submit")
+            assert.is_true(captured.unranked)
+
+            captured = nil
+            Runner.running = false
+            Runner:init(submit_kata(-7)):handle("submit")
+            assert.is_false(captured.unranked)
+
+            vim.defer_fn = real_defer
+            Runner.running = false
+        end)
+    end)
+
     describe("format_output", function()
         it("handles complex nested structure", function()
             local output = {
