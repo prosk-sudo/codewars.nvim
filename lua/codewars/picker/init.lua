@@ -5,26 +5,9 @@ local theme = require("codewars.theme")
 ---@class cw.Picker
 local picker = {}
 
-local _telescope = nil
+-- Single memoized telescope table lives in picker.dropdown; reuse it here.
 local function require_telescope()
-    if _telescope then return _telescope end
-
-    local ok, pickers = pcall(require, "telescope.pickers")
-    if not ok then
-        log.error("telescope.nvim is required for the picker")
-        return nil
-    end
-
-    _telescope = {
-        pickers = pickers,
-        finders = require("telescope.finders"),
-        conf = require("telescope.config").values,
-        actions = require("telescope.actions"),
-        action_state = require("telescope.actions.state"),
-        entry_display = require("telescope.pickers.entry_display"),
-        themes = require("telescope.themes"),
-    }
-    return _telescope
+    return require("codewars.picker.dropdown").telescope()
 end
 
 -- Cached completed set (rebuilt per picker session)
@@ -112,6 +95,7 @@ local function status_icon(slug, completed_set)
 end
 
 local problemlist_utils = require("codewars.cache.problemlist_utils")
+local dropdown = require("codewars.picker.dropdown")
 
 -- Persistent filter state (remembered across picker reopens)
 local _saved_sort_idx = 1
@@ -293,33 +277,21 @@ function picker._show_kata_list(items, title, completed_set)
         local sort_entries = {}
         for i, mode in ipairs(sort_modes) do
             local prefix = i == current_sort_idx and "● " or "  "
-            table.insert(sort_entries, { _option = true, idx = i, label = prefix .. mode.label })
+            table.insert(sort_entries, { label = prefix .. mode.label, value = i })
         end
 
-        local opts = t.themes.get_dropdown({
-            layout_config = { width = 50, height = #sort_modes + 4 },
-        })
-
-        t.pickers.new(opts, {
+        dropdown.open({
             prompt_title = "Sort by",
-            default_selection_index = current_sort_idx,
-            finder = t.finders.new_table({
-                results = sort_entries,
-                entry_maker = function(item)
-                    return { value = item, display = item.label, ordinal = item.label }
-                end,
-            }),
-            sorter = t.conf.generic_sorter(opts),
-            attach_mappings = function(buf)
-                t.actions.select_default:replace(function()
-                    local sel = t.action_state.get_selected_entry()
-                    if sel then current_sort_idx = sel.value.idx; save_state() end
-                    t.actions.close(buf)
-                    vim.schedule(function() make_picker():find() end)
-                end)
-                return true
+            entries = sort_entries,
+            default_idx = current_sort_idx,
+            width = 50,
+            height = #sort_modes + 4,
+            on_select = function(idx)
+                current_sort_idx = idx
+                save_state()
+                vim.schedule(function() make_picker():find() end)
             end,
-        }):find()
+        })
     end
 
     local function open_lang_dropdown()
@@ -331,7 +303,8 @@ function picker._show_kata_list(items, title, completed_set)
         local rank_filtered = filter_by_rank(items, current_rank_filter)
         local all_prefix = current_lang_filter == nil and "● " or "  "
         table.insert(lang_entries, {
-            _option = true, lang = nil, icon = "", icon_hl = "codewars_normal",
+            -- value wraps the nil-able lang so on_select can distinguish "All languages"
+            value = { lang = nil }, icon = "", icon_hl = "codewars_normal",
             label = ("%sAll languages (%d)"):format(all_prefix, #rank_filtered),
         })
         if current_lang_filter == nil then current_lang_idx = 0 end
@@ -347,48 +320,25 @@ function picker._show_kata_list(items, title, completed_set)
                 if current_lang_filter == entry.lang then current_lang_idx = #lang_entries end
                 local icon = lang_icons["lang_" .. entry.lang] or "#"
                 table.insert(lang_entries, {
-                    _option = true, lang = entry.lang, icon = icon,
+                    value = { lang = entry.lang }, icon = icon,
                     icon_hl = "codewars_lang_" .. entry.lang,
                     label = ("%s%s (%d)"):format(prefix, entry.lang, count),
                 })
             end
         end
 
-        local lang_displayer = t.entry_display.create({
-            separator = " ",
-            items = { { width = 2 }, { remaining = true } },
-        })
-
-        local opts = t.themes.get_dropdown({
-            layout_config = { width = 40, height = math.min(#lang_entries + 2, 25) },
-        })
-
-        t.pickers.new(opts, {
+        dropdown.open({
             prompt_title = "Filter by language",
-            default_selection_index = current_lang_idx + 1,
-            finder = t.finders.new_table({
-                results = lang_entries,
-                entry_maker = function(item)
-                    return {
-                        value = item,
-                        display = function()
-                            return lang_displayer({ { item.icon, item.icon_hl }, { item.label } })
-                        end,
-                        ordinal = item.label,
-                    }
-                end,
-            }),
-            sorter = t.conf.generic_sorter(opts),
-            attach_mappings = function(buf)
-                t.actions.select_default:replace(function()
-                    local sel = t.action_state.get_selected_entry()
-                    if sel then current_lang_filter = sel.value.lang; save_state() end
-                    t.actions.close(buf)
-                    vim.schedule(function() make_picker():find() end)
-                end)
-                return true
+            entries = lang_entries,
+            default_idx = current_lang_idx + 1,
+            width = 40,
+            height = math.min(#lang_entries + 2, 25),
+            on_select = function(v)
+                current_lang_filter = v.lang
+                save_state()
+                vim.schedule(function() make_picker():find() end)
             end,
-        }):find()
+        })
     end
 
     local function open_rank_dropdown()
@@ -400,35 +350,24 @@ function picker._show_kata_list(items, title, completed_set)
             local prefix = current_rank_filter == opt.rank and "● " or "  "
             local count = #filter_by_rank(lang_filtered, opt.rank)
             table.insert(rank_entries, {
-                _option = true, rank = opt.rank,
+                -- value wraps the nil-able rank so on_select can distinguish "All ranks"
+                value = { rank = opt.rank },
                 label = ("%s%s (%d)"):format(prefix, opt.label, count),
             })
         end
 
-        local opts = t.themes.get_dropdown({
-            layout_config = { width = 40, height = #rank_entries + 4 },
-        })
-
-        t.pickers.new(opts, {
+        dropdown.open({
             prompt_title = "Filter by difficulty",
-            default_selection_index = current_rank_idx + 1,
-            finder = t.finders.new_table({
-                results = rank_entries,
-                entry_maker = function(item)
-                    return { value = item, display = item.label, ordinal = item.label }
-                end,
-            }),
-            sorter = t.conf.generic_sorter(opts),
-            attach_mappings = function(buf)
-                t.actions.select_default:replace(function()
-                    local sel = t.action_state.get_selected_entry()
-                    if sel then current_rank_filter = sel.value.rank; save_state() end
-                    t.actions.close(buf)
-                    vim.schedule(function() make_picker():find() end)
-                end)
-                return true
+            entries = rank_entries,
+            default_idx = current_rank_idx + 1,
+            width = 40,
+            height = #rank_entries + 4,
+            on_select = function(v)
+                current_rank_filter = v.rank
+                save_state()
+                vim.schedule(function() make_picker():find() end)
             end,
-        }):find()
+        })
     end
 
     make_picker = function()
@@ -603,20 +542,86 @@ local function lang_icon(slug)
     return icons["lang_" .. slug] or "#"
 end
 
+--- Build dropdown entries for a list of language configs.
+---@param langs table[] entries from config.langs
+---@return cw.picker.DropdownEntry[]
+local function lang_dropdown_entries(langs)
+    local entries = {}
+    for _, lang in ipairs(langs) do
+        table.insert(entries, {
+            label = lang.lang,
+            value = lang,
+            icon = lang_icon(lang.slug),
+            icon_hl = "codewars_lang_" .. lang.slug,
+            ordinal = lang.slug .. " " .. lang.lang,
+        })
+    end
+    return entries
+end
+
+--- Focus categories for "Choose Today's Focus" (order matches codewars.com).
+--- `key` is the plugin-internal identifier; the server strategy token
+--- mapping lives in codewars.api.trainer.
+---@type { key: string, label: string, desc: string, icon: string }[]
+picker.focus_categories = {
+    { key = "fundamentals", label = "Fundamentals", desc = "foundational kata around your rank", icon = "focus_fundamentals" },
+    { key = "rank_up", label = "Rank Up", desc = "kata that push you toward your next rank", icon = "focus_rank_up" },
+    { key = "practice_and_repeat", label = "Practice and Repeat", desc = "kata you attempted but never finished", icon = "focus_practice_and_repeat" },
+    { key = "beta", label = "Beta", desc = "new kata that need feedback", icon = "focus_beta" },
+    { key = "random", label = "Random", desc = "any kata, any rank", icon = "random" },
+}
+
+--- Pick a focus category (Choose Today's Focus).
+---@param cb fun(category_key: string)
+function picker.focus_category(cb)
+    local icons = require("codewars.icons").get()
+    local entries = {}
+    for _, cat in ipairs(picker.focus_categories) do
+        table.insert(entries, {
+            label = ("%-20s %s"):format(cat.label, cat.desc),
+            value = cat.key,
+            icon = icons[cat.icon] or "#",
+            icon_hl = "codewars_icon",
+            ordinal = cat.key .. " " .. cat.label,
+        })
+    end
+
+    dropdown.open({
+        prompt_title = "Choose Today's Focus",
+        entries = entries,
+        width = 70,
+        height = #entries + 4,
+        on_select = cb,
+    })
+end
+
+--- Pick a language independent of any mounted kata.
+--- Lists every language the plugin supports (config.langs) — the trainer
+--- serves rank-appropriate kata per language server-side, so no
+--- client-side narrowing to trained languages.
+---@param cb fun(lang_slug: string)
+function picker.pick_language(cb)
+    local default_idx
+    for i, lang in ipairs(config.langs) do
+        if lang.slug == config.lang then
+            default_idx = i
+            break
+        end
+    end
+
+    dropdown.open({
+        prompt_title = ("Language (%s)"):format(config.lang),
+        entries = lang_dropdown_entries(config.langs),
+        default_idx = default_idx,
+        width = 40,
+        height = 15,
+        on_select = function(lang) cb(lang.slug) end,
+    })
+end
+
 --- Pick a language for the current kata and switch in-place.
 ---@param kata cw.ui.Kata
 function picker.language(kata)
-    local t = require_telescope()
-    if not t then return end
-
-    local displayer = t.entry_display.create({
-        separator = " ",
-        items = {
-            { width = 2 },  -- icon
-            { remaining = true }, -- language name
-        },
-    })
-
     local langs = config.langs
     if kata.supported_languages and #kata.supported_languages > 0 then
         local supported = {}
@@ -628,45 +633,17 @@ function picker.language(kata)
         end, langs)
     end
 
-    local function entry_maker(lang)
-        local icon = lang_icon(lang.slug)
-        local hl = "codewars_lang_" .. lang.slug
-        return {
-            value = lang,
-            display = function()
-                return displayer({
-                    { icon, hl },
-                    { lang.lang },
-                })
-            end,
-            ordinal = lang.slug .. " " .. lang.lang,
-        }
-    end
-
-    local opts = t.themes.get_dropdown({
-        layout_config = { width = 40, height = 15 },
-    })
-
-    t.pickers.new(opts, {
+    dropdown.open({
         prompt_title = ("Language (%s)"):format(kata.lang),
-        finder = t.finders.new_table({
-            results = langs,
-            entry_maker = entry_maker,
-        }),
-        sorter = t.conf.generic_sorter(opts),
-        attach_mappings = function(prompt_bufnr)
-            t.actions.select_default:replace(function()
-                local selection = t.action_state.get_selected_entry()
-                if not selection then return end
-                t.actions.close(prompt_bufnr)
-
-                local new_lang = selection.value.slug
-                config.save_lang(new_lang)
-                kata:change_lang(new_lang)
-            end)
-            return true
+        entries = lang_dropdown_entries(langs),
+        width = 40,
+        height = 15,
+        on_select = function(lang)
+            local new_lang = lang.slug
+            config.save_lang(new_lang)
+            kata:change_lang(new_lang)
         end,
-    }):find()
+    })
 end
 
 return picker

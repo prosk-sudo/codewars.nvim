@@ -4,6 +4,12 @@ local api = vim.api
 
 local lang_slugs = vim.tbl_map(function(l) return l.slug end, require("codewars.config.langs"))
 
+-- Keep in sync with picker.focus_categories keys and trainer.STRATEGIES.
+-- Deliberately a literal: deriving from the picker would eager-load the
+-- telescope chain, deriving from trainer would eager-load plenary.curl,
+-- and vim.tbl_keys would lose this stable display order.
+local focus_category_keys = { "fundamentals", "rank_up", "practice_and_repeat", "beta", "random" }
+
 local arguments = {
     list = {
         difficulty = { "8", "7", "6", "5", "4", "3", "2", "1" },
@@ -22,6 +28,7 @@ function cmd.help()
         { "TRAINING",       "" },
         { "train <slug> [lang]", "Open a kata by slug or URL" },
         { "random [lang]",  "Open a random kata" },
+        { "focus [lang] [category]", "Choose Today's Focus (re-run for the next kata)" },
         { "test",           "Quick test with example fixtures" },
         { "attempt",        "Full attempt with all tests" },
         { "submit",         "Finalize solution (after passing attempt)" },
@@ -193,11 +200,13 @@ function cmd.solutions()
             return log.error("Failed to fetch solutions: " .. err.msg)
         end
         if not sols or #sols == 0 then
-            return log.warn("No solutions available. Complete this kata on codewars.com first to view solutions.")
+            -- solutions.fetch already logged the accurate empty-case message
+            -- (beta pending approval / none yet / parse drift)
+            return
         end
         local Solutions = require("codewars-ui.popup.solutions")
         Solutions:new(sols, k.lang):show()
-    end)
+    end, { unranked = k.rank == nil })
 end
 
 function cmd.desc_toggle()
@@ -258,6 +267,14 @@ function cmd.completed()
     picker.completed()
 end
 
+--- Open a random kata from the cached problem list (client-side).
+---@param lang string
+local function open_random_kata(lang)
+    local item, err = require("codewars.cache.problemlist_utils").random_for_lang(lang)
+    if err then return log.warn(err) end
+    require("codewars-ui.kata"):new(item.slug or item.id, lang):mount()
+end
+
 function cmd.random(options)
     local utils = require("codewars.utils")
     utils.auth_guard()
@@ -272,12 +289,83 @@ function cmd.random(options)
         lang = lang_arg
     end
 
-    local pl_utils = require("codewars.cache.problemlist_utils")
-    local item, err = pl_utils.random_for_lang(lang)
-    if err then return log.warn(err) end
+    open_random_kata(lang)
+end
 
-    local Kata = require("codewars-ui.kata")
-    Kata:new(item.slug or item.id, lang):mount()
+--- Resolve and open a kata for a focus category + language.
+--- Random resolves client-side; the other categories hit the trainer
+--- endpoint. Every invocation fetches a fresh kata — same behavior as
+--- clicking a focus on codewars.com repeatedly.
+---@param lang string
+---@param category string
+-- One trainer fetch at a time: each POST advances the server-side focus
+-- queue, so parallel invocations would skip kata and race the mounts.
+local focus_pending = false
+
+local function focus_run(lang, category)
+    if category == "random" then
+        return open_random_kata(lang)
+    end
+
+    if focus_pending then
+        return log.warn("Already fetching a focus kata...")
+    end
+    focus_pending = true
+
+    log.info(("Fetching next '%s' kata for %s..."):format(category, lang))
+    require("codewars.api.trainer").next_kata(category, lang, function(kata, err)
+        focus_pending = false
+        if err then return log.err(err) end
+        require("codewars-ui.kata"):new(kata.slug, lang):mount()
+    end)
+end
+
+--- Validate positional args for :CW focus.
+---@return string? lang, string? category (nil, nil) when args are absent/invalid
+local function focus_args(options)
+    local pos = options._positional or {}
+    local lang_arg, cat_arg = pos[1], pos[2]
+    if not (lang_arg and cat_arg) then
+        log.error("Usage: :CW focus [language] [category] — both are required (no args opens the pickers)")
+        return nil, nil
+    end
+
+    local utils = require("codewars.utils")
+    if not utils.get_lang(lang_arg) then
+        log.error(("Unknown language: %s"):format(lang_arg))
+        return nil, nil
+    end
+
+    local trainer = require("codewars.api.trainer")
+    if cat_arg ~= "random" and not trainer.STRATEGIES[cat_arg] then
+        log.error(("Unknown focus category: %s (fundamentals|rank_up|practice_and_repeat|beta|random)"):format(cat_arg))
+        return nil, nil
+    end
+
+    return lang_arg, cat_arg
+end
+
+--- :CW focus [lang] [category] — Choose Today's Focus.
+--- Re-running the same focus serves the next kata, like the website.
+function cmd.focus(options)
+    local utils = require("codewars.utils")
+    utils.auth_guard()
+
+    local pos = options._positional or {}
+    if #pos > 0 then
+        local lang, category = focus_args(options)
+        if lang and category then
+            focus_run(lang, category)
+        end
+        return -- invalid args already reported by focus_args
+    end
+
+    local picker = require("codewars.picker")
+    picker.pick_language(function(picked_lang)
+        picker.focus_category(function(picked_cat)
+            focus_run(picked_lang, picked_cat)
+        end)
+    end)
 end
 
 function cmd.cache_update()
@@ -602,6 +690,10 @@ cmd.commands = {
     random = {
         cmd.random,
         _positional_complete = { lang_slugs },
+    },
+    focus = {
+        cmd.focus,
+        _positional_complete = { lang_slugs, focus_category_keys },
     },
     test = { cmd.test },
     attempt = { cmd.attempt },
