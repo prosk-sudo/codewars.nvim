@@ -20,6 +20,11 @@ trainer.STRATEGIES = {
     -- (A server-side "random" token also exists if that ever changes.)
 }
 
+-- Slug/id charset accepted from the trainer (also what the HTML branch
+-- extracts). The value flows into file paths and the :CW open shell
+-- fallback, so anything outside it is treated as drift.
+local SLUG_PAT = "[%w%-_]+"
+
 --- Normalize a train response to { slug, id? }.
 --- Accepts both response shapes from Open Q3: decoded JSON and raw HTML.
 ---@param res any decoded JSON table or raw body string
@@ -34,11 +39,8 @@ function trainer._parse(res)
             }
         end
         -- Legacy API shape: { success = true, slug = ..., id = ..., name = ... }
-        -- Only accept slug-shaped values (same charset the HTML branch
-        -- extracts): the slug flows into file paths and the :CW open shell
-        -- fallback, so anything else is treated as drift.
-        local slug = type(res.slug) == "string" and res.slug:match("^[%w%-_]+$") or nil
-        local id = type(res.id) == "string" and res.id:match("^[%w%-_]+$") or nil
+        local slug = type(res.slug) == "string" and res.slug:match("^" .. SLUG_PAT .. "$") or nil
+        local id = type(res.id) == "string" and res.id:match("^" .. SLUG_PAT .. "$") or nil
         if slug then
             return { slug = slug, id = id }
         end
@@ -48,13 +50,13 @@ function trainer._parse(res)
         end
     elseif type(res) == "string" then
         -- HTML shape: look for a /kata/{id-or-slug}/train link
-        local slug = res:match("/kata/([%w%-_]+)/train")
+        local slug = res:match("/kata/(" .. SLUG_PAT .. ")/train")
         if slug then
             return { slug = slug }
         end
         -- An expired session can 200 with the login page instead of a 401;
-        -- that's an auth failure, not endpoint drift (same detection as
-        -- solutions.fetch's login-redirect check).
+        -- that's an auth failure, not endpoint drift. (solutions.fetch has
+        -- its own login-redirect check tuned to solution-page markup.)
         if res:lower():find("sign in", 1, true) then
             return nil, { auth = true, msg = "Session expired or invalid. Run :CW cookie to re-authenticate." }
         end
@@ -66,6 +68,10 @@ function trainer._parse(res)
     }
 end
 
+-- One fetch at a time: each POST advances the server-side focus queue, so
+-- a second in-flight request would skip kata and race the mounts.
+local pending = false
+
 --- Fetch the next kata for a focus category + language.
 ---@param category string plugin-internal key (see picker.focus_categories)
 ---@param language string
@@ -76,6 +82,11 @@ function trainer.next_kata(category, language, cb)
         return cb(nil, { msg = ("Unknown focus category: %s"):format(tostring(category)) })
     end
 
+    if pending then
+        return cb(nil, { msg = "Already fetching a focus kata..." })
+    end
+    pending = true
+
     local endpoint = ("/api/v1/code-challenges/%s/train"):format(language)
     api_utils.post(endpoint, {
         body = { strategy = strategy },
@@ -83,6 +94,7 @@ function trainer.next_kata(category, language, cb)
         -- so the shared 5xx retry default would silently skip kata.
         retry = 0,
         callback = function(res, err)
+            pending = false
             if err then
                 if not err.auth and err.status == 404 then
                     err = {

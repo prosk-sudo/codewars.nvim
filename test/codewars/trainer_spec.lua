@@ -102,6 +102,29 @@ describe("api.trainer", function()
             assert.are.equal(0, post_calls[1].retry)
         end)
 
+        it("rejects a second fetch while one is in flight", function()
+            local api = package.loaded["codewars.api.utils"]
+            local orig_post = api.post
+            local held
+            api.post = function(endpoint, opts)
+                table.insert(post_calls, { endpoint = endpoint })
+                held = opts.callback
+            end
+
+            trainer.next_kata("fundamentals", "python", function() end)
+            local got_err
+            trainer.next_kata("rank_up", "python", function(_, err) got_err = err end)
+            assert.truthy(got_err.msg:match("Already fetching"))
+            assert.are.equal(1, #post_calls)
+
+            held({ slug = "multiply" })
+            trainer.next_kata("rank_up", "python", function() end)
+            assert.are.equal(2, #post_calls)
+
+            held({ slug = "multiply" })
+            api.post = orig_post
+        end)
+
         it("maps every category to a distinct token", function()
             local seen = {}
             for cat, token in pairs(trainer.STRATEGIES) do

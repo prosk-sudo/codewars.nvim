@@ -22,6 +22,13 @@ describe("cmd.focus", function()
         get_lang = function(slug)
             return (slug == "python" or slug == "go") and { slug = slug } or nil
         end,
+        resolve_lang_arg = function(slug)
+            local li = (slug == "python" or slug == "go") and { slug = slug } or nil
+            if not li then
+                package.loaded["codewars.logger"].error(("Unknown language: %s"):format(slug))
+            end
+            return li
+        end,
         parse_slug = function(s) return s end,
     }
 
@@ -102,27 +109,6 @@ describe("cmd.focus", function()
         assert.are.equal(0, #trainer_calls)
         assert.are.same({ "python" }, random_calls)
         assert.are.same({ slug = "random-kata", lang = "python" }, mounts[1])
-    end)
-
-    it("ignores a second focus while a fetch is in flight", function()
-        local trainer = package.loaded["codewars.api.trainer"]
-        local orig_next = trainer.next_kata
-        local pending_cb
-        trainer.next_kata = function(cat, lang, cb)
-            table.insert(trainer_calls, { cat = cat, lang = lang })
-            pending_cb = cb
-        end
-
-        cmd.focus({ _positional = { "python", "rank_up" } })
-        cmd.focus({ _positional = { "python", "rank_up" } })
-        assert.are.equal(1, #trainer_calls)
-
-        pending_cb({ slug = "served-kata-1" })
-        cmd.focus({ _positional = { "python", "rank_up" } })
-        assert.are.equal(2, #trainer_calls)
-
-        pending_cb({ slug = "served-kata-2" })
-        trainer.next_kata = orig_next
     end)
 
     it("rejects a single positional arg without a category (no silent no-op)", function()

@@ -5,11 +5,6 @@ local theme = require("codewars.theme")
 ---@class cw.Picker
 local picker = {}
 
--- Single memoized telescope table lives in picker.dropdown; reuse it here.
-local function require_telescope()
-    return require("codewars.picker.dropdown").telescope()
-end
-
 -- Cached completed set (rebuilt per picker session)
 local _completed_set = nil
 local _completed_set_time = 0
@@ -163,7 +158,8 @@ end
 ---@param title string
 ---@param completed_set table<string, boolean>
 function picker._show_kata_list(items, title, completed_set)
-    local t = require_telescope()
+    -- Memoized telescope table lives in picker.dropdown; shared error path.
+    local t = dropdown.telescope()
     if not t then return end
 
     local displayer = t.entry_display.create({

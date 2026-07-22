@@ -206,7 +206,7 @@ function cmd.solutions()
         end
         local Solutions = require("codewars-ui.popup.solutions")
         Solutions:new(sols, k.lang):show()
-    end, { unranked = k.rank == nil })
+    end, { unranked = require("codewars.theme").is_unranked(k.rank) })
 end
 
 function cmd.desc_toggle()
@@ -282,9 +282,8 @@ function cmd.random(options)
     local lang = config.lang
     local lang_arg = options._positional and options._positional[1]
     if lang_arg then
-        local lang_info = utils.get_lang(lang_arg)
-        if not lang_info then
-            return log.error(("Unknown language: %s"):format(lang_arg))
+        if not utils.resolve_lang_arg(lang_arg) then
+            return
         end
         lang = lang_arg
     end
@@ -298,23 +297,13 @@ end
 --- clicking a focus on codewars.com repeatedly.
 ---@param lang string
 ---@param category string
--- One trainer fetch at a time: each POST advances the server-side focus
--- queue, so parallel invocations would skip kata and race the mounts.
-local focus_pending = false
-
 local function focus_run(lang, category)
     if category == "random" then
         return open_random_kata(lang)
     end
 
-    if focus_pending then
-        return log.warn("Already fetching a focus kata...")
-    end
-    focus_pending = true
-
     log.info(("Fetching next '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").next_kata(category, lang, function(kata, err)
-        focus_pending = false
         if err then return log.err(err) end
         require("codewars-ui.kata"):new(kata.slug, lang):mount()
     end)
@@ -331,8 +320,7 @@ local function focus_args(options)
     end
 
     local utils = require("codewars.utils")
-    if not utils.get_lang(lang_arg) then
-        log.error(("Unknown language: %s"):format(lang_arg))
+    if not utils.resolve_lang_arg(lang_arg) then
         return nil, nil
     end
 
@@ -431,9 +419,9 @@ function cmd.set_default_lang(options)
     end
 
     local utils = require("codewars.utils")
-    local lang_info = utils.get_lang(lang_arg)
+    local lang_info = utils.resolve_lang_arg(lang_arg)
     if not lang_info then
-        return log.error(("Unknown language: %s"):format(lang_arg))
+        return
     end
 
     config.save_lang(lang_arg)

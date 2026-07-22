@@ -101,10 +101,18 @@ function theme.setup()
     end
 end
 
+--- Unranked (beta) kata carry no numeric rank — JSON null upstream, so
+--- the value may be nil or (off the luanil-disciplined paths) vim.NIL.
+---@param rank any
+---@return boolean
+function theme.is_unranked(rank)
+    return type(rank) ~= "number"
+end
+
 ---@param rank integer|any kyu rank (negative = kyu, positive = dan); tolerates vim.NIL/nil (beta kata are unranked)
 ---@return string highlight group
 function theme.rank_hl(rank)
-    if type(rank) ~= "number" then
+    if theme.is_unranked(rank) then
         return "codewars_rank_purple"
     end
     if rank >= -8 and rank <= -7 then
@@ -121,7 +129,7 @@ end
 ---@param rank integer|any tolerates vim.NIL/nil (beta kata are unranked)
 ---@return string display string like "5 kyu", "1 dan", or "beta"
 function theme.rank_str(rank)
-    if type(rank) ~= "number" then
+    if theme.is_unranked(rank) then
         return "beta"
     end
     if rank < 0 then
