@@ -16,3 +16,4 @@ All notable changes to codewars.nvim are documented here.
 - JSON `null` from the Codewars API no longer leaks as `vim.NIL` (crashes on beta-kata ranks/stats; potential first-run language auto-detect corruption).
 - `:CW solutions` no longer shows a wrong "complete this kata first" message when a kata simply has no solutions yet.
 - Trainer requests are never retried on server errors (a retry would silently skip kata in your focus queue), reject malformed or `success=false` responses, and report an expired session as an auth error instead of "endpoint changed".
+- A passing attempt that fails to register on codewars.com is now surfaced (and `:CW submit` blocked until you re-attempt) instead of a false "finalized successfully"; locked solutions pages report the real reason instead of "no community solutions yet".
