@@ -116,6 +116,17 @@ function Runner:handle(mode)
                 return
             end
 
+            -- A 200 with success=false means nothing was finalized (e.g. the
+            -- passing attempt never registered server-side).
+            if res and res.success == false then
+                local msg = "Codewars refused to finalize this solution — the passing attempt may not have registered. Run :CW attempt, then :CW submit again."
+                log.error(msg)
+                if kata.console and kata.console.result then
+                    kata.console.result:handle_error({ msg = msg })
+                end
+                return
+            end
+
             log.info("Kata finalized successfully!")
             kata.finalized = true
             local ok, mark_err = pcall(function()
@@ -140,11 +151,11 @@ function Runner:handle(mode)
 
                 local solutions_api = require("codewars.api.solutions")
                 solutions_api.fetch(kata.kata_id, kata.lang, function(solutions)
+                    -- Empty case: fetch already logged the accurate reason
+                    -- (locked / none yet / beta pending / drift).
                     if solutions and #solutions > 0 then
                         local Solutions = require("codewars-ui.popup.solutions")
                         Solutions:new(solutions, kata.lang):show()
-                    else
-                        log.info("Solutions will be available once the kata is fully completed on codewars.com. Use :CW solutions to check later.")
                     end
                 end, { unranked = require("codewars.theme").is_unranked(kata.rank) })
             end, 1500)
@@ -254,6 +265,9 @@ function Runner:handle(mode)
                         kata.console.result:handle(result)
                     end
 
+                    -- Codewars only counts attempts it is notified of; a lost
+                    -- notify makes the later finalize complete nothing, so a
+                    -- failure here must revoke submit eligibility.
                     if res.token and kata.project_id then
                         attempt_api.notify(kata.project_id, kata.solution_id, {
                             code = code_str,
@@ -261,7 +275,18 @@ function Runner:handle(mode)
                             languageVersion = kata.language_version or "",
                             testFramework = kata.test_framework or "cw-2",
                             token = res.token,
-                        })
+                        }, function(nres, nerr)
+                            local not_registered = nerr ~= nil or (nres and nres.success == false)
+                            if not_registered and kata.last_attempt_success then
+                                kata.last_attempt_success = false
+                                log.warn("Codewars did not register this attempt"
+                                    .. (nerr and nerr.msg and (" (" .. tostring(nerr.msg):gsub("\n.*", "") .. ")") or "")
+                                    .. " — run :CW attempt again before submitting.")
+                            end
+                        end)
+                    elseif kata.last_attempt_success then
+                        kata.last_attempt_success = false
+                        log.warn("Missing runner token or project id — this attempt can't be registered on codewars.com. Run :CW attempt again.")
                     end
                 end
             end

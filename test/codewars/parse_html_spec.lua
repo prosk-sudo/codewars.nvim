@@ -16,6 +16,32 @@ describe("solutions.parse_html", function()
         assert.truthy(result[1]:find("def solution"))
     end)
 
+    describe("empty_reason", function()
+        it("beta kata pending approval", function()
+            local level, msg = solutions.empty_reason("<html></html>", true)
+            assert.are.equal("info", level)
+            assert.truthy(msg:match("beta"))
+        end)
+
+        it("locked page means completion not registered", function()
+            local level, msg = solutions.empty_reason("<a>Unlock Solutions</a><span>Forfeit eligibility</span>", false)
+            assert.are.equal("warn", level)
+            assert.truthy(msg:match("locked"))
+        end)
+
+        it("empty Vue template means genuinely no solutions", function()
+            local level, msg = solutions.empty_reason('<pre v-else-if="solution"><code v-text="solution"></code></pre>', nil)
+            assert.are.equal("info", level)
+            assert.truthy(msg:match("No community solutions"))
+        end)
+
+        it("unrecognized page is a drift warning", function()
+            local level, msg = solutions.empty_reason("<html><body>???</body></html>", nil)
+            assert.are.equal("warn", level)
+            assert.truthy(msg:match("changed their HTML"))
+        end)
+    end)
+
     it("returns empty for a beta kata's client-rendered page (empty Vue template)", function()
         -- Verified live 2026-07-03: beta solutions pages ship exactly one
         -- empty <pre><code v-text="solution"> template and no server HTML.

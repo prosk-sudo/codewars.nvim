@@ -58,20 +58,34 @@ function solutions.fetch(kata_id, language, cb, opts)
 
             local result = solutions.parse_html(body, language)
             if #result == 0 then
-                if opts and opts.unranked then
-                    -- Canonical signal from the caller's kata data: beta kata
-                    -- ship no server-rendered solutions until approved.
-                    log.info("No community solutions for this kata yet (beta kata show solutions after approval).")
-                elseif body:find('v%-text="solution"') then
-                    -- Page rendered its empty Vue template — no solutions, not drift.
-                    log.info("No community solutions for this kata yet.")
-                else
-                    log.warn("Could not parse solutions from page. Codewars may have changed their HTML format.")
-                end
+                local level, msg = solutions.empty_reason(body, opts and opts.unranked)
+                log[level](msg)
             end
             cb(result)
         end),
     })
+end
+
+--- Explain why a solutions page yielded zero parsed solutions.
+---@param body string the fetched page HTML
+---@param unranked boolean? caller knows the kata is beta/unranked
+---@return "info"|"warn" level, string msg
+function solutions.empty_reason(body, unranked)
+    if unranked then
+        -- Canonical signal from the caller's kata data: beta kata ship no
+        -- server-rendered solutions until approved.
+        return "info", "No community solutions for this kata yet (beta kata show solutions after approval)."
+    end
+    -- Locked variant: the site offers "Unlock Solutions (Forfeit ...)" when
+    -- it has no registered completion of this kata for the account.
+    if body:find("[Ff]orfeit") then
+        return "warn", "Solutions are locked — codewars.com has not registered a completion of this kata on your account."
+    end
+    if body:find('v%-text="solution"') then
+        -- Page rendered its empty Vue template — no solutions, not drift.
+        return "info", "No community solutions for this kata yet."
+    end
+    return "warn", "Could not parse solutions from page. Codewars may have changed their HTML format."
 end
 
 --- Parse solutions HTML to extract code blocks.

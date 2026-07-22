@@ -94,6 +94,60 @@ describe("Runner", function()
         end)
     end)
 
+    describe("attempt registration honesty", function()
+        it("revokes submit eligibility when notify fails", function()
+            local logger = package.loaded["codewars.logger"]
+            local warns = {}
+            logger.warn = function(m) table.insert(warns, m) end
+
+            local att = package.loaded["codewars.api.attempt"]
+            att.submit = function(_, _, _, _, _, _, _, cb)
+                cb({ result = { completed = true, passed = 1, failed = 0 }, token = "tok" })
+            end
+            att.notify = function(_, _, _, cb) cb(nil, { msg = "boom", status = 500 }) end
+
+            local buf = vim.api.nvim_create_buf(false, true)
+            vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "print(1)" })
+            local kata = { bufnr = buf, lang = "python", slug = "s", project_id = "p", solution_id = "sol", example_fixture = "f" }
+            Runner.running = false
+            Runner:init(kata):handle("attempt")
+
+            assert.is_false(kata.last_attempt_success)
+            assert.truthy(warns[1]:match("did not register"))
+            logger.warn = function() end
+            att.submit = function() end
+            att.notify = function() end
+            Runner.running = false
+        end)
+
+        it("errors when finalize returns success=false", function()
+            local logger = package.loaded["codewars.logger"]
+            local errors, infos = {}, {}
+            logger.error = function(m) table.insert(errors, m) end
+            logger.info = function(m) table.insert(infos, m) end
+
+            package.loaded["codewars.api.utils"] = {
+                post = function(_, opts) opts.callback({ success = false }, nil) end,
+            }
+            package.loaded["codewars.api.urls"] = { finalize = "/x/%s/%s", base = "" }
+            local marks = 0
+            package.loaded["codewars.cache.completed"] = { mark = function() marks = marks + 1 end }
+
+            local kata = { last_attempt_success = true, slug = "s", lang = "python", kata_id = "k", project_id = "p", solution_id = "sol" }
+            Runner.running = false
+            Runner:init(kata):handle("submit")
+
+            assert.truthy(errors[1]:match("refused to finalize"))
+            assert.are.equal(0, marks)
+            for _, m in ipairs(infos) do
+                assert.is_nil(m:match("finalized successfully"))
+            end
+            logger.error = function() end
+            logger.info = function() end
+            Runner.running = false
+        end)
+    end)
+
     describe("format_output", function()
         it("handles complex nested structure", function()
             local output = {
