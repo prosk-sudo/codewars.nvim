@@ -562,7 +562,7 @@ end
 picker.focus_categories = {
     { key = "fundamentals", label = "Fundamentals", desc = "foundational kata around your rank", icon = "focus_fundamentals" },
     { key = "rank_up", label = "Rank Up", desc = "kata that push you toward your next rank", icon = "focus_rank_up" },
-    { key = "practice_and_repeat", label = "Practice and Repeat", desc = "kata you attempted but never finished", icon = "focus_practice_and_repeat" },
+    { key = "practice_and_repeat", label = "Practice and Repeat", desc = "repeat kata you have solved before", icon = "focus_practice_and_repeat" },
     { key = "beta", label = "Beta", desc = "new kata that need feedback", icon = "focus_beta" },
     { key = "random", label = "Random", desc = "any kata, any rank", icon = "random" },
 }
