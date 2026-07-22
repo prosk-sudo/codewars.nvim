@@ -12,6 +12,17 @@ function utils.get_lang(slug)
     end, config.langs)[1]
 end
 
+--- Validate a user-supplied language argument, reporting unknown ones.
+---@param lang_arg string
+---@return cw.language? lang_info nil when unknown (error already logged)
+function utils.resolve_lang_arg(lang_arg)
+    local lang_info = utils.get_lang(lang_arg)
+    if not lang_info then
+        log.error(("Unknown language: %s"):format(lang_arg))
+    end
+    return lang_info
+end
+
 ---@return cw.ui.Kata?
 function utils.curr_kata()
     local tabp = vim.api.nvim_get_current_tabpage()

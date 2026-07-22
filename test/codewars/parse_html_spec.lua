@@ -16,6 +16,14 @@ describe("solutions.parse_html", function()
         assert.truthy(result[1]:find("def solution"))
     end)
 
+    it("returns empty for a beta kata's client-rendered page (empty Vue template)", function()
+        -- Verified live 2026-07-03: beta solutions pages ship exactly one
+        -- empty <pre><code v-text="solution"> template and no server HTML.
+        local html = '<pre class="p-2" v-else-if="solution"><code v-text="solution" data-language="python"></code></pre>'
+        local result = solutions.parse_html(html, "python")
+        assert.are.equal(0, #result)
+    end)
+
     it("keeps single code block (no fixture skip)", function()
         local html = '<pre><code>def solution(a, b):\n    return a * b</code></pre>'
         local result = solutions.parse_html(html, "python")

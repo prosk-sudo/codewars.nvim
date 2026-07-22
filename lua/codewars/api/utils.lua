@@ -85,6 +85,20 @@ function utils.curl(method, params)
     end
 end
 
+--- Decode-option policy for every Codewars JSON boundary: null object
+--- fields become plain nil (never vim.NIL — the "compare userdata with
+--- number" bug class); array nulls stay vim.NIL so sequences keep their
+--- length. cache/utils.read_json mirrors these options inline (the cache
+--- layer stays free of api dependencies).
+utils.DECODE_OPTS = { luanil = { object = true } }
+
+--- pcall-wrapped vim.json.decode with the shared option policy.
+---@param str string
+---@return boolean ok, any decoded_or_err
+function utils.decode_json(str)
+    return pcall(vim.json.decode, str, utils.DECODE_OPTS)
+end
+
 ---@private
 ---@return table?, cw.err?
 function utils.handle_res(out)
@@ -110,7 +124,7 @@ function utils.handle_res(out)
         }
     elseif out.status >= 300 then
         local ok, msg = pcall(function()
-            local dec = vim.json.decode(out.body)
+            local dec = vim.json.decode(out.body, utils.DECODE_OPTS)
             if dec.reason then
                 return dec.reason
             end
@@ -127,7 +141,7 @@ function utils.handle_res(out)
             msg = "http error " .. out.status .. (ok and ("\n\n" .. msg) or ""),
         }
     else
-        local ok, decoded = pcall(vim.json.decode, out.body)
+        local ok, decoded = utils.decode_json(out.body)
         if ok then
             res = decoded
         else

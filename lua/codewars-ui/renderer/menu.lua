@@ -116,8 +116,8 @@ local function build_pages(menu)
             { icon = I.list,    label = "List",        sc = "l", fn = function()
                 require("codewars.command").list({})
             end },
-            { icon = I.random,  label = "Random",      sc = "r", fn = function()
-                require("codewars.command").random({})
+            { icon = I.focus,   label = "Choose Today's Focus", sc = "f", fn = function()
+                require("codewars.command").focus({})
             end },
             { icon = I.back,    label = "Back",        sc = "b", fn = function()
                 menu:set_page("main")

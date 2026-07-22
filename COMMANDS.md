@@ -8,6 +8,7 @@ Run `:CW help` inside Neovim for a quick reference.
 |---|---|
 | `:CW train <slug> [language]` | Open a kata by slug or URL |
 | `:CW random [language]` | Open a random kata |
+| `:CW focus [language] [category]` | Choose Today's Focus. `fundamentals`, `rank_up`, `practice_and_repeat`, `beta` use the server-side trainer; `random` picks locally from the cached problem list. No args opens the pickers; re-run for the next kata |
 | `:CW test` | Quick test with example fixtures |
 | `:CW attempt` | Full attempt with all tests (random + hidden) |
 | `:CW submit` | Finalize solution (after passing attempt) |

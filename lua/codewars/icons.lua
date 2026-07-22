@@ -21,6 +21,13 @@ local defaults = {
     list = "\u{f452}",
     random = "\u{f074}",
     back = "\u{f0311}",
+
+    -- Choose Today's Focus (FA-classic codepoints, stable across NF v2/v3)
+    focus = "\u{f140}", -- bullseye
+    focus_fundamentals = "\u{f02d}", -- book
+    focus_rank_up = "\u{f012}", -- signal bars
+    focus_practice_and_repeat = "\u{f021}", -- refresh
+    focus_beta = "\u{f0c3}", -- flask
     update = "\u{f16ec}",
     signin = "\u{f16d6}",
     signout = "\u{f16ea}",

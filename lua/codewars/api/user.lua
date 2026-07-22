@@ -46,7 +46,9 @@ function user.get_current(cb)
             json_str = json_str:gsub('\\"', '"')
             json_str = json_str:gsub('\\\\', '\\')
 
-            local ok, profile = pcall(vim.json.decode, json_str)
+            -- Shared null policy: a vim.NIL current_language would poison
+            -- config.lang on first-run auto-detect.
+            local ok, profile = utils.decode_json(json_str)
             if ok and profile then
                 cb(profile)
             else

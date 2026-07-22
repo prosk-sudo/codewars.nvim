@@ -68,6 +68,7 @@ See [COMMANDS.md](COMMANDS.md) for the full list, or run `:CW help` inside Neovi
 ```
 :CW cookie               " paste your browser cookies (one-time setup)
 :CW train multiply python
+:CW focus                " or let the trainer pick — Choose Today's Focus
 ```
 
 This opens the `8 kyu Multiply` kata with:

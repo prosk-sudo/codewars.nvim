@@ -19,7 +19,8 @@ end
 ---@return table?
 function M.read_json(path)
     local ok, data = pcall(function()
-        return vim.json.decode(path:read())
+        -- Mirrors api.utils.DECODE_OPTS (cache layer avoids that import)
+        return vim.json.decode(path:read(), { luanil = { object = true } })
     end)
     return ok and data or nil
 end
