@@ -699,11 +699,22 @@ end
 -- the picker's prompt buffer is wiped.
 ---@return integer? winid
 local function open_kumite_hint()
-    local lines = {
-        " <CR> view      <C-f> fork",
-        " <C-n> next page   <C-p> prev page",
-        " <C-g> go to page  <C-l> language",
+    -- Two aligned columns: pad the left key/label to a fixed width so the
+    -- right column starts at the same offset on every row.
+    local rows = {
+        { "<CR> view", "<C-f> fork" },
+        { "<C-n> next page", "<C-p> prev page" },
+        { "<C-g> go to page", "<C-l> language" },
     }
+    local left_w = 0
+    for _, r in ipairs(rows) do
+        left_w = math.max(left_w, #r[1])
+    end
+    local lines = {}
+    for _, r in ipairs(rows) do
+        lines[#lines + 1] = (" %-" .. left_w .. "s   %s"):format(r[1], r[2])
+    end
+
     local width = 0
     for _, l in ipairs(lines) do
         width = math.max(width, #l + 1)
