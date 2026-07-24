@@ -39,8 +39,8 @@ function Kumite:keys_hint()
         return {
             "`:CW test` — run your code against the fixture",
             "`:CW kumite save` — save as a draft on codewars.com",
+            "`:CW kumite publish` — publish it publicly (after saving)",
             "`g?` — all commands · `:q` / `:q!` — close (unsaved edits are stashed)",
-            "_(publishing arrives in a later update)_",
         }
     end
     return {
@@ -241,6 +241,62 @@ function Kumite:save()
         self:refresh_title()
         pcall(api.nvim_buf_set_name, self.bufnr, self:title())
         log.info("Saved as a draft on codewars.com — :CW kumite open " .. self.snippet.id)
+    end)
+end
+
+--- Publish the current kumite publicly (design §2.4, P3). Requires a saved,
+--- non-dirty server draft and passing tests; confirms first because it is
+--- public and cannot be casually undone.
+function Kumite:publish()
+    if self.state == "local_new" or self.state == "local_fork" then
+        return log.warn("Save the kumite first (:CW kumite save), then publish.")
+    end
+    local _, err = kstate.step(self.state, "publish")
+    if err then
+        return log.warn(err)
+    end
+    if self:is_dirty() then
+        return log.warn("You have unsaved edits — :CW kumite save before publishing.")
+    end
+    vim.ui.select({ "Publish", "Cancel" }, {
+        prompt = ("Publish “%s” publicly on codewars.com?"):format(self.snippet.title),
+    }, function(choice)
+        if choice ~= "Publish" then
+            return log.info("Publish cancelled.")
+        end
+        self:_do_publish()
+    end)
+end
+
+--- Run the saved code on the runner, then publish it (see kumite.publish).
+function Kumite:_do_publish()
+    self.state = "publishing"
+    self:refresh_title()
+    require("codewars.kumite.publish").run_and_publish({
+        id = self.snippet.id,
+        language = self.lang,
+        code = table.concat(api.nvim_buf_get_lines(self.bufnr, 0, -1, false), "\n"),
+        fixture = self:fixture_content(),
+        test_framework = self.snippet.test_framework,
+        language_version = self.snippet.language_version
+            or require("codewars.api.kumite").default_version(self.lang),
+        setup = self.snippet["package"] or "",
+    }, function(url, err)
+        if err then
+            if err.auth then
+                require("codewars.cache.cookie").delete()
+            end
+            self.state = "server_draft" -- REVERT
+            self:refresh_title()
+            return log.error("Publish failed — " .. (err.msg or "unknown error"))
+        end
+        self.state = kstate.step("publishing", "publish_done") -- "published"
+        if self.description then
+            self.description:populate()
+        end
+        self:refresh_title()
+        pcall(api.nvim_buf_set_name, self.bufnr, self:title())
+        log.info("Published! " .. url)
     end)
 end
 

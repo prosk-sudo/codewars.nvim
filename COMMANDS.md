@@ -27,6 +27,7 @@ Run `:CW help` inside Neovim for a quick reference.
 | `:CW kumite fork` | Fork the current kumite into an editable local copy (also `Ctrl-f` in the browser) |
 | `:CW kumite new [language]` | Start a fresh kumite from scratch (menu `m` → New); write code + a fixture and run it locally |
 | `:CW kumite save` | Save the current kumite to codewars.com — new draft first time, in-place update after (signed-out prompts to sign in, then saves) |
+| `:CW kumite publish` | Publish the saved kumite publicly (confirms first; runs the fixture and only publishes if tests pass) |
 | `:CW test` | In a forked/new kumite, run your code against its fixture (signed-out prompts to sign in, then runs) |
 
 The kumite workspace shows its available keys at the top of the description panel; the browser lists its keys on the results border. `g?` opens the full command list.

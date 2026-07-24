@@ -315,6 +315,18 @@ function cmd.kumite_save()
     end)
 end
 
+--- :CW kumite publish — publish the current kumite publicly on codewars.com.
+--- Needs auth; the workspace confirms and requires a saved, passing draft.
+function cmd.kumite_publish()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open or start one first, then publish.")
+    end
+    cmd.with_auth(function()
+        kw:publish()
+    end)
+end
+
 --- :CW kumite new [language] — start a fresh kumite from scratch. Opens a
 --- blank editable workspace you can write and run locally; saving and
 --- publishing to codewars.com arrive in a later update. No auth needed to
@@ -851,6 +863,7 @@ cmd.commands = {
         open = { cmd.kumite_open },
         fork = { cmd.kumite_fork },
         save = { cmd.kumite_save },
+        publish = { cmd.kumite_publish },
         new = {
             cmd.kumite_new,
             _positional_complete = { lang_slugs },
