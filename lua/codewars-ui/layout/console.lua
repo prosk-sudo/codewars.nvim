@@ -21,9 +21,10 @@ function ConsoleLayout:hide()
 
     pcall(function()
         local winid = vim.api.nvim_get_current_win()
+        local aux = self.kata.testcase_split or self.kata.fixture_split
         if self.kata.description and winid == self.kata.description.winid then
             vim.api.nvim_set_current_win(self.kata.winid)
-        elseif self.kata.testcase_split and winid == self.kata.testcase_split.winid then
+        elseif aux and winid == aux.winid then
             vim.api.nvim_set_current_win(self.kata.winid)
         end
     end)
@@ -40,7 +41,9 @@ function ConsoleLayout:mount()
 end
 
 function ConsoleLayout:run(mode)
-    if mode == "submit" and not self.kata.last_attempt_success then
+    -- run_fn owners (kumite) drive their own runner: no submit eligibility,
+    -- no kata notify/finalize. The kata path below is unchanged.
+    if not self.run_fn and mode == "submit" and not self.kata.last_attempt_success then
         local log = require("codewars.logger")
         log.warn("Cannot submit: run :CW attempt first and pass all tests.")
         return
@@ -55,7 +58,11 @@ function ConsoleLayout:run(mode)
     local msg = ({ test = "Running tests...", attempt = "Attempting...", submit = "Submitting..." })[mode]
     self.result:clear(msg)
 
-    Runner:init(self.kata):run(mode)
+    if self.run_fn then
+        self.run_fn(mode, self.result)
+    else
+        Runner:init(self.kata):run(mode)
+    end
 end
 
 function ConsoleLayout:set_keymaps()
@@ -70,9 +77,11 @@ function ConsoleLayout:set_keymaps()
     end
 end
 
----@param kata cw.ui.Kata
-function ConsoleLayout:init(kata)
+---@param kata cw.ui.Kata|cw.ui.Kumite owner workspace (needs winid + description)
+---@param run_fn? fun(mode: string, result: cw.ui.Console.ResultPopup) when set, drives runs instead of the kata Runner
+function ConsoleLayout:init(kata, run_fn)
     self.kata = kata
+    self.run_fn = run_fn
     self.result = Result(self)
     self.popups = { self.result }
 

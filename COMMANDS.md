@@ -24,6 +24,8 @@ Run `:CW help` inside Neovim for a quick reference.
 | `:CW leaderboard [category]` | Top 500 leaderboard: `overall`, `kata` (completed), `authored`, `ranks`. No args opens the category picker; also in the menu under `l` |
 | `:CW kumite` | Browse Freestyle Sparring (kumite): server-paged picker (`Ctrl-n`/`Ctrl-p` page, `Ctrl-g` go to page, `Ctrl-l` language). Menu `m`; works signed out |
 | `:CW kumite open <id\|url>` | Open a kumite read-only from a `/kumite/…` link or 24-hex id |
+| `:CW kumite fork` | Fork the current kumite into an editable local copy (also `Ctrl-f` in the browser) |
+| `:CW test` | In a forked kumite, run your code against its fixture (signed-out prompts to sign in, then runs) |
 | `:CW open` | Open kata in browser |
 
 ## UI Toggles

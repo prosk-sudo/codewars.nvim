@@ -6,7 +6,8 @@ All notable changes to codewars.nvim are documented here.
 
 ### Added
 - **Leaderboard** (`:CW leaderboard [category]`, menu `l`): top-500 boards for Overall, Completed Kata, Authored Kata & Translations, and Ranks — position, rank-colored user, clan, and honor/score, scraped live from codewars.com.
-- **Kumite browsing** (`:CW kumite`, menu `m`): browse Freestyle Sparring with server paging (page/goto/language keys), open any kumite read-only — including directly from a link via `:CW kumite open <id|url>` — with description, author lineage, and fixture shown in the familiar kata-style layout. Works signed out (public view). Fork/run/create arrive in later phases.
+- **Kumite browsing** (`:CW kumite`, menu `m`): browse Freestyle Sparring with server paging (page/goto/language keys), open any kumite read-only — including directly from a link via `:CW kumite open <id|url>` — with description, author lineage, and fixture shown in the familiar kata-style layout. Works signed out (public view).
+- **Kumite fork & run**: `:CW kumite fork` (or `Ctrl-f` in the browser) turns a kumite into an editable local copy; `:CW test` runs your edited code against its fixture in the familiar result console — no server side effects. Signed-out runs prompt to sign in and then resume. Unsaved edits are stashed to the cache on close so nothing is lost. Saving/publishing and a drafts list arrive in a later phase.
 
 ### Fixed
 - `:CW` argument parsing no longer swallows URL positionals containing `=` (e.g. `/kumite/…?sel=…` links) as options.

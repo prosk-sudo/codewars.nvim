@@ -652,7 +652,9 @@ end
 --- unavailable — fall back to the code-only public view built from list
 --- data (design §3.6).
 ---@param entry cw.KumiteListEntry
-local function kumite_open_entry(entry)
+---@param entry cw.KumiteListEntry
+---@param and_fork boolean? fork the workspace immediately after opening
+local function kumite_open_entry(entry, and_fork)
     log.info("Loading kumite…")
     local kumite_api = require("codewars.api.kumite")
     kumite_api.fetch_snippet(entry.id, function(snippet, err)
@@ -664,7 +666,12 @@ local function kumite_open_entry(entry)
         end
         snippet.forked_from_author = snippet.forked_from_author or entry.forked_from_author
         vim.schedule(function()
-            require("codewars-ui.kumite"):new(snippet):mount()
+            local ws = require("codewars-ui.kumite"):new(snippet):mount()
+            -- ws.bufnr is nil when mount() jumped to an already-open tab;
+            -- skip the fork there rather than acting on a throwaway object.
+            if and_fork and ws.bufnr then
+                ws:fork()
+            end
         end)
     end)
 end
@@ -741,6 +748,13 @@ function picker._show_kumite_list(entries)
                 if not selection then return end
                 t.actions.close(prompt_bufnr)
                 kumite_open_entry(selection.value)
+            end)
+
+            map({ "i", "n" }, "<C-f>", function()
+                local selection = t.action_state.get_selected_entry()
+                if not selection then return end
+                t.actions.close(prompt_bufnr)
+                kumite_open_entry(selection.value, true)
             end)
 
             map({ "i", "n" }, "<C-n>", function()

@@ -39,6 +39,19 @@ function utils.curr_kata()
     end
 end
 
+--- The kumite workspace in the current tab, if any (no error when absent —
+--- callers fall back to kata resolution).
+---@return cw.ui.Kumite?
+function utils.curr_kumite()
+    local tabp = vim.api.nvim_get_current_tabpage()
+    for _, ws in ipairs(_Cw_state.kumite or {}) do
+        local ok, wtab = pcall(vim.api.nvim_win_get_tabpage, ws.winid)
+        if ok and wtab == tabp then
+            return ws
+        end
+    end
+end
+
 ---@return { tabpage: integer, kata: cw.ui.Kata }[]
 function utils.kata_tabs()
     local katas = {}

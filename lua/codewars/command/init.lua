@@ -45,6 +45,7 @@ function cmd.help()
         { "leaderboard",    "Top 500 leaderboard (4 categories)" },
         { "kumite",         "Browse Freestyle Sparring (kumite)" },
         { "kumite open <id|url>", "Open a kumite by id or link" },
+        { "kumite fork",    "Fork the current kumite to edit it" },
         { "open",           "Open kata in browser" },
         { "",               "" },
         { "UI TOGGLES",     "" },
@@ -167,8 +168,32 @@ function cmd.train(options)
     k:mount()
 end
 
+--- Run `action` now if signed in, otherwise prompt for a cookie and resume
+--- it on success (design §3.6 auth-resume; T12 — a closure through the
+--- existing cookie_prompt, no pending-action store). Cancel drops it.
+---@param action fun()
+function cmd.with_auth(action)
+    if require("codewars.cache.cookie").get() then
+        return action()
+    end
+    log.info("Sign in to continue…")
+    cmd.cookie_prompt(function(ok)
+        if ok then action() end
+    end)
+end
+
 function cmd.test()
     local utils = require("codewars.utils")
+
+    -- A kumite workspace in this tab takes priority; its runner needs auth
+    -- but no kata session, and resumes after sign-in.
+    local kw = utils.curr_kumite()
+    if kw then
+        return cmd.with_auth(function()
+            kw.console:run("test")
+        end)
+    end
+
     utils.auth_guard()
     local k = utils.curr_kata()
     if k then
@@ -265,6 +290,16 @@ function cmd.kumite_open(options)
             require("codewars-ui.kumite"):new(snippet):mount()
         end)
     end)
+end
+
+--- :CW kumite fork — turn the current kumite into an editable local copy.
+--- Local transition, no auth (running the fork later prompts for it).
+function cmd.kumite_fork()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open one with :CW kumite, then fork.")
+    end
+    kw:fork()
 end
 
 function cmd.desc_toggle()
@@ -762,6 +797,7 @@ cmd.commands = {
     kumite = {
         cmd.kumite,
         open = { cmd.kumite_open },
+        fork = { cmd.kumite_fork },
     },
     desc = {
         cmd.desc_toggle,
