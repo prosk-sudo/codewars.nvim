@@ -694,6 +694,49 @@ local function kumite_fetch_and_show()
     end)
 end
 
+-- Light-blue floating legend shown alongside the browser so the paging /
+-- filter keys are always visible. Non-focusable; the caller closes it when
+-- the picker's prompt buffer is wiped.
+---@return integer? winid
+local function open_kumite_hint()
+    local lines = {
+        " <CR> view      <C-f> fork",
+        " <C-n> next page   <C-p> prev page",
+        " <C-g> go to page  <C-l> language",
+    }
+    local width = 0
+    for _, l in ipairs(lines) do
+        width = math.max(width, #l + 1)
+    end
+
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+    vim.bo[buf].bufhidden = "wipe"
+
+    local ok, win = pcall(vim.api.nvim_open_win, buf, false, {
+        relative = "editor",
+        anchor = "NW",
+        row = 1,
+        col = math.max(0, math.floor((vim.o.columns - width) / 2)),
+        width = width,
+        height = #lines,
+        style = "minimal",
+        border = "rounded",
+        title = " Kumite browser keys ",
+        title_pos = "center",
+        focusable = false,
+        noautocmd = true,
+        zindex = 250, -- above the telescope windows
+    })
+    if not ok then
+        return nil
+    end
+    vim.wo[win].winhighlight =
+        "Normal:codewars_hint,FloatBorder:codewars_hint_border,FloatTitle:codewars_hint_key"
+    return win
+end
+
 ---@param entries cw.KumiteListEntry[]
 function picker._show_kumite_list(entries)
     local t = dropdown.telescope()
@@ -738,12 +781,24 @@ function picker._show_kumite_list(entries)
         kumite_fetch_and_show()
     end
 
+    local hint_win = open_kumite_hint()
+
     t.pickers.new(t.themes.get_dropdown({ layout_config = { width = 110, height = 14 } }), {
         prompt_title = ("Kumite · %s · page %d/%d"):format(_kumite_lang or "all", _kumite_page, _kumite_last),
-        results_title = "<CR> view  <C-f> fork  <C-n>/<C-p> page  <C-g> goto  <C-l> lang",
         finder = t.finders.new_table({ results = entries, entry_maker = entry_maker }),
         sorter = t.conf.generic_sorter({}),
         attach_mappings = function(prompt_bufnr, map)
+            -- The hint box lives and dies with this picker instance (paging /
+            -- language switch reopens both).
+            vim.api.nvim_create_autocmd("BufWipeout", {
+                buffer = prompt_bufnr,
+                once = true,
+                callback = function()
+                    if hint_win and vim.api.nvim_win_is_valid(hint_win) then
+                        pcall(vim.api.nvim_win_close, hint_win, true)
+                    end
+                end,
+            })
             t.actions.select_default:replace(function()
                 local selection = t.action_state.get_selected_entry()
                 if not selection then return end

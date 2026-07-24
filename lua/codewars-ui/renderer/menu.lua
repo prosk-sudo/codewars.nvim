@@ -93,14 +93,14 @@ local function build_pages(menu)
             { icon = I.katas,   label = "Katas",       sc = "k", expandable = true, fn = function()
                 menu:set_page("katas")
             end },
+            { icon = I.kumite,  label = "Kumite",      sc = "m", expandable = true, fn = function()
+                menu:set_page("kumite")
+            end },
             { icon = I.stats,   label = "Statistics",  sc = "s", fn = function()
                 require("codewars.command").stats({})
             end },
             { icon = I.leaderboard, label = "Leaderboard", sc = "l", expandable = true, fn = function()
                 menu:set_page("leaderboard")
-            end },
-            { icon = I.kumite,  label = "Kumite",      sc = "m", expandable = true, fn = function()
-                menu:set_page("kumite")
             end },
             { icon = I.cookie,  label = "Cookie",      sc = "i", expandable = true, fn = function()
                 menu:set_page("cookie")
