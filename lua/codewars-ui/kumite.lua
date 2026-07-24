@@ -26,6 +26,30 @@ Kumite.__index = Kumite
 
 local INSERT_KEYS = { "i", "I", "a", "A", "o", "O", "c", "C", "s", "S", "R" }
 
+---@param id string?
+---@return boolean # true for a real codewars snippet id (24 hex), false for a local one
+local function is_server_id(id)
+    return type(id) == "string" and id:match("^%x+$") ~= nil and #id == 24
+end
+
+--- The always-visible key legend shown at the top of the description panel,
+--- adapted to the current state so users know what they can do right now.
+---@return string[]
+function Kumite:keys_hint()
+    if kstate.is_editable(self.state) then
+        return {
+            "`:CW test` — run your code against the fixture",
+            "`g?` — all commands",
+            "_(saving & publishing arrive in a later update)_",
+        }
+    end
+    return {
+        "`:CW kumite fork` — edit a local copy of this kumite",
+        "`:CW test` — run it (after forking)",
+        "`g?` — all commands",
+    }
+end
+
 --- Live edits (T9): editable states diff their buffers against the loaded
 --- snippet rather than trusting a cached "dirty" flag that split toggles
 --- could desync.
@@ -85,7 +109,16 @@ function Kumite:header_lines()
             or ("fork of " .. parent)
     end
     lines[#lines + 1] = ""
-    lines[#lines + 1] = ("[Open on Codewars](https://www.codewars.com/kumite/%s)"):format(s.id)
+    if is_server_id(s.id) then
+        lines[#lines + 1] = ("[Open on Codewars](https://www.codewars.com/kumite/%s)"):format(s.id)
+        lines[#lines + 1] = ""
+    end
+
+    -- Always-visible key legend so the panel is discoverable.
+    lines[#lines + 1] = "## Keys"
+    for _, hint in ipairs(self:keys_hint()) do
+        lines[#lines + 1] = "- " .. hint
+    end
     lines[#lines + 1] = ""
     lines[#lines + 1] = "---"
     lines[#lines + 1] = ""
@@ -197,10 +230,12 @@ function Kumite:mount()
     end)
     self.description:mount()
 
-    if self.snippet.fixture and self.snippet.fixture ~= "" then
+    -- A fixture split appears when the snippet ships one, or whenever the
+    -- workspace is editable (so a fork/new has somewhere to write tests).
+    if (self.snippet.fixture and self.snippet.fixture ~= "") or kstate.is_editable(self.state) then
         self.fixture_split = TestcaseSplit:new(self)
         self.fixture_split:mount()
-        self.fixture_split:populate(self.snippet.fixture)
+        self.fixture_split:populate(self.snippet.fixture or "")
         ui_utils.buf_set_opts(self.fixture_split.bufnr, { modifiable = kstate.is_editable(self.state) })
     end
 
@@ -293,12 +328,13 @@ function Kumite:_unmount()
 end
 
 ---@param snippet cw.KumiteSnippet
+---@param opts? { state?: string } initial state (default published_view; New passes local_new)
 ---@return cw.ui.Kumite
-function Kumite:new(snippet)
+function Kumite:new(snippet, opts)
     local obj = setmetatable({}, self)
     obj.snippet = snippet
     obj.lang = snippet.language
-    obj.state = "published_view"
+    obj.state = (opts and opts.state) or "published_view"
     return obj
 end
 

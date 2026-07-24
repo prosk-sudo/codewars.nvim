@@ -25,7 +25,10 @@ Run `:CW help` inside Neovim for a quick reference.
 | `:CW kumite` | Browse Freestyle Sparring (kumite): server-paged picker (`Ctrl-n`/`Ctrl-p` page, `Ctrl-g` go to page, `Ctrl-l` language). Menu `m`; works signed out |
 | `:CW kumite open <id\|url>` | Open a kumite read-only from a `/kumite/…` link or 24-hex id |
 | `:CW kumite fork` | Fork the current kumite into an editable local copy (also `Ctrl-f` in the browser) |
-| `:CW test` | In a forked kumite, run your code against its fixture (signed-out prompts to sign in, then runs) |
+| `:CW kumite new [language]` | Start a fresh kumite from scratch (menu `m` → New); write code + a fixture and run it locally |
+| `:CW test` | In a forked/new kumite, run your code against its fixture (signed-out prompts to sign in, then runs) |
+
+The kumite workspace shows its available keys at the top of the description panel; the browser lists its keys on the results border. `g?` opens the full command list.
 | `:CW open` | Open kata in browser |
 
 ## UI Toggles

@@ -207,4 +207,39 @@ describe("cmd kumite P2 routing", function()
         prompt_cb(false)
         assert.is_nil(ran)
     end)
+
+    describe("kumite new", function()
+        local mounted
+        before_each(function()
+            mounted = nil
+            package.loaded["codewars.picker"] = { pick_language = function(cb) cb("python") end }
+            package.loaded["codewars.api.kumite"] = { default_framework = function() return "cw-2" end }
+            package.loaded["codewars-ui.kumite"] = {
+                new = function(_, snippet, opts)
+                    mounted = { snippet = snippet, opts = opts }
+                    return { mount = function() end }
+                end,
+            }
+        end)
+
+        it("opens a blank local_new workspace with a local id and title", function()
+            local real_input = vim.ui.input
+            vim.ui.input = function(_, cb) cb("My Kumite") end
+            cmd.kumite_new({})
+            vim.ui.input = real_input
+            assert.are.equal("My Kumite", mounted.snippet.title)
+            assert.are.equal("python", mounted.snippet.language)
+            assert.are.equal("cw-2", mounted.snippet.test_framework)
+            assert.are.equal("local_new", mounted.opts.state)
+            assert.truthy(mounted.snippet.id:match("^local%-"))
+        end)
+
+        it("cancelling the title prompt mounts nothing", function()
+            local real_input = vim.ui.input
+            vim.ui.input = function(_, cb) cb(nil) end
+            cmd.kumite_new({})
+            vim.ui.input = real_input
+            assert.is_nil(mounted)
+        end)
+    end)
 end)

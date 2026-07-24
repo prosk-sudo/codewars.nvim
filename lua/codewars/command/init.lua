@@ -46,6 +46,7 @@ function cmd.help()
         { "kumite",         "Browse Freestyle Sparring (kumite)" },
         { "kumite open <id|url>", "Open a kumite by id or link" },
         { "kumite fork",    "Fork the current kumite to edit it" },
+        { "kumite new [lang]", "Start a fresh kumite from scratch" },
         { "open",           "Open kata in browser" },
         { "",               "" },
         { "UI TOGGLES",     "" },
@@ -300,6 +301,44 @@ function cmd.kumite_fork()
         return log.error("No kumite here. Open one with :CW kumite, then fork.")
     end
     kw:fork()
+end
+
+--- :CW kumite new [language] — start a fresh kumite from scratch. Opens a
+--- blank editable workspace you can write and run locally; saving and
+--- publishing to codewars.com arrive in a later update. No auth needed to
+--- start (running prompts for sign-in).
+function cmd.kumite_new(options)
+    local kumite_api = require("codewars.api.kumite")
+
+    local function start(lang)
+        vim.ui.input({ prompt = "Kumite title: ", default = "Untitled kumite" }, function(title)
+            if not title then return end -- cancelled
+            local snippet = {
+                id = "local-" .. tostring(vim.loop.now()),
+                title = title ~= "" and title or "Untitled kumite",
+                description = "",
+                language = lang,
+                code = "",
+                fixture = "",
+                ["package"] = "",
+                test_framework = kumite_api.default_framework(lang),
+                state = "draft",
+                author = config.user.username ~= "" and config.user.username or nil,
+            }
+            require("codewars-ui.kumite"):new(snippet, { state = "local_new" }):mount()
+            log.info("New kumite — write your code and a fixture, then :CW test to run it.")
+        end)
+    end
+
+    local lang_arg = options._positional and options._positional[1]
+    if lang_arg then
+        local utils = require("codewars.utils")
+        if not utils.resolve_lang_arg(lang_arg) then
+            return
+        end
+        return start(lang_arg)
+    end
+    require("codewars.picker").pick_language(start)
 end
 
 function cmd.desc_toggle()
@@ -798,6 +837,10 @@ cmd.commands = {
         cmd.kumite,
         open = { cmd.kumite_open },
         fork = { cmd.kumite_fork },
+        new = {
+            cmd.kumite_new,
+            _positional_complete = { lang_slugs },
+        },
     },
     desc = {
         cmd.desc_toggle,

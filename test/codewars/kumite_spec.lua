@@ -111,6 +111,18 @@ describe("api.kumite", function()
         end)
     end)
 
+    describe("default_framework", function()
+        it("maps known languages to their verified default framework", function()
+            assert.are.equal("junit", kumite.default_framework("java"))
+            assert.are.equal("mocha", kumite.default_framework("typescript"))
+            assert.are.equal("busted", kumite.default_framework("lua"))
+        end)
+
+        it("falls back to cw-2 for unknown languages", function()
+            assert.are.equal("cw-2", kumite.default_framework("brainfuck-9000"))
+        end)
+    end)
+
     describe("parse_list_html", function()
         it("extracts both fork and root items with all fields", function()
             local result = kumite.parse_list_html(SAMPLE_LIST)

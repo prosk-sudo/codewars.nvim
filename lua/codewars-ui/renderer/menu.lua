@@ -146,11 +146,13 @@ local function build_pages(menu)
             end },
         },
 
-        -- P1 ships Browse only; New and My Drafts mount with their phases
-        -- (design §3.1 — no dead buttons).
+        -- Browse + New ship now; My Drafts mounts with P3's drafts registry.
         kumite = {
             { icon = I.kumite,  label = "Browse",      sc = "l", fn = function()
                 require("codewars.command").kumite()
+            end },
+            { icon = I.search,  label = "New",         sc = "n", fn = function()
+                require("codewars.command").kumite_new({})
             end },
             { icon = I.back,    label = "Back",        sc = "b", fn = function()
                 menu:set_page("main")

@@ -740,6 +740,7 @@ function picker._show_kumite_list(entries)
 
     t.pickers.new(t.themes.get_dropdown({ layout_config = { width = 110, height = 14 } }), {
         prompt_title = ("Kumite · %s · page %d/%d"):format(_kumite_lang or "all", _kumite_page, _kumite_last),
+        results_title = "<CR> view  <C-f> fork  <C-n>/<C-p> page  <C-g> goto  <C-l> lang",
         finder = t.finders.new_table({ results = entries, entry_maker = entry_maker }),
         sorter = t.conf.generic_sorter({}),
         attach_mappings = function(prompt_bufnr, map)

@@ -30,6 +30,26 @@ local kumite = {}
 
 local HEX24 = "%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x"
 
+-- Verified from /kumite/new's defaultFrameworks payload (2026-07-24). Used
+-- when starting a fresh kumite so it runs with the right test framework;
+-- unknown languages fall back to cw-2.
+local DEFAULT_FRAMEWORK = {
+    ruby = "cw-2", javascript = "cw-2", coffeescript = "cw-2", python = "cw-2",
+    php = "phpunit", java = "junit", haskell = "hspec", clojure = "clojure.test",
+    csharp = "nunit", elixir = "exunit", elm = "test", erlang = "eunit",
+    typescript = "mocha", dart = "test", c = "criterion", cpp = "igloo",
+    nasm = "criterion", rust = "rust", julia = "factcheck", crystal = "spec",
+    fsharp = "fuchu", ocaml = "ounit", go = "gotest", lua = "busted", nim = "unittest",
+    r = "testthat", kotlin = "junit5", scala = "scalatest", groovy = "spock",
+    swift = "xctest", sql = "sql", shell = "cw-2", powershell = "pester", solidity = "truffle",
+}
+
+---@param lang string
+---@return string test framework id
+function kumite.default_framework(lang)
+    return DEFAULT_FRAMEWORK[lang] or "cw-2"
+end
+
 --- Extract a snippet id from a raw id or any kumite URL form
 --- (`/kumite/{id}`, `/kumite/{parent}?sel={id}`). Prefers `sel=`.
 ---@param input string?
