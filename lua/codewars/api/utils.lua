@@ -32,6 +32,16 @@ function utils.get(endpoint, opts)
     return utils.curl("get", options)
 end
 
+---@param endpoint string
+---@param opts? table
+function utils.put(endpoint, opts)
+    local options = vim.tbl_deep_extend("force", {
+        endpoint = endpoint,
+    }, opts or {})
+
+    return utils.curl("put", options)
+end
+
 ---@private
 ---@param method string
 ---@param params table

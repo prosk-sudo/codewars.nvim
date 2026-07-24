@@ -38,8 +38,9 @@ function Kumite:keys_hint()
     if kstate.is_editable(self.state) then
         return {
             "`:CW test` — run your code against the fixture",
+            "`:CW kumite save` — save as a draft on codewars.com",
             "`g?` — all commands · `:q` / `:q!` — close (unsaved edits are stashed)",
-            "_(saving & publishing arrive in a later update)_",
+            "_(publishing arrives in a later update)_",
         }
     end
     return {
@@ -181,7 +182,66 @@ function Kumite:fork()
         self.description:populate()
     end
     self:refresh_title()
-    log.info("Forked — edit the code/fixture and run :CW test. (Saving arrives in a later update.)")
+    log.info("Forked — edit the code/fixture, run :CW test, and :CW kumite save when ready.")
+end
+
+--- Save the workspace as a draft on codewars.com (design §2.4, P3). Create for
+--- an unsaved local_new/local_fork (POST /kumite, adopting the returned id);
+--- update for an existing server_draft (PUT /kumite/{id}). Branch on STATE, not
+--- snippet.id — a fork's snippet.id is still the PARENT's id until first save.
+function Kumite:save()
+    local next_state, err = kstate.step(self.state, "save")
+    if err then
+        return log.warn(err)
+    end
+
+    local kumite_api = require("codewars.api.kumite")
+    local prev = self.state
+    local is_update = prev == "server_draft"
+    self.state = next_state -- "saving"
+    self:refresh_title()
+
+    local model = {
+        language = self.lang,
+        language_version = self.snippet.language_version or kumite_api.default_version(self.lang),
+        test_framework = self.snippet.test_framework,
+        title = self.snippet.title,
+        description = self.snippet.description,
+        code = table.concat(api.nvim_buf_get_lines(self.bufnr, 0, -1, false), "\n"),
+        fixture = self:fixture_content(),
+        example_fixture = self.snippet.example_fixture,
+        ["package"] = self.snippet["package"],
+        parent_id = self.parent_id or self.snippet.parent_id,
+        code_challenge_id = self.snippet.code_challenge_id,
+        secret = self.snippet.secret,
+    }
+    local server_id = is_update and self.snippet.id or nil
+
+    kumite_api.save_draft(server_id, model, function(res, serr)
+        if serr then
+            if serr.auth then
+                require("codewars.cache.cookie").delete()
+            end
+            kstate.step("saving", "save_failed") -- REVERT: caller restores prev
+            self.state = prev
+            self:refresh_title()
+            return log.error("Kumite save failed — " .. (serr.msg or "unknown error"))
+        end
+
+        self.state = kstate.step("saving", "save_done") -- "server_draft"
+        -- Adopt the server draft id so later saves PUT; snapshot the saved
+        -- content so is_dirty() clears until the next edit.
+        self.snippet.id = res.id or self.snippet.id
+        self.snippet.parent_id = self.parent_id or self.snippet.parent_id
+        self.snippet.code = model.code
+        self.snippet.fixture = model.fixture
+        if self.description then
+            self.description:populate() -- header now shows the Codewars link
+        end
+        self:refresh_title()
+        pcall(api.nvim_buf_set_name, self.bufnr, self:title())
+        log.info("Saved as a draft on codewars.com — :CW kumite open " .. self.snippet.id)
+    end)
 end
 
 --- Jump to an already-open workspace for this snippet, if any.

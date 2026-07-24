@@ -72,6 +72,7 @@ See [COMMANDS.md](COMMANDS.md) for the full list, or run `:CW help` inside Neovi
 :CW leaderboard          " top 500 leaderboards (also in the menu under l)
 :CW kumite               " browse Freestyle Sparring (menu m)
 :CW kumite new           " start a fresh kumite; fork one with :CW kumite fork, run with :CW test
+:CW kumite save          " save the current kumite to codewars.com as a draft
 ```
 
 This opens the `8 kyu Multiply` kata with:

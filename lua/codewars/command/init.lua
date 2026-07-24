@@ -303,6 +303,18 @@ function cmd.kumite_fork()
     kw:fork()
 end
 
+--- :CW kumite save — save the current kumite as a draft on codewars.com.
+--- Needs auth (a real POST/PUT); signed out, prompts to sign in then resumes.
+function cmd.kumite_save()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open or start one first, then save.")
+    end
+    cmd.with_auth(function()
+        kw:save()
+    end)
+end
+
 --- :CW kumite new [language] — start a fresh kumite from scratch. Opens a
 --- blank editable workspace you can write and run locally; saving and
 --- publishing to codewars.com arrive in a later update. No auth needed to
@@ -838,6 +850,7 @@ cmd.commands = {
         cmd.kumite,
         open = { cmd.kumite_open },
         fork = { cmd.kumite_fork },
+        save = { cmd.kumite_save },
         new = {
             cmd.kumite_new,
             _positional_complete = { lang_slugs },

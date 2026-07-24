@@ -247,4 +247,81 @@ function kumite.fetch_snippet(id, cb)
     })
 end
 
+--- True for a Codewars snippet id (24 hex chars); false for a local id
+--- ("local-…"), which means the draft has never been saved to the server.
+---@param id any
+---@return boolean
+function kumite.is_server_id(id)
+    return type(id) == "string" and #id == 24 and id:match("^%x+$") ~= nil
+end
+
+--- Build the `code_snippet` mutation body for a draft save (verified /kumite
+--- contract, 2026-07-24). `example_fixture` mirrors `fixture` until sample
+--- tests are modelled separately (TODO); `secret` is re-sent so an update
+--- never flips visibility.
+---@param m table snippet-like { language, language_version, test_framework, title, description, code, fixture, example_fixture?, package, parent_id, code_challenge_id?, secret? }
+---@return table
+function kumite.draft_payload(m)
+    local fixture = m.fixture or ""
+    return {
+        code_snippet = {
+            language = m.language or "",
+            language_version = m.language_version or "",
+            test_framework = m.test_framework or "cw-2",
+            title = m.title or "",
+            description = m.description or "",
+            user_tags = "",
+            parent_id = m.parent_id or "",
+            code_challenge_id = m.code_challenge_id or "",
+            secret = m.secret == true,
+            code = m.code or "",
+            ["package"] = m["package"] or "",
+            fixture = fixture,
+            example_fixture = m.example_fixture or fixture,
+        },
+    }
+end
+
+--- First validation error the server attached to any field, if any.
+---@param res table? decoded /kumite response
+---@return string?
+local function first_field_error(res)
+    local fields = res and res.fields and res.fields.code_snippet
+    if type(fields) ~= "table" then
+        return nil
+    end
+    for key, f in pairs(fields) do
+        if type(f) == "table" and type(f.errors) == "table" and f.errors[1] then
+            return ("%s: %s"):format(key, tostring(f.errors[1]))
+        end
+    end
+    return nil
+end
+
+--- Save a kumite draft (design §2.4, P3). Create (`POST /kumite`) when `id` is
+--- nil or a local id; update (`PUT /kumite/{id}`) for an existing server draft.
+--- Both send JSON `{ code_snippet = {...} }` and return
+--- `{ success, id?, url?, fields }`. No server side effects beyond the draft.
+---@param id string? server id (24-hex) or nil/local id (→ create)
+---@param model table snippet-like fields for draft_payload
+---@param cb fun(result: { id: string }?, err: cw.err?)
+function kumite.save_draft(id, model, cb)
+    local api_utils = require("codewars.api.utils")
+    local update = kumite.is_server_id(id)
+    local endpoint = update and ("/kumite/" .. id) or "/kumite"
+    local method = update and api_utils.put or api_utils.post
+    method(endpoint, {
+        body = kumite.draft_payload(model),
+        callback = function(res, err)
+            if err then
+                return cb(nil, err)
+            end
+            if type(res) ~= "table" or res.success ~= true then
+                return cb(nil, { msg = first_field_error(res) or "Codewars rejected the kumite save." })
+            end
+            cb({ id = res.id or id }, nil)
+        end,
+    })
+end
+
 return kumite
