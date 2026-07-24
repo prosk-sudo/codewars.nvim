@@ -319,7 +319,7 @@ function cmd.kumite_new(options)
                 description = "",
                 language = lang,
                 code = "",
-                fixture = "",
+                fixture = require("codewars.kumite.fixtures").get(lang),
                 ["package"] = "",
                 test_framework = kumite_api.default_framework(lang),
                 state = "draft",

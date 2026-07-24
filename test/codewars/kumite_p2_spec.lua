@@ -129,6 +129,32 @@ describe("cache.kumite_stash", function()
     end)
 end)
 
+describe("kumite.fixtures", function()
+    local fx = require("codewars.kumite.fixtures")
+
+    it("returns the python starter with the codewars_test + solution import", function()
+        local t = fx.get("python")
+        assert.truthy(t:match("codewars_test"))
+        assert.truthy(t:match("import solution"))
+    end)
+
+    it("provides templates keyed by the plugin's language slugs", function()
+        assert.truthy(fx.get("java"):match("SolutionTest"))
+        assert.truthy(fx.get("rust"):match("assert_eq!"))
+        assert.truthy(fx.get("haskell"):match("Hspec"))
+        assert.truthy(fx.get("csharp"):match("TestFixture"))
+    end)
+
+    it("returns empty for languages without a template and unknowns", function()
+        assert.are.equal("", fx.get("nim"))
+        assert.are.equal("", fx.get("nonexistent-lang"))
+    end)
+
+    it("trims the leading newline so the buffer starts at real content", function()
+        assert.is_nil(fx.get("python"):match("^\n"))
+    end)
+end)
+
 describe("cmd kumite P2 routing", function()
     package.loaded["codewars.config"] = {
         user = { keys = { toggle = { "q" } }, logging = false, debug = false, username = "prosk" },
@@ -232,6 +258,8 @@ describe("cmd kumite P2 routing", function()
             assert.are.equal("cw-2", mounted.snippet.test_framework)
             assert.are.equal("local_new", mounted.opts.state)
             assert.truthy(mounted.snippet.id:match("^local%-"))
+            -- fixture is prefilled from the starter template, not empty
+            assert.truthy(mounted.snippet.fixture:match("codewars_test"))
         end)
 
         it("cancelling the title prompt mounts nothing", function()
