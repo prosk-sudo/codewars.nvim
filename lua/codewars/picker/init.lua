@@ -591,6 +591,39 @@ function picker.focus_category(cb)
     })
 end
 
+-- Keys/labels mirror api/leaderboard.CATEGORIES (kept literal here so the
+-- picker can describe each board without eager-loading the api module).
+picker.leaderboard_categories = {
+    { key = "overall",  label = "Overall",                      desc = "honor from everything combined",  icon = "leaderboard" },
+    { key = "kata",     label = "Completed Kata",               desc = "honor earned by completing kata", icon = "completed" },
+    { key = "authored", label = "Authored Kata & Translations", desc = "honor from authoring kata",       icon = "leaderboard_authored" },
+    { key = "ranks",    label = "Ranks",                        desc = "total rank score",                icon = "focus_rank_up" },
+}
+
+--- Pick a leaderboard category.
+---@param cb fun(category_key: string)
+function picker.leaderboard_category(cb)
+    local icons = require("codewars.icons").get()
+    local entries = {}
+    for _, cat in ipairs(picker.leaderboard_categories) do
+        table.insert(entries, {
+            label = ("%-30s %s"):format(cat.label, cat.desc),
+            value = cat.key,
+            icon = icons[cat.icon] or "#",
+            icon_hl = "codewars_icon",
+            ordinal = cat.key .. " " .. cat.label,
+        })
+    end
+
+    dropdown.open({
+        prompt_title = "Leaderboard",
+        entries = entries,
+        width = 70,
+        height = #entries + 4,
+        on_select = cb,
+    })
+end
+
 --- Pick a language independent of any mounted kata.
 --- Lists every language the plugin supports (config.langs) — the trainer
 --- serves rank-appropriate kata per language server-side, so no

@@ -90,6 +90,9 @@ local function build_pages(menu)
             { icon = I.stats,   label = "Statistics",  sc = "s", fn = function()
                 require("codewars.command").stats({})
             end },
+            { icon = I.leaderboard, label = "Leaderboard", sc = "l", expandable = true, fn = function()
+                menu:set_page("leaderboard")
+            end },
             { icon = I.cookie,  label = "Cookie",      sc = "i", expandable = true, fn = function()
                 menu:set_page("cookie")
             end },
@@ -124,6 +127,23 @@ local function build_pages(menu)
             end },
         },
 
+        leaderboard = (function()
+            local function show(category_key)
+                return function()
+                    require("codewars.command").leaderboard({ _positional = { category_key } })
+                end
+            end
+            return {
+                { icon = I.leaderboard,          label = "Overall",                      sc = "o", fn = show("overall") },
+                { icon = I.completed,            label = "Completed Kata",               sc = "k", fn = show("kata") },
+                { icon = I.leaderboard_authored, label = "Authored Kata & Translations", sc = "a", fn = show("authored") },
+                { icon = I.focus_rank_up,        label = "Ranks",                        sc = "r", fn = show("ranks") },
+                { icon = I.back,                 label = "Back",                         sc = "b", fn = function()
+                    menu:set_page("main")
+                end },
+            }
+        end)(),
+
         cookie = {
             { icon = I.update,  label = "Update",      sc = "u", fn = signin_fn },
             { icon = I.signout, label = "Delete / Sign Out",    sc = "d", fn = function()
@@ -152,6 +172,7 @@ local page_titles = {
     signin = { { "Sign In", "Title" } },
     main = { { "Menu", "Title" } },
     katas = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Katas", "Title" } },
+    leaderboard = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Leaderboard", "Title" } },
     cookie = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Cookie", "Title" } },
     cache = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Cache", "Title" } },
 }

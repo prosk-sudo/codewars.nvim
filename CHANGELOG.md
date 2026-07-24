@@ -2,6 +2,11 @@
 
 All notable changes to codewars.nvim are documented here.
 
+## [Unreleased]
+
+### Added
+- **Leaderboard** (`:CW leaderboard [category]`, menu `l`): top-500 boards for Overall, Completed Kata, Authored Kata & Translations, and Ranks — position, rank-colored user, clan, and honor/score, scraped live from codewars.com.
+
 ## [0.2.0] - 2026-07-22
 
 ### Added

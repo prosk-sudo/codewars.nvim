@@ -21,6 +21,7 @@ Run `:CW help` inside Neovim for a quick reference.
 | `:CW list` | Browse kata with filters (telescope) |
 | `:CW completed` | Browse completed kata (telescope) |
 | `:CW solutions` | View community solutions for current kata |
+| `:CW leaderboard [category]` | Top 500 leaderboard: `overall`, `kata` (completed), `authored`, `ranks`. No args opens the category picker; also in the menu under `l` |
 | `:CW open` | Open kata in browser |
 
 ## UI Toggles

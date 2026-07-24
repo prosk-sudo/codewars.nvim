@@ -10,6 +10,10 @@ local lang_slugs = vim.tbl_map(function(l) return l.slug end, require("codewars.
 -- and vim.tbl_keys would lose this stable display order.
 local focus_category_keys = { "fundamentals", "rank_up", "practice_and_repeat", "beta", "random" }
 
+-- Keep in sync with api/leaderboard.CATEGORIES (literal for the same
+-- lazy-loading reasons as focus_category_keys above).
+local leaderboard_category_keys = { "overall", "kata", "authored", "ranks" }
+
 local arguments = {
     list = {
         difficulty = { "8", "7", "6", "5", "4", "3", "2", "1" },
@@ -38,6 +42,7 @@ function cmd.help()
         { "list",           "Browse all kata (with filters)" },
         { "completed",      "Browse completed kata" },
         { "solutions",      "View community solutions" },
+        { "leaderboard",    "Top 500 leaderboard (4 categories)" },
         { "open",           "Open kata in browser" },
         { "",               "" },
         { "UI TOGGLES",     "" },
@@ -207,6 +212,33 @@ function cmd.solutions()
         local Solutions = require("codewars-ui.popup.solutions")
         Solutions:new(sols, k.lang):show()
     end, { unranked = require("codewars.theme").is_unranked(k.rank) })
+end
+
+--- Fetch and show one leaderboard category.
+---@param category_key string
+local function leaderboard_show(category_key)
+    log.info("Fetching leaderboard...")
+    require("codewars.api.leaderboard").fetch(category_key, function(entries, err)
+        if err then
+            return log.err(err)
+        end
+        local Leaderboard = require("codewars-ui.popup.leaderboard")
+        Leaderboard:new(entries, category_key):show()
+    end)
+end
+
+--- :CW leaderboard [category] — top-500 leaderboard.
+--- No args opens the category picker. Public page: no auth required.
+function cmd.leaderboard(options)
+    local key = options._positional and options._positional[1]
+    if key then
+        if not vim.tbl_contains(leaderboard_category_keys, key) then
+            return log.error(("Unknown leaderboard category: %s (overall|kata|authored|ranks)"):format(key))
+        end
+        return leaderboard_show(key)
+    end
+
+    require("codewars.picker").leaderboard_category(leaderboard_show)
 end
 
 function cmd.desc_toggle()
@@ -687,6 +719,10 @@ cmd.commands = {
     attempt = { cmd.attempt },
     submit = { cmd.submit },
     solutions = { cmd.solutions },
+    leaderboard = {
+        cmd.leaderboard,
+        _positional_complete = { leaderboard_category_keys },
+    },
     desc = {
         cmd.desc_toggle,
         toggle = { cmd.desc_toggle },

@@ -22,6 +22,10 @@ local defaults = {
     random = "\u{f074}",
     back = "\u{f0311}",
 
+    -- Leaderboard (FA-classic codepoints, stable across NF v2/v3)
+    leaderboard = "\u{f091}", -- trophy
+    leaderboard_authored = "\u{f040}", -- pencil
+
     -- Choose Today's Focus (FA-classic codepoints, stable across NF v2/v3)
     focus = "\u{f140}", -- bullseye
     focus_fundamentals = "\u{f02d}", -- book
