@@ -1,9 +1,14 @@
--- Stub the page fetcher before api.leaderboard is first required
+-- Stub the page fetcher before api.leaderboard is first required.
+-- unescape mirrors the real single-pass entity gsub (leaderboard aliases it
+-- at require time, so the stub must provide it).
 local page_stub = { body = nil, err = nil, calls = {} }
 package.loaded["codewars.api.page"] = {
     fetch = function(url, cb)
         table.insert(page_stub.calls, url)
         cb(page_stub.body, page_stub.err)
+    end,
+    unescape = function(s)
+        return (s:gsub("&[#%w]+;", { ["&amp;"] = "&", ["&lt;"] = "<", ["&gt;"] = ">", ["&quot;"] = '"', ["&#39;"] = "'" }))
     end,
 }
 

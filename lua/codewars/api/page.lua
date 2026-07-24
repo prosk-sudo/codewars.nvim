@@ -3,6 +3,25 @@ local headers_mod = require("codewars.api.headers")
 ---@class cw.Api.Page
 local page = {}
 
+local ENTITIES = {
+    ["&lt;"] = "<",
+    ["&gt;"] = ">",
+    ["&amp;"] = "&",
+    ["&quot;"] = '"',
+    ["&#39;"] = "'",
+    ["&#x27;"] = "'",
+    ["&#x2F;"] = "/",
+    ["&nbsp;"] = " ",
+}
+
+--- Decode the common HTML entities found in scraped Codewars pages.
+--- Single-pass table gsub: unknown entities pass through unchanged.
+---@param s string
+---@return string
+function page.unescape(s)
+    return (s:gsub("&[#%w]+;", ENTITIES))
+end
+
 --- Fetch a server-rendered HTML page into a temp file (preserves newlines
 --- exactly, unlike jobstart stdout chunking) and return its body.
 --- Errors carry a flag so callers can word their own messages:

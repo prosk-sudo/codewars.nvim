@@ -72,6 +72,13 @@ function Description:populate()
         return
     end
 
+    -- Content-provider seam (kumite workspaces render non-kata content
+    -- through the same split; kata rendering below is untouched).
+    if self.provider then
+        ui_utils.buf_set_lines(self.bufnr, self.provider())
+        return
+    end
+
     local kata = self.kata
     local lines = {}
 
@@ -156,11 +163,13 @@ function Description:unmount()
     self.visible = false
 end
 
----@param kata cw.ui.Kata
+---@param kata cw.ui.Kata|table owner object (kata, or any table for provider mode)
+---@param provider? fun(): string[] when set, populate() renders these lines instead of kata content
 ---@return cw.ui.Description
-function Description:new(kata)
+function Description:new(kata, provider)
     local obj = setmetatable({}, self)
     obj.kata = kata
+    obj.provider = provider
     obj.visible = false
     return obj
 end

@@ -26,6 +26,9 @@ local defaults = {
     leaderboard = "\u{f091}", -- trophy
     leaderboard_authored = "\u{f040}", -- pencil
 
+    -- Kumite (FA-classic)
+    kumite = "\u{f255}", -- hand-rock (sparring fist)
+
     -- Choose Today's Focus (FA-classic codepoints, stable across NF v2/v3)
     focus = "\u{f140}", -- bullseye
     focus_fundamentals = "\u{f02d}", -- book

@@ -30,20 +30,7 @@ function leaderboard.category(key)
     end
 end
 
-local ENTITIES = {
-    ["&lt;"] = "<",
-    ["&gt;"] = ">",
-    ["&amp;"] = "&",
-    ["&quot;"] = '"',
-    ["&#39;"] = "'",
-    ["&#x27;"] = "'",
-    ["&#x2F;"] = "/",
-    ["&nbsp;"] = " ",
-}
-
-local function unescape(s)
-    return (s:gsub("&[#%w]+;", ENTITIES))
-end
+local unescape = page.unescape
 
 local function strip_tags(s)
     return (s:gsub("<[^>]->", ""))

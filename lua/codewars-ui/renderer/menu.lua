@@ -93,6 +93,9 @@ local function build_pages(menu)
             { icon = I.leaderboard, label = "Leaderboard", sc = "l", expandable = true, fn = function()
                 menu:set_page("leaderboard")
             end },
+            { icon = I.kumite,  label = "Kumite",      sc = "m", expandable = true, fn = function()
+                menu:set_page("kumite")
+            end },
             { icon = I.cookie,  label = "Cookie",      sc = "i", expandable = true, fn = function()
                 menu:set_page("cookie")
             end },
@@ -144,6 +147,17 @@ local function build_pages(menu)
             }
         end)(),
 
+        -- P1 ships Browse only; New and My Drafts mount with their phases
+        -- (design §3.1 — no dead buttons).
+        kumite = {
+            { icon = I.kumite,  label = "Browse",      sc = "l", fn = function()
+                require("codewars.command").kumite()
+            end },
+            { icon = I.back,    label = "Back",        sc = "b", fn = function()
+                menu:set_page("main")
+            end },
+        },
+
         cookie = {
             { icon = I.update,  label = "Update",      sc = "u", fn = signin_fn },
             { icon = I.signout, label = "Delete / Sign Out",    sc = "d", fn = function()
@@ -173,6 +187,7 @@ local page_titles = {
     main = { { "Menu", "Title" } },
     katas = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Katas", "Title" } },
     leaderboard = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Leaderboard", "Title" } },
+    kumite = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Kumite", "Title" } },
     cookie = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Cookie", "Title" } },
     cache = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Cache", "Title" } },
 }

@@ -70,6 +70,7 @@ See [COMMANDS.md](COMMANDS.md) for the full list, or run `:CW help` inside Neovi
 :CW train multiply python
 :CW focus                " or let the trainer pick — Choose Today's Focus
 :CW leaderboard          " top 500 leaderboards (also in the menu under l)
+:CW kumite               " browse Freestyle Sparring (menu m)
 ```
 
 This opens the `8 kyu Multiply` kata with:

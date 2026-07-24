@@ -43,6 +43,8 @@ function cmd.help()
         { "completed",      "Browse completed kata" },
         { "solutions",      "View community solutions" },
         { "leaderboard",    "Top 500 leaderboard (4 categories)" },
+        { "kumite",         "Browse Freestyle Sparring (kumite)" },
+        { "kumite open <id|url>", "Open a kumite by id or link" },
         { "open",           "Open kata in browser" },
         { "",               "" },
         { "UI TOGGLES",     "" },
@@ -239,6 +241,30 @@ function cmd.leaderboard(options)
     end
 
     require("codewars.picker").leaderboard_category(leaderboard_show)
+end
+
+--- :CW kumite — browse Freestyle Sparring (public; works signed out).
+function cmd.kumite()
+    require("codewars.picker").kumite_browse()
+end
+
+--- :CW kumite open <id|url> — open a kumite directly (design §3.2).
+function cmd.kumite_open(options)
+    local ref = options._positional and options._positional[1]
+    local id = require("codewars.api.kumite").parse_ref(ref)
+    if not id then
+        return log.error("Usage: :CW kumite open <id|url> — paste a /kumite/… link or a 24-hex id")
+    end
+
+    log.info("Loading kumite…")
+    require("codewars.api.kumite").fetch_snippet(id, function(snippet, err)
+        if err then
+            return log.err(err)
+        end
+        vim.schedule(function()
+            require("codewars-ui.kumite"):new(snippet):mount()
+        end)
+    end)
 end
 
 function cmd.desc_toggle()
@@ -667,7 +693,9 @@ function cmd.exec(args)
     for _, s in ipairs(parts) do
         local opt = vim.split(s, "=")
 
-        if opt[2] then
+        -- Only word-shaped keys are options (difficulty=8). URLs and other
+        -- '='-bearing positionals (e.g. /kumite/{id}?sel={id}) pass through.
+        if opt[2] and opt[1]:match("^[%w_]+$") then
             options[opt[1]] = vim.split(opt[2], ",", { trimempty = true })
         elseif cmds and type(cmds) == "table" and cmds[s:lower()] then
             cmds = cmds[s:lower()]
@@ -722,6 +750,10 @@ cmd.commands = {
     leaderboard = {
         cmd.leaderboard,
         _positional_complete = { leaderboard_category_keys },
+    },
+    kumite = {
+        cmd.kumite,
+        open = { cmd.kumite_open },
     },
     desc = {
         cmd.desc_toggle,
