@@ -23,6 +23,7 @@ local kumite = {}
 ---@field fixture string
 ---@field package string
 ---@field test_framework string
+---@field test_language string? language the fixture is written in (may differ from `language`)
 ---@field state string "published"|"draft"
 ---@field parent_id string?
 ---@field published_at string?
@@ -208,6 +209,7 @@ function kumite.fetch_snippet(id, cb)
                 fixture = res.fixture or "",
                 ["package"] = res["package"] or "",
                 test_framework = res.testFramework or "cw-2",
+                test_language = res.testLanguage,
                 state = res.state or "published",
                 parent_id = res.parentId,
                 published_at = res.publishedAt,

@@ -13,6 +13,7 @@ All notable changes to codewars.nvim are documented here.
 
 ### Fixed
 - `:CW` argument parsing no longer swallows URL positionals containing `=` (e.g. `/kumite/…?sel=…` links) as options.
+- Kumite code and fixture buffers now get correct syntax highlighting for every Codewars language: the workspace was setting the buffer's filetype to a file extension (e.g. `py`) instead of the real Neovim filetype (`python`), so only languages where those coincide highlighted. A slug→filetype map now covers 56 languages, and the fixture split uses the fixture's own language (BF/Solidity tests are JavaScript, SQL tests are Ruby, etc.). Highlighting still requires a built-in syntax file or a treesitter parser (`:TSInstall <ft>`) for that language.
 
 ## [0.2.0] - 2026-07-22
 

@@ -129,6 +129,46 @@ describe("cache.kumite_stash", function()
     end)
 end)
 
+describe("kumite.filetypes", function()
+    local ft = require("codewars.kumite.filetypes")
+
+    it("maps codewars slugs to real Neovim filetype names, not extensions", function()
+        assert.are.equal("python", ft.code("python"))   -- not "py"
+        assert.are.equal("ruby", ft.code("ruby"))        -- not "rb"
+        assert.are.equal("rust", ft.code("rust"))        -- not "rs"
+        assert.are.equal("cs", ft.code("csharp"))
+        assert.are.equal("haskell", ft.code("haskell"))
+    end)
+
+    it("covers languages beyond the 32 configured for training", function()
+        assert.are.equal("cobol", ft.code("cobol"))
+        assert.are.equal("agda", ft.code("agda"))
+        assert.are.equal("lisp", ft.code("commonlisp"))
+        assert.are.equal("cf", ft.code("cfml"))
+    end)
+
+    it("returns nil for languages with no Neovim grammar", function()
+        assert.is_nil(ft.code("bf"))
+        assert.is_nil(ft.code("lambdacalc"))
+        assert.is_nil(ft.code("totally-made-up"))
+    end)
+
+    it("uses the server testLanguage for the fixture when provided", function()
+        -- a java solution whose fixture the server reports as java
+        assert.are.equal("java", ft.test("java", "java"))
+    end)
+
+    it("derives cross-language fixtures (BF/SQL/NASM) when testLanguage is absent", function()
+        assert.are.equal("javascript", ft.test("bf"))     -- BF tests are JS
+        assert.are.equal("ruby", ft.test("sql"))          -- SQL tests are Ruby
+        assert.are.equal("c", ft.test("nasm"))            -- NASM tests are C
+    end)
+
+    it("falls back to the solution language for same-language fixtures", function()
+        assert.are.equal("python", ft.test("python"))
+    end)
+end)
+
 describe("kumite.fixtures", function()
     local fx = require("codewars.kumite.fixtures")
 

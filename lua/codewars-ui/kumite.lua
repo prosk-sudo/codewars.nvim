@@ -3,7 +3,6 @@ local TestcaseSplit = require("codewars-ui.split.testcase")
 local Console = require("codewars-ui.layout.console")
 local kstate = require("codewars.kumite.state")
 local kstash = require("codewars.cache.kumite_stash")
-local utils = require("codewars.utils")
 local ui_utils = require("codewars-ui.utils")
 local log = require("codewars.logger")
 local api = vim.api
@@ -200,10 +199,10 @@ function Kumite:mount()
 
     api.nvim_buf_set_lines(self.bufnr, 0, -1, false, vim.split(self.snippet.code or "", "\n"))
 
-    -- Unsupported-language fallback (eng D13): view always works; unknown
-    -- languages render as plain text via the raw slug (no syntax defined).
-    local lang_info = utils.get_lang(self.lang)
-    local ft = lang_info and lang_info.ft or self.snippet.language
+    -- Syntax highlighting for every codewars language via the real Neovim
+    -- filetype (not the file extension). Unknown/grammarless languages
+    -- (eng D13) stay plain text.
+    local ft = require("codewars.kumite.filetypes").code(self.lang) or ""
 
     ui_utils.buf_set_opts(self.bufnr, {
         buftype = "acwrite", -- lets :w be intercepted (fork/run hints) without a real file
@@ -236,7 +235,14 @@ function Kumite:mount()
         self.fixture_split = TestcaseSplit:new(self)
         self.fixture_split:mount()
         self.fixture_split:populate(self.snippet.fixture or "")
-        ui_utils.buf_set_opts(self.fixture_split.bufnr, { modifiable = kstate.is_editable(self.state) })
+        -- The fixture is often a different language than the solution
+        -- (BF/Solidity tests are JS, SQL tests are Ruby, …); override the
+        -- split's extension-derived filetype with the real test filetype.
+        local test_ft = require("codewars.kumite.filetypes").test(self.lang, self.snippet.test_language)
+        ui_utils.buf_set_opts(self.fixture_split.bufnr, {
+            modifiable = kstate.is_editable(self.state),
+            filetype = test_ft or "",
+        })
     end
 
     if self.winid and api.nvim_win_is_valid(self.winid) then
