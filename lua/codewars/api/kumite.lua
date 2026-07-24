@@ -324,4 +324,47 @@ function kumite.save_draft(id, model, cb)
     })
 end
 
+--- Unpublish (hide) a published kumite (contract live-captured 2026-07-25):
+--- `POST /kumite/{id}/unpublish` (empty body) → `{ success = true, data = … }`.
+--- Reversible — publishing again re-lists it.
+---@param id string
+---@param cb fun(err: cw.err?)
+function kumite.unpublish(id, cb)
+    require("codewars.api.utils").post(("/kumite/%s/unpublish"):format(id), {
+        body = vim.empty_dict(),
+        callback = function(res, err)
+            if err then
+                return cb(err)
+            end
+            if type(res) ~= "table" or res.success ~= true then
+                return cb({ msg = "Codewars rejected the unpublish." })
+            end
+            cb(nil)
+        end,
+    })
+end
+
+--- Convert a kumite into a new kata (contract live-captured 2026-07-25):
+--- `POST /kumite/{id}/convert` (empty body) creates a new kata FROM the kumite
+--- and unpublishes/hides the kumite. Returns the kata's edit URL
+--- (`res.data.url` = `/kata/{new_id}/edit`).
+---@param id string
+---@param cb fun(kata_edit_url: string?, err: cw.err?)
+function kumite.convert_to_kata(id, cb)
+    require("codewars.api.utils").post(("/kumite/%s/convert"):format(id), {
+        body = vim.empty_dict(),
+        callback = function(res, err)
+            if err then
+                return cb(nil, err)
+            end
+            local url = type(res) == "table" and res.success == true
+                and type(res.data) == "table" and res.data.url
+            if type(url) ~= "string" then
+                return cb(nil, { msg = "Convert failed, or Codewars changed the response shape." })
+            end
+            cb(url, nil)
+        end,
+    })
+end
+
 return kumite

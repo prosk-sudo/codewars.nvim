@@ -103,3 +103,75 @@ describe("kumite.save_draft", function()
         assert.is_true(got_err.auth)
     end)
 end)
+
+describe("kumite.unpublish", function()
+    local calls
+    local function stub(response, err)
+        calls = {}
+        package.loaded["codewars.api.utils"] = {
+            post = function(endpoint, opts)
+                table.insert(calls, { endpoint = endpoint, body = opts.body })
+                opts.callback(response, err)
+            end,
+        }
+    end
+
+    it("POSTs /kumite/{id}/unpublish and reports success (nil err)", function()
+        stub({ success = true, data = {} })
+        local got_err = "sentinel"
+        kumite.unpublish(SERVER_ID, function(err) got_err = err end)
+        assert.are.equal("/kumite/" .. SERVER_ID .. "/unpublish", calls[1].endpoint)
+        assert.is_nil(got_err)
+    end)
+
+    it("surfaces a rejected unpublish", function()
+        stub({ success = false })
+        local got_err
+        kumite.unpublish(SERVER_ID, function(err) got_err = err end)
+        assert.truthy(got_err.msg:match("unpublish"))
+    end)
+
+    it("passes transport/auth errors through", function()
+        stub(nil, { msg = "boom", auth = true })
+        local got_err
+        kumite.unpublish(SERVER_ID, function(err) got_err = err end)
+        assert.is_true(got_err.auth)
+    end)
+end)
+
+describe("kumite.convert_to_kata", function()
+    local calls
+    local function stub(response, err)
+        calls = {}
+        package.loaded["codewars.api.utils"] = {
+            post = function(endpoint, opts)
+                table.insert(calls, { endpoint = endpoint, body = opts.body })
+                opts.callback(response, err)
+            end,
+        }
+    end
+
+    it("POSTs /kumite/{id}/convert and returns the kata edit url", function()
+        stub({ success = true, data = { url = "/kata/6a63e7e085269ff93dc6332e/edit" } })
+        local got
+        kumite.convert_to_kata(SERVER_ID, function(url, err) got = { url = url, err = err } end)
+        assert.are.equal("/kumite/" .. SERVER_ID .. "/convert", calls[1].endpoint)
+        assert.is_nil(got.err)
+        assert.are.equal("/kata/6a63e7e085269ff93dc6332e/edit", got.url)
+    end)
+
+    it("errors when the response carries no url", function()
+        stub({ success = true, data = {} })
+        local got
+        kumite.convert_to_kata(SERVER_ID, function(url, err) got = { url = url, err = err } end)
+        assert.is_nil(got.url)
+        assert.truthy(got.err.msg:match("Convert failed"))
+    end)
+
+    it("passes transport/auth errors through", function()
+        stub(nil, { msg = "boom", auth = true })
+        local got
+        kumite.convert_to_kata(SERVER_ID, function(url, err) got = { url = url, err = err } end)
+        assert.is_true(got.err.auth)
+    end)
+end)

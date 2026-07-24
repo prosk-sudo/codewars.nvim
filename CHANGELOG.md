@@ -10,7 +10,9 @@ All notable changes to codewars.nvim are documented here.
 - **Kumite fork & run**: `:CW kumite fork` (or `Ctrl-f` in the browser) turns a kumite into an editable local copy; `:CW test` runs your edited code against its fixture in the familiar result console — no server side effects. Signed-out runs prompt to sign in and then resume. Unsaved edits are stashed to the cache on close so nothing is lost.
 - **Start a new kumite**: `:CW kumite new [language]` (menu `m` → New) opens a blank workspace with the language's default test framework — write code and a fixture and run it locally.
 - **Save a kumite as a draft** (`:CW kumite save`): saves the current workspace to your codewars.com account — a new draft the first time (a forked/new kumite), an in-place update every time after. Signed-out saves prompt to sign in and then resume.
-- **Publish a kumite** (`:CW kumite publish`): after saving, publishes the draft publicly — it runs your code against the fixture on the Codewars runner, and only publishes if the tests pass. Confirms first (publishing is public and can't be casually undone). A My Drafts list and draft deletion arrive in a later phase.
+- **Publish a kumite** (`:CW kumite publish`): after saving, publishes the draft publicly — it runs your code against the fixture on the Codewars runner, and only publishes if the tests pass. Confirms first (publishing is public and can't be casually undone).
+- **Unpublish a kumite** (`:CW kumite unpublish`): hides a published kumite again (reversible — publish to re-list it).
+- **Convert a kumite to a kata** (`:CW kumite convert`): creates a new kata from the kumite (and hides the kumite); confirms first, then reports the new kata's edit URL to finish authoring on codewars.com. A My Drafts list, draft deletion, and in-editor kata authoring arrive in a later phase.
 - **Discoverable keys**: the kumite workspace lists its available commands at the top of the description panel, and the browser now shows a light-blue keybinding box (view / fork / next / prev / go-to-page / language) beside the picker, so it's clear what you can do.
 
 ### Fixed

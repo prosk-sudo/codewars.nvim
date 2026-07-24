@@ -300,6 +300,66 @@ function Kumite:_do_publish()
     end)
 end
 
+--- Unpublish (hide) this kumite (design §2.4, P3). Owner action; reversible by
+--- publishing again. Only meaningful once it exists on codewars.com.
+function Kumite:unpublish()
+    local kumite_api = require("codewars.api.kumite")
+    if not kumite_api.is_server_id(self.snippet.id) then
+        return log.warn("This kumite isn't on codewars.com yet — nothing to unpublish.")
+    end
+    kumite_api.unpublish(self.snippet.id, function(err)
+        if err then
+            if err.auth then
+                require("codewars.cache.cookie").delete()
+            end
+            return log.error("Unpublish failed — " .. (err.msg or "unknown error"))
+        end
+        if self.state == "published" then
+            self.state = "server_draft"
+            self:refresh_title()
+            if self.description then
+                self.description:populate()
+            end
+        end
+        log.info("Unpublished — the kumite is hidden again (publish to re-list it).")
+    end)
+end
+
+--- Convert this kumite into a new kata (design §2.4, P3). Creates a kata from
+--- the kumite data and hides the kumite; confirms first. Reports the kata's
+--- edit URL — finishing the kata (discipline/rank/description/publish) is done
+--- on codewars.com for now.
+function Kumite:convert()
+    local kumite_api = require("codewars.api.kumite")
+    if not kumite_api.is_server_id(self.snippet.id) then
+        return log.warn("Save the kumite first (:CW kumite save), then convert.")
+    end
+    vim.ui.select({ "Convert", "Cancel" }, {
+        prompt = "Convert this kumite into a new kata? This creates a kata and hides the kumite.",
+    }, function(choice)
+        if choice ~= "Convert" then
+            return log.info("Convert cancelled.")
+        end
+        kumite_api.convert_to_kata(self.snippet.id, function(url, err)
+            if err then
+                if err.auth then
+                    require("codewars.cache.cookie").delete()
+                end
+                return log.error("Convert failed — " .. (err.msg or "unknown error"))
+            end
+            if self.state == "published" then
+                self.state = "server_draft" -- the kumite is hidden now
+                self:refresh_title()
+                if self.description then
+                    self.description:populate()
+                end
+            end
+            local full = url:match("^https?://") and url or ("https://www.codewars.com" .. url)
+            log.info("Converted to a new kata — finish authoring it at " .. full)
+        end)
+    end)
+end
+
 --- Jump to an already-open workspace for this snippet, if any.
 ---@param id string
 ---@return boolean jumped

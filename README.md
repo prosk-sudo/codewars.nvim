@@ -74,6 +74,8 @@ See [COMMANDS.md](COMMANDS.md) for the full list, or run `:CW help` inside Neovi
 :CW kumite new           " start a fresh kumite; fork one with :CW kumite fork, run with :CW test
 :CW kumite save          " save the current kumite to codewars.com as a draft
 :CW kumite publish       " publish the saved kumite publicly (tests must pass)
+:CW kumite unpublish     " hide a published kumite again (reversible)
+:CW kumite convert       " convert the kumite into a new kata (hides the kumite)
 ```
 
 This opens the `8 kyu Multiply` kata with:

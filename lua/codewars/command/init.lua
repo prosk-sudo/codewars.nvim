@@ -327,6 +327,29 @@ function cmd.kumite_publish()
     end)
 end
 
+--- :CW kumite unpublish — hide a published kumite (reversible). Needs auth.
+function cmd.kumite_unpublish()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open one first, then unpublish.")
+    end
+    cmd.with_auth(function()
+        kw:unpublish()
+    end)
+end
+
+--- :CW kumite convert — convert the current kumite into a new kata (creates a
+--- kata, hides the kumite). Needs auth; the workspace confirms first.
+function cmd.kumite_convert()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open or save one first, then convert.")
+    end
+    cmd.with_auth(function()
+        kw:convert()
+    end)
+end
+
 --- :CW kumite new [language] — start a fresh kumite from scratch. Opens a
 --- blank editable workspace you can write and run locally; saving and
 --- publishing to codewars.com arrive in a later update. No auth needed to
@@ -864,6 +887,8 @@ cmd.commands = {
         fork = { cmd.kumite_fork },
         save = { cmd.kumite_save },
         publish = { cmd.kumite_publish },
+        unpublish = { cmd.kumite_unpublish },
+        convert = { cmd.kumite_convert },
         new = {
             cmd.kumite_new,
             _positional_complete = { lang_slugs },
