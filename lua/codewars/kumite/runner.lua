@@ -25,6 +25,12 @@ function M.run(ws, result)
         return
     end
 
+    -- Snippet JSON carries no runtime version, so both fresh kumites and forks
+    -- fall back to the language's Codewars default (else the runner picks a
+    -- legacy runtime, e.g. Python 2.7 where `import codewars_test` fails).
+    local version = ws.snippet.language_version
+        or require("codewars.api.kumite").default_version(ws.lang)
+
     BUSY = true
     attempt_api.submit(
         code,
@@ -32,7 +38,7 @@ function M.run(ws, result)
         fixture,
         ws.snippet.test_framework or "cw-2",
         nil, -- no relay/solution id: kumite runs are unattached
-        ws.snippet.language_version,
+        version,
         { setup = ws.snippet.package or "" },
         function(res, err)
             BUSY = false

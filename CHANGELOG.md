@@ -12,6 +12,8 @@ All notable changes to codewars.nvim are documented here.
 - **Discoverable keys**: the kumite workspace lists its available commands at the top of the description panel, and the browser now shows a light-blue keybinding box (view / fork / next / prev / go-to-page / language) beside the picker, so it's clear what you can do.
 
 ### Fixed
+- Kumite runs now submit the language's real runtime version, so `:CW test` no longer fails on Python with `ImportError: No module named codewars_test`. Codewars' runner defaults an unversioned submission to a legacy runtime (Python 2.7, which has no `codewars_test`); the snippet JSON never carries a version, so new kumites and forks now fall back to each language's Codewars-default runtime (verified from `/kumite/new`, e.g. Python `3.11`).
+- The kumite fixture buffer can be written with `:w` without `E382: Cannot write, 'buftype' option is set`. Like the code buffer it's now an `acwrite` buffer whose `:w` shows the "runs locally — `:CW test`" hint instead of erroring; editing the fixture also updates the dirty `+` marker.
 - `:CW` argument parsing no longer swallows URL positionals containing `=` (e.g. `/kumite/…?sel=…` links) as options.
 - Kumite code and fixture buffers now get correct syntax highlighting for every Codewars language: the workspace was setting the buffer's filetype to a file extension (e.g. `py`) instead of the real Neovim filetype (`python`), so only languages where those coincide highlighted. A slug→filetype map now covers 56 languages, and the fixture split uses the fixture's own language (BF/Solidity tests are JavaScript, SQL tests are Ruby, etc.). Highlighting still requires a built-in syntax file or a treesitter parser (`:TSInstall <ft>`) for that language.
 

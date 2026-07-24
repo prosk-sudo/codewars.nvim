@@ -83,6 +83,24 @@ describe("kumite.runner", function()
         assert.are.equal("runner exploded", captured.handle_error.msg)
         assert.is_nil(captured.handle)
     end)
+
+    it("falls back to the language default runtime when the snippet has none", function()
+        -- Without this, Codewars runs Python under a legacy 2.7 runtime where
+        -- `import codewars_test` fails. The snippet JSON never carries a version.
+        submit_response = { res = { result = { completed = true } } }
+        local result = make_result()
+        runner.run(make_ws("print(1)", "assert True"), result) -- lang = python
+        assert.are.equal("3.11", submit_args.ver)
+    end)
+
+    it("keeps an explicit snippet runtime version over the default", function()
+        submit_response = { res = { result = { completed = true } } }
+        local ws = make_ws("print(1)", "assert True")
+        ws.snippet.language_version = "3.8"
+        local result = make_result()
+        runner.run(ws, result)
+        assert.are.equal("3.8", submit_args.ver)
+    end)
 end)
 
 describe("cache.kumite_stash", function()
@@ -279,7 +297,10 @@ describe("cmd kumite P2 routing", function()
         before_each(function()
             mounted = nil
             package.loaded["codewars.picker"] = { pick_language = function(cb) cb("python") end }
-            package.loaded["codewars.api.kumite"] = { default_framework = function() return "cw-2" end }
+            package.loaded["codewars.api.kumite"] = {
+                default_framework = function() return "cw-2" end,
+                default_version = function() return "3.11" end,
+            }
             package.loaded["codewars-ui.kumite"] = {
                 new = function(_, snippet, opts)
                     mounted = { snippet = snippet, opts = opts }
@@ -296,6 +317,7 @@ describe("cmd kumite P2 routing", function()
             assert.are.equal("My Kumite", mounted.snippet.title)
             assert.are.equal("python", mounted.snippet.language)
             assert.are.equal("cw-2", mounted.snippet.test_framework)
+            assert.are.equal("3.11", mounted.snippet.language_version)
             assert.are.equal("local_new", mounted.opts.state)
             assert.truthy(mounted.snippet.id:match("^local%-"))
             -- fixture is prefilled from the starter template, not empty

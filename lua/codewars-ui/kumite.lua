@@ -256,9 +256,13 @@ function Kumite:mount()
         -- split's extension-derived filetype with the real test filetype.
         local test_ft = require("codewars.kumite.filetypes").test(self.lang, self.snippet.test_language)
         ui_utils.buf_set_opts(self.fixture_split.bufnr, {
+            buftype = "acwrite", -- like the code buffer: intercept :w instead of E382 on nofile
             modifiable = kstate.is_editable(self.state),
             filetype = test_ft or "",
         })
+        -- Populating marked it 'modified'; clear so a :w/:q on the fixture
+        -- gives the same clean hint as the code buffer (no E382/E37).
+        vim.bo[self.fixture_split.bufnr].modified = false
     end
 
     if self.winid and api.nvim_win_is_valid(self.winid) then
@@ -285,27 +289,39 @@ function Kumite:autocmds()
             self:_unmount()
         end,
     })
-    -- Cosmetic dirty marker in the title; the guard itself recomputes.
-    api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-        group = group,
-        buffer = self.bufnr,
-        callback = function()
-            self:refresh_title()
-        end,
-    })
-    -- :w in the editor is meaningless in P2 — steer to the real actions.
-    api.nvim_create_autocmd("BufWriteCmd", {
-        group = group,
-        buffer = self.bufnr,
-        callback = function()
-            vim.bo[self.bufnr].modified = false
-            if kstate.is_editable(self.state) then
-                log.info("Kumite runs locally — :CW test to run it. (Publishing arrives in a later update.)")
-            else
-                log.info("Read-only — :CW kumite fork to edit a copy.")
-            end
-        end,
-    })
+    -- :w in either editor is meaningless in P2 — steer to the real actions.
+    local function write_hint(bufnr)
+        vim.bo[bufnr].modified = false
+        if kstate.is_editable(self.state) then
+            log.info("Kumite runs locally — :CW test to run it. (Publishing arrives in a later update.)")
+        else
+            log.info("Read-only — :CW kumite fork to edit a copy.")
+        end
+    end
+
+    -- Both the code buffer and (when present) the fixture split get the
+    -- dirty-title marker and the :w hint, so editing either behaves the same.
+    local editors = { self.bufnr }
+    if self.fixture_split and self.fixture_split.bufnr then
+        editors[#editors + 1] = self.fixture_split.bufnr
+    end
+    for _, bufnr in ipairs(editors) do
+        -- Cosmetic dirty marker in the title; the guard itself recomputes.
+        api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+            group = group,
+            buffer = bufnr,
+            callback = function()
+                self:refresh_title()
+            end,
+        })
+        api.nvim_create_autocmd("BufWriteCmd", {
+            group = group,
+            buffer = bufnr,
+            callback = function()
+                write_hint(bufnr)
+            end,
+        })
+    end
 end
 
 function Kumite:_unmount()

@@ -322,6 +322,7 @@ function cmd.kumite_new(options)
                 fixture = require("codewars.kumite.fixtures").get(lang),
                 ["package"] = "",
                 test_framework = kumite_api.default_framework(lang),
+                language_version = kumite_api.default_version(lang),
                 state = "draft",
                 author = config.user.username ~= "" and config.user.username or nil,
             }
