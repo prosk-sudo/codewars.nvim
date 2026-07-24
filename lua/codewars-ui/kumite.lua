@@ -38,14 +38,14 @@ function Kumite:keys_hint()
     if kstate.is_editable(self.state) then
         return {
             "`:CW test` — run your code against the fixture",
-            "`g?` — all commands",
+            "`g?` — all commands · `:q` / `:q!` — close (unsaved edits are stashed)",
             "_(saving & publishing arrive in a later update)_",
         }
     end
     return {
         "`:CW kumite fork` — edit a local copy of this kumite",
         "`:CW test` — run it (after forking)",
-        "`g?` — all commands",
+        "`q` — close this view · `g?` — all commands",
     }
 end
 
@@ -129,8 +129,16 @@ function Kumite:header_lines()
     return lines
 end
 
+--- Close the whole kumite workspace (its tab).
+function Kumite:close()
+    if self.winid and api.nvim_win_is_valid(self.winid) then
+        pcall(api.nvim_win_close, self.winid, true)
+    end
+end
+
 --- Apply the read-only insert-key guards for the current state. Cleared
---- when the workspace becomes editable (fork).
+--- when the workspace becomes editable (fork). Also binds `q` to close, so
+--- a read-only view behaves like the other read-only panels.
 function Kumite:apply_readonly_guard()
     local _, edit_err = kstate.step(self.state, "edit")
     for _, key in ipairs(INSERT_KEYS) do
@@ -138,12 +146,17 @@ function Kumite:apply_readonly_guard()
             log.warn(edit_err)
         end, { buffer = self.bufnr, nowait = true })
     end
+    vim.keymap.set("n", "q", function()
+        self:close()
+    end, { buffer = self.bufnr, nowait = true })
 end
 
 function Kumite:clear_readonly_guard()
     for _, key in ipairs(INSERT_KEYS) do
         pcall(vim.keymap.del, "n", key, { buffer = self.bufnr })
     end
+    -- Editing needs `q` back as the normal macro-record key.
+    pcall(vim.keymap.del, "n", "q", { buffer = self.bufnr })
 end
 
 --- Fork this kumite into an editable local copy (design §3.4). Pure local
@@ -211,6 +224,9 @@ function Kumite:mount()
         filetype = ft,
         modifiable = kstate.is_editable(self.state),
     })
+    -- Populating an acwrite buffer marks it 'modified'; clear that so a
+    -- freshly-opened kumite closes with :q (and `q`) without E37.
+    vim.bo[self.bufnr].modified = false
 
     local named = pcall(api.nvim_buf_set_name, self.bufnr, self:title())
     if not named then
