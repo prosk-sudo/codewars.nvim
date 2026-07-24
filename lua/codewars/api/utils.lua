@@ -42,6 +42,16 @@ function utils.put(endpoint, opts)
     return utils.curl("put", options)
 end
 
+---@param endpoint string
+---@param opts? table
+function utils.delete(endpoint, opts)
+    local options = vim.tbl_deep_extend("force", {
+        endpoint = endpoint,
+    }, opts or {})
+
+    return utils.curl("delete", options)
+end
+
 ---@private
 ---@param method string
 ---@param params table
