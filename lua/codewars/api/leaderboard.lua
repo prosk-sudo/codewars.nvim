@@ -94,8 +94,7 @@ function leaderboard.fetch(category_key, cb)
 
     page.fetch(urls.base .. "/users/leaderboard" .. cat.path, function(body, perr)
         if perr then
-            return cb(nil, { msg = perr.curl and "Failed to fetch the leaderboard (curl error)"
-                or "Empty response when fetching the leaderboard." })
+            return cb(nil, page.fetch_err("the leaderboard", perr))
         end
 
         local entries = leaderboard.parse_html(body)

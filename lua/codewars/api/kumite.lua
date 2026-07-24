@@ -132,8 +132,7 @@ function kumite.fetch_list(lang, page_num, cb)
 
     page.fetch(url, function(body, perr)
         if perr then
-            return cb(nil, { msg = perr.curl and "Failed to fetch the kumite list (curl error)"
-                or "Empty response when fetching the kumite list." })
+            return cb(nil, page.fetch_err("the kumite list", perr))
         end
 
         local result = kumite.parse_list_html(body)
@@ -142,6 +141,29 @@ function kumite.fetch_list(lang, page_num, cb)
         end
         cb(result)
     end)
+end
+
+--- Public-view snippet built from browse-list data — the signed-out
+--- fallback shape (design §3.6). Owns the cw.KumiteSnippet field list the
+--- same way fetch_snippet owns the full-JSON mapping.
+---@param entry cw.KumiteListEntry
+---@return cw.KumiteSnippet
+function kumite.snippet_from_list_entry(entry)
+    return {
+        id = entry.id,
+        title = entry.title,
+        description = "",
+        language = entry.language or "",
+        code = entry.code or "",
+        fixture = "",
+        ["package"] = "",
+        test_framework = "cw-2",
+        state = "published",
+        parent_id = entry.parent_id,
+        published_at = entry.published_at,
+        author = entry.author,
+        forked_from_author = entry.forked_from_author,
+    }
 end
 
 --- Fetch one snippet's full JSON (cookie auth; design §2.2).

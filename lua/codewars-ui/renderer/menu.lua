@@ -65,6 +65,12 @@ end
 local function build_pages(menu)
     I = require("codewars.icons").get()
 
+    local function leaderboard_show(category_key)
+        return function()
+            require("codewars.command").leaderboard({ _positional = { category_key } })
+        end
+    end
+
     local function signin_fn()
         require("codewars.command").cookie_prompt(function(success)
             if success then
@@ -130,22 +136,15 @@ local function build_pages(menu)
             end },
         },
 
-        leaderboard = (function()
-            local function show(category_key)
-                return function()
-                    require("codewars.command").leaderboard({ _positional = { category_key } })
-                end
-            end
-            return {
-                { icon = I.leaderboard,          label = "Overall",                      sc = "o", fn = show("overall") },
-                { icon = I.completed,            label = "Completed Kata",               sc = "k", fn = show("kata") },
-                { icon = I.leaderboard_authored, label = "Authored Kata & Translations", sc = "a", fn = show("authored") },
-                { icon = I.focus_rank_up,        label = "Ranks",                        sc = "r", fn = show("ranks") },
-                { icon = I.back,                 label = "Back",                         sc = "b", fn = function()
-                    menu:set_page("main")
-                end },
-            }
-        end)(),
+        leaderboard = {
+            { icon = I.leaderboard,          label = "Overall",                      sc = "o", fn = leaderboard_show("overall") },
+            { icon = I.completed,            label = "Completed Kata",               sc = "k", fn = leaderboard_show("kata") },
+            { icon = I.leaderboard_authored, label = "Authored Kata & Translations", sc = "a", fn = leaderboard_show("authored") },
+            { icon = I.focus_rank_up,        label = "Ranks",                        sc = "r", fn = leaderboard_show("ranks") },
+            { icon = I.back,                 label = "Back",                         sc = "b", fn = function()
+                menu:set_page("main")
+            end },
+        },
 
         -- P1 ships Browse only; New and My Drafts mount with their phases
         -- (design §3.1 — no dead buttons).

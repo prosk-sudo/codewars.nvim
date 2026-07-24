@@ -44,27 +44,6 @@ local transitions = {
         save = { err = "Nothing to save — this is someone else's kumite. Fork it first." },
         publish = { err = "Publish is only available for an editable draft." },
     },
-    local_new = {
-        edit = "local_new",
-        run = "local_new",
-        save = "saving",
-        publish = "publishing",
-        fork = { err = ALREADY_EDITABLE },
-    },
-    local_fork = {
-        edit = "local_fork",
-        run = "local_fork",
-        save = "saving",
-        publish = "publishing",
-        fork = { err = ALREADY_EDITABLE },
-    },
-    server_draft = {
-        edit = "server_draft",
-        run = "server_draft",
-        save = "saving",
-        publish = "publishing",
-        fork = { err = ALREADY_EDITABLE },
-    },
     saving = {
         edit = { err = SAVING_LOCKED },
         run = { err = SAVING_LOCKED },
@@ -91,6 +70,18 @@ local transitions = {
         publish = { err = "Already published." },
     },
 }
+
+-- The three editable states share one shape: stay put on edit/run, hand
+-- off to the in-flight states on save/publish.
+for editable_state in pairs(EDITABLE) do
+    transitions[editable_state] = {
+        edit = editable_state,
+        run = editable_state,
+        save = "saving",
+        publish = "publishing",
+        fork = { err = ALREADY_EDITABLE },
+    }
+end
 
 state.transitions = transitions
 

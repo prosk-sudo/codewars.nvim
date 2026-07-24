@@ -1,15 +1,16 @@
--- Stub the page fetcher before api.leaderboard is first required.
--- unescape mirrors the real single-pass entity gsub (leaderboard aliases it
--- at require time, so the stub must provide it).
+-- Stub only page.fetch before api.leaderboard is first required; unescape
+-- and fetch_err stay the real implementations so they can't drift. (If
+-- kumite_spec ran first, package.loaded already holds its stub — whose
+-- unescape/fetch_err are the same real functions, so this stays correct.)
+local prior_page = require("codewars.api.page")
 local page_stub = { body = nil, err = nil, calls = {} }
 package.loaded["codewars.api.page"] = {
     fetch = function(url, cb)
         table.insert(page_stub.calls, url)
         cb(page_stub.body, page_stub.err)
     end,
-    unescape = function(s)
-        return (s:gsub("&[#%w]+;", { ["&amp;"] = "&", ["&lt;"] = "<", ["&gt;"] = ">", ["&quot;"] = '"', ["&#39;"] = "'" }))
-    end,
+    unescape = prior_page.unescape,
+    fetch_err = prior_page.fetch_err,
 }
 
 -- Mirrors the live structure (verified 2026-07-24): one <tr data-username>

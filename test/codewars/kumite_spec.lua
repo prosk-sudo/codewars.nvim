@@ -1,15 +1,16 @@
--- Stub the page fetcher before api.kumite is first required (it aliases
--- page.unescape at require time, so the stub must provide it).
+-- Stub only page.fetch before api.kumite is first required; unescape and
+-- fetch_err stay the real implementations so entity decoding and error
+-- wording can't silently drift from the module under test.
+local real_page = require("codewars.api.page")
 local page_stub = { body = nil, err = nil, calls = {} }
-package.loaded["codewars.api.page"] = package.loaded["codewars.api.page"] or {}
-local page_mod = package.loaded["codewars.api.page"]
-page_mod.fetch = function(url, cb)
-    table.insert(page_stub.calls, url)
-    cb(page_stub.body, page_stub.err)
-end
-page_mod.unescape = page_mod.unescape or function(s)
-    return (s:gsub("&[#%w]+;", { ["&amp;"] = "&", ["&lt;"] = "<", ["&gt;"] = ">", ["&quot;"] = '"', ["&#39;"] = "'" }))
-end
+package.loaded["codewars.api.page"] = {
+    fetch = function(url, cb)
+        table.insert(page_stub.calls, url)
+        cb(page_stub.body, page_stub.err)
+    end,
+    unescape = real_page.unescape,
+    fetch_err = real_page.fetch_err,
+}
 
 -- Mirrors the live list markup (verified 2026-07-24): item roots are
 -- div.code-snippet-list-item with trailing utility classes; each item has

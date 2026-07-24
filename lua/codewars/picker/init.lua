@@ -654,23 +654,11 @@ end
 ---@param entry cw.KumiteListEntry
 local function kumite_open_entry(entry)
     log.info("Loading kumite…")
-    require("codewars.api.kumite").fetch_snippet(entry.id, function(snippet, err)
+    local kumite_api = require("codewars.api.kumite")
+    kumite_api.fetch_snippet(entry.id, function(snippet, err)
         if err and err.auth then
             log.info("Signed out — showing the public view from list data. Run :CW cookie for the full view.")
-            snippet = {
-                id = entry.id,
-                title = entry.title,
-                description = "",
-                language = entry.language or "",
-                code = entry.code or "",
-                fixture = "",
-                ["package"] = "",
-                test_framework = "cw-2",
-                state = "published",
-                parent_id = entry.parent_id,
-                published_at = entry.published_at,
-                author = entry.author,
-            }
+            snippet = kumite_api.snippet_from_list_entry(entry)
         elseif err then
             return log.err(err)
         end
@@ -769,10 +757,8 @@ function picker._show_kumite_list(entries)
                 end)
             end)
             map({ "i", "n" }, "<C-l>", function()
-                local lang_entries = { { label = "All languages", value = { slug = false } } }
-                for _, lang in ipairs(config.langs) do
-                    table.insert(lang_entries, { label = lang.lang, value = { slug = lang.slug } })
-                end
+                local lang_entries = lang_dropdown_entries(config.langs)
+                table.insert(lang_entries, 1, { label = "All languages", value = { slug = false } })
                 t.actions.close(prompt_bufnr)
                 dropdown.open({
                     prompt_title = "Kumite language",

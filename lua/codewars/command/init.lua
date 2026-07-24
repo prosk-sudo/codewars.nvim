@@ -593,6 +593,16 @@ function cmd.start_with_cmd()
     end
 end
 
+--- The one definition of "what counts as a key=value option token":
+--- word-shaped keys only (difficulty=8). URLs and other '='-bearing
+--- positionals (/kumite/{id}?sel={id}) are never options. Shared by
+--- exec and parse/complete so the rule can't fork.
+---@param token string
+---@return string? key, string? value
+local function split_option(token)
+    return token:match("^([%w_]+)=(.*)$")
+end
+
 ---@param args string
 ---@return string[], string[]
 function cmd.parse(args)
@@ -603,7 +613,7 @@ function cmd.parse(args)
 
     local options = {}
     for _, part in ipairs(parts) do
-        local opt = part:match("(.-)=.-")
+        local opt = split_option(part)
         if opt then
             table.insert(options, opt)
         end
@@ -691,12 +701,10 @@ function cmd.exec(args)
     local parts = vim.split(vim.trim(args.args), "%s+", { trimempty = true })
 
     for _, s in ipairs(parts) do
-        local opt = vim.split(s, "=")
+        local key, value = split_option(s)
 
-        -- Only word-shaped keys are options (difficulty=8). URLs and other
-        -- '='-bearing positionals (e.g. /kumite/{id}?sel={id}) pass through.
-        if opt[2] and opt[1]:match("^[%w_]+$") then
-            options[opt[1]] = vim.split(opt[2], ",", { trimempty = true })
+        if key then
+            options[key] = vim.split(value, ",", { trimempty = true })
         elseif cmds and type(cmds) == "table" and cmds[s:lower()] then
             cmds = cmds[s:lower()]
         else

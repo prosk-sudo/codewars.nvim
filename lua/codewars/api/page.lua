@@ -22,6 +22,16 @@ function page.unescape(s)
     return (s:gsub("&[#%w]+;", ENTITIES))
 end
 
+--- Standard error wording for a failed page.fetch. Callers with bespoke
+--- messages (e.g. solutions' session-expiry hint) build their own.
+---@param what string e.g. "the leaderboard"
+---@param perr cw.err the error page.fetch passed to the callback
+---@return cw.err
+function page.fetch_err(what, perr)
+    return { msg = perr.curl and ("Failed to fetch %s (curl error)"):format(what)
+        or ("Empty response when fetching %s."):format(what) }
+end
+
 --- Fetch a server-rendered HTML page into a temp file (preserves newlines
 --- exactly, unlike jobstart stdout chunking) and return its body.
 --- Errors carry a flag so callers can word their own messages:

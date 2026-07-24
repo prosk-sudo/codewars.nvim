@@ -80,15 +80,7 @@ function solutions.parse_html(html, language)
         local code = html:sub(code_content_s, code_e - 1)
         pos = code_e + 7
 
-        -- Unescape HTML entities
-        code = code:gsub("&lt;", "<")
-        code = code:gsub("&gt;", ">")
-        code = code:gsub("&amp;", "&")
-        code = code:gsub("&quot;", '"')
-        code = code:gsub("&#39;", "'")
-        code = code:gsub("&#x27;", "'")
-        code = code:gsub("&#x2F;", "/")
-        code = code:gsub("&nbsp;", " ")
+        code = page.unescape(code)
 
         -- Trim
         code = code:gsub("^%s+", ""):gsub("%s+$", "")
