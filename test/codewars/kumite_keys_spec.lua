@@ -63,3 +63,66 @@ describe("Kumite:keys_hint", function()
         end
     end)
 end)
+
+describe("Kumite initial state", function()
+    local config = require("codewars.config")
+    local real_user
+
+    before_each(function()
+        real_user = config.user.username
+        config.user.username = "me"
+    end)
+    after_each(function()
+        config.user.username = real_user
+    end)
+
+    local function snippet(overrides)
+        return vim.tbl_extend("force", {
+            id = ID, title = "t", description = "", language = "python",
+            code = "x", fixture = "y", ["package"] = "", test_framework = "cw-2",
+            state = "draft", author = "me",
+        }, overrides or {})
+    end
+
+    it("opens YOUR OWN draft as editable, not read-only", function()
+        -- REGRESSION: every open defaulted to published_view, so saving your
+        -- own kumite was refused with "this is someone else's kumite" -- which
+        -- also broke convert's rename retry, because that retry saves.
+        local ws = Kumite:new(snippet({ state = "draft", author = "me" }))
+        assert.are.equal("server_draft", ws.state)
+        assert.is_true(require("codewars.kumite.state").is_editable(ws.state))
+    end)
+
+    it("opens your own published kumite as published, not a stranger's view", function()
+        local ws = Kumite:new(snippet({ state = "published", author = "me" }))
+        assert.are.equal("published", ws.state)
+    end)
+
+    it("treats a converted kumite as still yours and editable", function()
+        local ws = Kumite:new(snippet({ state = "converted", author = "me" }))
+        assert.are.equal("server_draft", ws.state)
+    end)
+
+    it("keeps someone else's kumite read-only", function()
+        local ws = Kumite:new(snippet({ author = "someone_else" }))
+        assert.are.equal("published_view", ws.state)
+    end)
+
+    it("stays read-only when authorship is unknown (signed-out list fallback)", function()
+        -- built literally: vim.tbl_extend cannot override a key with nil (the
+        -- key is simply absent), so `snippet({ author = nil })` would silently
+        -- keep author = "me" and test nothing.
+        local anon = snippet()
+        anon.author = nil
+        assert.are.equal("published_view", Kumite:new(anon).state)
+
+        -- and with no signed-in user, even a matching author stays read-only
+        config.user.username = ""
+        assert.are.equal("published_view", Kumite:new(snippet({ author = "me" })).state)
+    end)
+
+    it("still honours an explicit state (:CW kumite new)", function()
+        local ws = Kumite:new(snippet(), { state = "local_new" })
+        assert.are.equal("local_new", ws.state)
+    end)
+end)

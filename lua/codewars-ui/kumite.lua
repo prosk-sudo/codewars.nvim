@@ -497,10 +497,13 @@ end
 --- A kumite's title only reaches the server through a save, so rename, save,
 --- then retry -- without re-confirming, since the user already agreed to convert.
 function Kumite:_rename_and_retry_convert()
-    log.warn(('A kata named "%s" already exists — pick another name.'):format(self.snippet.title))
+    -- Do not name the taken title: the collision is on the STORED title, which
+    -- can differ from this buffer's if an earlier rename never landed. And do
+    -- not pre-append a suffix -- retries compounded it into "X II II".
+    log.warn("Codewars already has a kata with this kumite's name — pick another.")
     vim.ui.input({
         prompt = "New kata name: ",
-        default = self.snippet.title .. " II",
+        default = self.snippet.title,
     }, function(name)
         if not name or vim.trim(name) == "" then
             return log.info("Convert cancelled — the name is still taken.")
@@ -712,11 +715,32 @@ end
 ---@param snippet cw.KumiteSnippet
 ---@param opts? { state?: string } initial state (default published_view; New passes local_new)
 ---@return cw.ui.Kumite
+--- Initial state for a fetched snippet.
+---
+--- Every open used to default to published_view, so opening your OWN kumite
+--- made it read-only and any save was refused with "this is someone else's
+--- kumite" -- which also broke convert's rename retry, since that retry saves.
+--- Ownership is decided by author, which fetch_snippet returns; the signed-out
+--- list fallback has no author and correctly stays read-only.
+---@param snippet cw.KumiteSnippet
+---@return string
+local function initial_state(snippet)
+    local me = require("codewars.config").user.username
+    if not me or me == "" or snippet.author ~= me then
+        return "published_view"
+    end
+    if snippet.state == "published" then
+        return "published"
+    end
+    -- draft or converted: ours, and editable
+    return "server_draft"
+end
+
 function Kumite:new(snippet, opts)
     local obj = setmetatable({}, self)
     obj.snippet = snippet
     obj.lang = snippet.language
-    obj.state = (opts and opts.state) or "published_view"
+    obj.state = (opts and opts.state) or initial_state(snippet)
     return obj
 end
 

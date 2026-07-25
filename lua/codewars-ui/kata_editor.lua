@@ -553,10 +553,10 @@ end
 ---@param what string "save" or "publish", for the prompt
 ---@param retry fun() re-issues the request that was rejected
 function KataEditor:_rename_and_retry(what, retry)
-    log.warn(('A kata named "%s" already exists — pick another name.'):format(self.cc.name))
+    log.warn("Codewars already has a kata with this name — pick another.")
     vim.ui.input({
         prompt = "New kata name: ",
-        default = (self.cc.name or "") .. " II",
+        default = self.cc.name or "",
     }, function(name)
         if not name or vim.trim(name) == "" then
             return log.info(("%s cancelled — the name is still taken."):format(what))
