@@ -77,74 +77,33 @@ nvim codewars.nvim
 
 See [COMMANDS.md](COMMANDS.md) for the full list, or run `:CW help` inside Neovim.
 
-### Example Workflow
-
-**Solve a kata**
+### Solving a kata
 
 ```
 :CW cookie               " paste your browser cookies (one-time setup)
 :CW train multiply python
 ```
 
-This opens the `8 kyu Multiply` kata with:
-- Description split on the left (markdown)
-- Code editor on the right (with template)
-- Test cases split below the code editor
+This opens the `8 kyu Multiply` kata with the description on the left, the code
+editor on the right, and the test cases below it. Write your solution, then
+`:CW test` → `:CW attempt` → `:CW submit`.
 
-Write your solution, then:
+To find something to solve, `:CW focus` lets Codewars' trainer pick for you,
+`:CW list` browses everything with filters, and `:CW completed` shows what
+you've already finished.
 
-```
-:CW test        " Quick test with example cases
-:CW attempt     " Full attempt with all test cases
-:CW submit      " Submit after passing attempt
-```
+### Writing your own
 
-**Find something to solve**
+Kata are authored from kumite. Browse or start one with `:CW kumite`, fork it,
+run it against its fixture with `:CW test`, then save it and use
+`:CW kumite convert` to turn it into a kata draft.
 
-```
-:CW focus                " let the trainer pick — Choose Today's Focus
-:CW list                 " browse all kata, with filters
-:CW completed            " kata you have already finished
-:CW leaderboard          " top 500 boards (also in the menu under l)
-```
-
-**Freestyle Sparring (kumite)**
-
-```
-:CW kumite               " browse kumite (menu m)
-:CW kumite new [lang]    " start a fresh one
-:CW kumite fork          " edit a local copy of someone else's
-:CW test                 " run it against its fixture
-:CW kumite save          " save it to codewars.com as a draft
-:CW kumite publish       " publish it publicly (tests must pass)
-:CW kumite unpublish     " hide it again (reversible)
-:CW kumite convert       " turn it into a kata you can author
-```
-
-**Author a kata**
-
-A kata starts life as a kumite: `:CW kumite convert` creates the draft and
-reports its id.
-
-```
-:CW kata open <id|url>   " open it in the five-pane editor
-```
-
-The editor puts each field in its own buffer, switched with `g1`…`g5`:
-Complete Solution, Initial Solution, Test Cases, Example Test Cases, and
-Description. Edits in a hidden pane are never lost.
-
-```
-:CW kata pane [name]     " show one field by name (answer|setup|fixture|example|description)
-:CW kata meta            " name, discipline, estimated rank, tags, contributors
-:CW kata lang            " switch language, or add one to this kata
-:CW kata version         " pick the runtime (e.g. Python 3.8 / 3.10 / 3.11)
-:CW kata validate        " run your solution against the kata's own test cases
-:CW kata save            " save the draft
-:CW kata publish         " publish it (confirms first; Codewars re-runs your tests)
-:CW kata unpublish       " take it back to a draft
-:CW kata delete          " delete it for good (confirms first)
-```
+`:CW kata open <id|url>` opens that draft in the editor. Its five text fields —
+Complete Solution, Initial Solution, Test Cases, Example Test Cases and
+Description — each get their own buffer, switched with `g1`…`g5`, so edits in a
+hidden pane are never lost. A read-only side panel keeps the metadata, pane list
+and keys in view while `:CW kata meta`, `validate`, `save` and `publish` finish
+the kata off.
 
 If Codewars rejects a save, publish, or convert because the name is taken, the
 plugin offers a rename and retries.

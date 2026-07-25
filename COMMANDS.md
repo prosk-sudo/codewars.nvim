@@ -31,9 +31,9 @@ Run `:CW help` inside Neovim for a quick reference.
 | `:CW kumite unpublish` | Hide a published kumite again (reversible) |
 | `:CW kumite convert` | Convert the kumite into a new kata (confirms first; hides the kumite, reports the kata's edit URL) |
 | `:CW test` | In a forked/new kumite, run your code against its fixture (signed-out prompts to sign in, then runs) |
+| `:CW open` | Open kata in browser |
 
 The kumite workspace shows its available keys at the top of the description panel; the browser lists its keys on the results border. `g?` opens the full command list.
-| `:CW open` | Open kata in browser |
 
 ## Authoring a Kata
 
