@@ -305,7 +305,9 @@ function KataEditor:validate()
     if not self.console then
         return log.error("No console attached to this kata workspace.")
     end
-    self.console:run()
+    -- "test" is the console's run mode, not a kata action: it selects the
+    -- "Running tests..." header. Without it the result popup clears blank.
+    self.console:run("test")
 end
 
 --- Publish the kata (design KP1/KP2). Outward-facing and slow to undo, so it
