@@ -240,7 +240,7 @@ end
 --- Read-only. Delegates to `api.kata_page`, which owns the page contract;
 --- kept here so callers have one kata API surface.
 ---@param id string kata id (24-hex)
----@param lang string language slug
+---@param lang string? language slug; nil = let Codewars pick the default
 ---@param cb fun(model: cw.KataModel?, err: cw.err?)
 function kata.load(id, lang, cb)
     require("codewars.api.kata_page").fetch_edit(id, lang, cb)

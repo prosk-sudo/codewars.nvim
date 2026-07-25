@@ -35,6 +35,25 @@ Run `:CW help` inside Neovim for a quick reference.
 The kumite workspace shows its available keys at the top of the description panel; the browser lists its keys on the results border. `g?` opens the full command list.
 | `:CW open` | Open kata in browser |
 
+## Authoring a Kata
+
+A kata reaches the editor via `:CW kumite convert`, which creates the draft. These commands all act on the kata workspace in the current tab.
+
+| Command | Description |
+|---------|-------------|
+| `:CW kata open <id\|url> [lang]` | Open a kata you author, from a `/kata/…` link or 24-hex id. Without a language, Codewars picks the kata's default |
+| `:CW kata pane [name]` | Show one field: `answer`, `setup`, `fixture`, `example`, `description`. No name cycles to the next |
+| `:CW kata meta` | Edit name, discipline, estimated rank, tags, allow-contributors |
+| `:CW kata validate` | Run your Complete Solution against the Test Cases (same runner as `:CW test`) |
+| `:CW kata save` | Save the draft on codewars.com |
+| `:CW kata publish` | Publish it publicly — confirms first, and refuses while there are unsaved edits. Codewars re-runs your tests server-side, so a failing solution/fixture pair is rejected |
+| `:CW kata unpublish` | Take a published kata back to a draft (reversible) |
+| `:CW kata delete` | Delete the kata for good (confirms with its name first) |
+
+The editor's five text fields each get their own buffer; the main window shows one at a time and `g1`…`g5` switch between them, so edits in a hidden pane are never lost. The side panel is read-only and always shows the metadata, the pane list, and the keys.
+
+Closing the tab with unsaved edits warns you — kata drafts are not stashed to the cache yet (kumite ones are).
+
 ## UI Toggles
 
 | Command | Description |

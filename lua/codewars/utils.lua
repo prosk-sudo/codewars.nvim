@@ -52,6 +52,19 @@ function utils.curr_kumite()
     end
 end
 
+--- The kata authoring workspace in the current tab, if any. Same contract as
+--- curr_kumite: silent when absent, so callers word their own message.
+---@return cw.ui.KataEditor?
+function utils.curr_kata_editor()
+    local tabp = vim.api.nvim_get_current_tabpage()
+    for _, ws in ipairs(_Cw_state.kata_editors or {}) do
+        local ok, wtab = pcall(vim.api.nvim_win_get_tabpage, ws.winid)
+        if ok and wtab == tabp then
+            return ws
+        end
+    end
+end
+
 ---@return { tabpage: integer, kata: cw.ui.Kata }[]
 function utils.kata_tabs()
     local katas = {}

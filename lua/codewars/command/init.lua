@@ -14,6 +14,10 @@ local focus_category_keys = { "fundamentals", "rank_up", "practice_and_repeat", 
 -- lazy-loading reasons as focus_category_keys above).
 local leaderboard_category_keys = { "overall", "kata", "authored", "ranks" }
 
+-- Keep in sync with codewars-ui/kata_editor.PANES (literal so completion does
+-- not eager-load the UI chain, same reasoning as the two lists above).
+local kata_pane_keys = { "answer", "setup", "fixture", "example", "description" }
+
 local arguments = {
     list = {
         difficulty = { "8", "7", "6", "5", "4", "3", "2", "1" },
@@ -48,6 +52,17 @@ function cmd.help()
         { "kumite fork",    "Fork the current kumite to edit it" },
         { "kumite new [lang]", "Start a fresh kumite from scratch" },
         { "open",           "Open kata in browser" },
+        { "",               "" },
+        { "AUTHORING A KATA", "" },
+        { "kata open <id|url> [lang]", "Open a kata you author in the editor" },
+        { "kata pane [name]", "Show a field (answer|setup|fixture|example|description)" },
+        { "kata meta",      "Edit name, discipline, rank, tags, contributors" },
+        { "kata validate",  "Run your solution against the test cases" },
+        { "kata save",      "Save the kata draft on codewars.com" },
+        { "kata publish",   "Publish the kata publicly (confirms first)" },
+        { "kata unpublish", "Take a published kata back to a draft" },
+        { "kata delete",    "Delete the kata for good (confirms first)" },
+        { "g1 … g5",        "Switch panes inside the kata editor" },
         { "",               "" },
         { "UI TOGGLES",     "" },
         { "desc",           "Toggle description split" },
@@ -387,6 +402,120 @@ function cmd.kumite_new(options)
         return start(lang_arg)
     end
     require("codewars.picker").pick_language(start)
+end
+
+--- The kata authoring workspace in this tab, or nil after reporting why.
+---@param verb string what the caller wanted to do, for the message
+---@return cw.ui.KataEditor?
+local function curr_kata_editor(verb)
+    local ws = require("codewars.utils").curr_kata_editor()
+    if not ws then
+        log.error(("No kata editor here. Open one with :CW kata open <id|url>, then %s."):format(verb))
+        return nil
+    end
+    return ws
+end
+
+--- :CW kata open <id|url> [lang] — open a kata you author in the editor
+--- (design KP1b/KP2). Needs auth: the edit page is yours, not public. With no
+--- language, Codewars redirects to the kata's own default.
+function cmd.kata_open(options)
+    local positional = options._positional or {}
+    local id = require("codewars.api.kata").parse_ref(positional[1])
+    if not id then
+        return log.error("Usage: :CW kata open <id|url> [lang] — paste a /kata/… link or a 24-hex id")
+    end
+
+    local lang = positional[2]
+    if lang and not require("codewars.utils").resolve_lang_arg(lang) then
+        return
+    end
+
+    cmd.with_auth(function()
+        log.info("Loading the kata editor…")
+        require("codewars.api.kata").load(id, lang, function(model, err)
+            if err then
+                return log.err(err)
+            end
+            vim.schedule(function()
+                require("codewars-ui.kata_editor"):new(model):mount()
+            end)
+        end)
+    end)
+end
+
+--- :CW kata pane <name> — show one of the editor's five fields. `g1`…`g5` do
+--- the same from inside the workspace; with no name it cycles.
+function cmd.kata_pane(options)
+    local ws = curr_kata_editor("switch panes")
+    if not ws then
+        return
+    end
+    local key = options._positional and options._positional[1]
+    if not key then
+        return ws:cycle_pane(1)
+    end
+    ws:show_pane(key)
+end
+
+--- :CW kata meta — edit name / discipline / rank / tags / contributors.
+function cmd.kata_meta()
+    local ws = curr_kata_editor("edit its details")
+    if ws then
+        ws:edit_meta()
+    end
+end
+
+--- :CW kata validate — run the solution against the kata's own test cases.
+--- Needs auth (it is a real runner call).
+function cmd.kata_validate()
+    local ws = curr_kata_editor("validate it")
+    if ws then
+        cmd.with_auth(function()
+            ws:validate()
+        end)
+    end
+end
+
+--- :CW kata save — save the kata draft on codewars.com.
+function cmd.kata_save()
+    local ws = curr_kata_editor("save it")
+    if ws then
+        cmd.with_auth(function()
+            ws:save()
+        end)
+    end
+end
+
+--- :CW kata publish — publish the kata publicly. The workspace confirms first
+--- and refuses while there are unsaved edits; Codewars re-runs the tests.
+function cmd.kata_publish()
+    local ws = curr_kata_editor("publish it")
+    if ws then
+        cmd.with_auth(function()
+            ws:publish()
+        end)
+    end
+end
+
+--- :CW kata unpublish — take a published kata back to a draft (reversible).
+function cmd.kata_unpublish()
+    local ws = curr_kata_editor("unpublish it")
+    if ws then
+        cmd.with_auth(function()
+            ws:unpublish()
+        end)
+    end
+end
+
+--- :CW kata delete — delete the kata for good. Confirms with its name first.
+function cmd.kata_delete()
+    local ws = curr_kata_editor("delete it")
+    if ws then
+        cmd.with_auth(function()
+            ws:delete()
+        end)
+    end
 end
 
 function cmd.desc_toggle()
@@ -893,6 +1022,22 @@ cmd.commands = {
             cmd.kumite_new,
             _positional_complete = { lang_slugs },
         },
+    },
+    kata = {
+        open = {
+            cmd.kata_open,
+            _positional_complete = { nil, lang_slugs },
+        },
+        pane = {
+            cmd.kata_pane,
+            _positional_complete = { kata_pane_keys },
+        },
+        meta = { cmd.kata_meta },
+        validate = { cmd.kata_validate },
+        save = { cmd.kata_save },
+        publish = { cmd.kata_publish },
+        unpublish = { cmd.kata_unpublish },
+        delete = { cmd.kata_delete },
     },
     desc = {
         cmd.desc_toggle,

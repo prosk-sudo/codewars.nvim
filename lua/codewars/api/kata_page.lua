@@ -233,11 +233,15 @@ end
 
 --- Fetch and parse a kata's edit page (cookie auth — it is the author's own
 --- draft). Read-only: nothing is mutated by loading.
+--- With no language, `/edit` redirects to the kata's own default and the
+--- parsed model reports which one that was, so callers need not guess.
 ---@param id string kata id (24-hex)
----@param lang string language slug
+---@param lang string? language slug; nil = let Codewars pick the default
 ---@param cb fun(model: cw.KataModel?, err: cw.err?)
 function kata_page.fetch_edit(id, lang, cb)
-    local url = ("https://www.codewars.com/kata/%s/edit/%s"):format(id, lang)
+    local url = (lang and lang ~= "")
+        and ("https://www.codewars.com/kata/%s/edit/%s"):format(id, lang)
+        or ("https://www.codewars.com/kata/%s/edit"):format(id)
     page.fetch(url, function(body, perr)
         if perr then
             return cb(nil, page.fetch_err("the kata editor", perr))
