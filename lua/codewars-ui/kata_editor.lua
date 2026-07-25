@@ -203,13 +203,23 @@ function KataEditor:switch_language(lang)
         or ("Editing %s (%s)."):format(lang, self:version()))
 end
 
---- Pick the language to edit (or add one).
+--- Pick the language to edit (or add one). Routed through the same icon
+--- dropdown `:CW train` uses, so language selection looks identical wherever
+--- you meet it.
 function KataEditor:choose_language()
-    local rows = self:available_languages()
-    require("codewars-ui.popup.choose").open({ title = "Language", items = rows }, function(row)
-        if row then
-            self:switch_language(row.lang)
+    local existing, offered = {}, {}
+    for _, row in ipairs(self:available_languages()) do
+        offered[row.lang] = true
+        if row.existing then
+            existing[row.lang] = true
         end
+    end
+    require("codewars.picker").kata_language({
+        current = self.lang,
+        existing = existing,
+        offered = offered,
+    }, function(slug)
+        self:switch_language(slug)
     end)
 end
 
@@ -585,9 +595,9 @@ function KataEditor:edit_meta()
             key = "coauthors_wanted",
             label = "Allow Contributors: " .. (self.cc.coauthors_wanted and "yes" or "no"),
         },
-        { key = "language", label = "Language: " .. self.lang },
-        { key = "version", label = "Runtime: " .. self:version() },
     }
+    -- Language and runtime deliberately absent: they have their own commands
+    -- (:CW kata lang / :CW kata version) and their own pickers.
 
     -- Editing one field almost always means editing another, so the panel
     -- REOPENS after each change (with the new value already shown) instead of
@@ -623,10 +633,6 @@ function KataEditor:edit_meta()
             self:refresh_title()
             log.info("Allow contributors: " .. (self.cc.coauthors_wanted and "yes" or "no"))
             reopen()
-        elseif field.key == "language" then
-            self:choose_language()
-        elseif field.key == "version" then
-            self:choose_version()
         else
             local is_discipline = field.key == "category"
             choose.open({

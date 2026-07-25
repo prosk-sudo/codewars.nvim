@@ -60,7 +60,7 @@ function cmd.help()
         { "AUTHORING A KATA", "" },
         { "kata open <id|url> [lang]", "Open a kata you author in the editor" },
         { "kata pane [name]", "Show a field (answer|setup|fixture|example|description)" },
-        { "kata meta",      "Edit name, discipline, rank, tags, contributors, language" },
+        { "kata meta",      "Edit name, discipline, rank, tags, contributors" },
         { "kata lang",      "Switch the language being edited, or add one" },
         { "kata version",   "Pick the runtime version for the current language" },
         { "kata validate",  "Run your solution against the test cases" },

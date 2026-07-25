@@ -43,8 +43,8 @@ A kata reaches the editor via `:CW kumite convert`, which creates the draft. The
 |---------|-------------|
 | `:CW kata open <id\|url> [lang]` | Open a kata you author, from a `/kata/…` link or 24-hex id. Without a language, Codewars picks the kata's default |
 | `:CW kata pane [name]` | Show one field: `answer`, `setup`, `fixture`, `example`, `description`. No name cycles to the next |
-| `:CW kata meta` | Edit name, discipline, estimated rank, tags, allow-contributors, language, runtime. The panel stays open after each change so you can edit several fields in one go; `q` or `Esc` closes it |
-| `:CW kata lang` | Switch the language you're editing, or add one of the ~58 Codewars offers to this kata |
+| `:CW kata meta` | Edit name, discipline, estimated rank, tags, allow-contributors. The panel stays open after each change so you can edit several fields in one go; `q` or `Esc` closes it |
+| `:CW kata lang` | Switch the language you're editing, or add one — same icon dropdown as `:CW train` |
 | `:CW kata version` | Pick the runtime version for the current language (e.g. Python 3.8 / 3.10 / 3.11) |
 | `:CW kata validate` | Run your Complete Solution against the Test Cases (same runner as `:CW test`) |
 | `:CW kata save` | Save the draft on codewars.com |

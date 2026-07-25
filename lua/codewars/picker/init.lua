@@ -888,6 +888,52 @@ function picker.pick_language(cb)
     })
 end
 
+--- Language picker for the KATA AUTHORING editor. Same icon dropdown as
+--- training, so picking a language looks the same everywhere, but annotated
+--- with which languages the kata already carries versus which one you would
+--- be adding.
+---
+--- Only languages this plugin knows (config.langs) are offered: Codewars lists
+--- ~58 in the editor, but the exotic tail has no filetype, no icon and no
+--- starter fixture here, so offering them would promise support that does not
+--- exist.
+---@param opts { current: string, existing: table<string, boolean>, offered: table<string, boolean> }
+---@param cb fun(slug: string)
+function picker.kata_language(opts, cb)
+    local langs = vim.tbl_filter(function(lang)
+        return opts.existing[lang.slug] == true or opts.offered[lang.slug] == true
+    end, config.langs)
+
+    local entries = lang_dropdown_entries(langs)
+    local default_idx
+    for i, entry in ipairs(entries) do
+        local slug = entry.value.slug
+        if slug == opts.current then
+            entry.label = entry.label .. "  · editing"
+            default_idx = i
+        elseif opts.existing[slug] then
+            entry.label = entry.label .. "  · in this kata"
+        else
+            entry.label = entry.label .. "  · add"
+        end
+    end
+
+    if #entries == 0 then
+        return require("codewars.logger").warn("No languages available for this kata.")
+    end
+
+    dropdown.open({
+        prompt_title = "Kata language",
+        entries = entries,
+        default_idx = default_idx,
+        width = 46,
+        height = 15,
+        on_select = function(lang)
+            cb(lang.slug)
+        end,
+    })
+end
+
 --- Pick a language for the current kata and switch in-place.
 ---@param kata cw.ui.Kata
 function picker.language(kata)
