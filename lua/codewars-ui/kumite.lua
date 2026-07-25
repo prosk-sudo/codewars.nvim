@@ -258,10 +258,12 @@ function Kumite:publish()
     if self:is_dirty() then
         return log.warn("You have unsaved edits — :CW kumite save before publishing.")
     end
-    vim.ui.select({ "Publish", "Cancel" }, {
-        prompt = ("Publish “%s” publicly on codewars.com?"):format(self.snippet.title),
-    }, function(choice)
-        if choice ~= "Publish" then
+    require("codewars-ui.popup.confirm").open({
+        title = "Publish kumite",
+        message = ("Publish “%s” publicly on codewars.com?"):format(self.snippet.title),
+        confirm = "Publish",
+    }, function(confirmed)
+        if not confirmed then
             return log.info("Publish cancelled.")
         end
         self:_do_publish()
@@ -334,10 +336,12 @@ function Kumite:convert()
     if not kumite_api.is_server_id(self.snippet.id) then
         return log.warn("Save the kumite first (:CW kumite save), then convert.")
     end
-    vim.ui.select({ "Convert", "Cancel" }, {
-        prompt = "Convert this kumite into a new kata? This creates a kata and hides the kumite.",
-    }, function(choice)
-        if choice ~= "Convert" then
+    require("codewars-ui.popup.confirm").open({
+        title = "Convert to kata",
+        message = "Convert this kumite into a new kata?\n\nThis creates a kata and hides the kumite.",
+        confirm = "Convert",
+    }, function(confirmed)
+        if not confirmed then
             return log.info("Convert cancelled.")
         end
         kumite_api.convert_to_kata(self.snippet.id, function(url, err)
@@ -354,8 +358,17 @@ function Kumite:convert()
                     self.description:populate()
                 end
             end
+            -- The response only carries the kata's edit URL, so dig the id out
+            -- of it: the next step is `:CW kata open <id>`, and making the
+            -- user parse an id out of a URL by eye is a poor handoff.
             local full = url:match("^https?://") and url or ("https://www.codewars.com" .. url)
-            log.info("Converted to a new kata — finish authoring it at " .. full)
+            local kata_id = require("codewars.api.kata").parse_ref(full)
+            if kata_id then
+                log.info(("Converted to a new kata (%s) — open it with :CW kata open %s")
+                    :format(kata_id, kata_id))
+            else
+                log.info("Converted to a new kata — finish authoring it at " .. full)
+            end
         end)
     end)
 end

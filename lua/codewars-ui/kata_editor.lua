@@ -320,10 +320,13 @@ function KataEditor:publish()
     if self:is_dirty() then
         return log.warn("You have unsaved edits — :CW kata save before publishing.")
     end
-    vim.ui.select({ "Publish", "Cancel" }, {
-        prompt = ("Publish “%s” publicly on codewars.com?"):format(self.cc.name),
-    }, function(choice)
-        if choice ~= "Publish" then
+    require("codewars-ui.popup.confirm").open({
+        title = "Publish kata",
+        message = ("Publish “%s” publicly on codewars.com?\n\nCodewars re-runs your tests server-side.")
+            :format(self.cc.name),
+        confirm = "Publish",
+    }, function(confirmed)
+        if not confirmed then
             return log.info("Publish cancelled.")
         end
         self:_do_publish()
@@ -379,10 +382,12 @@ function KataEditor:delete()
     if err then
         return log.warn(err)
     end
-    vim.ui.select({ "Delete", "Cancel" }, {
-        prompt = ("Permanently delete “%s”? This cannot be undone."):format(self.cc.name),
-    }, function(choice)
-        if choice ~= "Delete" then
+    require("codewars-ui.popup.confirm").open({
+        title = "Delete kata",
+        message = ("Permanently delete “%s”?\n\nThis cannot be undone."):format(self.cc.name),
+        confirm = "Delete",
+    }, function(confirmed)
+        if not confirmed then
             return log.info("Delete cancelled.")
         end
         require("codewars.api.kata").delete(self.model.id, function(derr)
