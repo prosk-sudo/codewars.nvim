@@ -91,7 +91,7 @@ end
 
 --- Re-derive the buffer name from title (state or dirty flag changed).
 function Kumite:refresh_title()
-    self._refresh_pending = false
+    ui_utils.debounce_cancel(self, "refresh")
     if self.bufnr and api.nvim_buf_is_valid(self.bufnr) then
         pcall(api.nvim_buf_set_name, self.bufnr, self:title())
     end
@@ -104,15 +104,9 @@ end
 local REFRESH_DEBOUNCE_MS = 150
 
 function Kumite:refresh_title_soon()
-    if self._refresh_pending then
-        return
-    end
-    self._refresh_pending = true
-    vim.defer_fn(function()
-        if self._refresh_pending then
-            self:refresh_title()
-        end
-    end, REFRESH_DEBOUNCE_MS)
+    ui_utils.debounce(self, "refresh", REFRESH_DEBOUNCE_MS, function()
+        self:refresh_title()
+    end)
 end
 
 ---@return string[]
@@ -191,11 +185,15 @@ function Kumite:set_buffers_locked(locked)
     if self.fixture_split and self.fixture_split.bufnr then
         bufs[#bufs + 1] = self.fixture_split.bufnr
     end
-    for _, bufnr in ipairs(bufs) do
-        if bufnr and api.nvim_buf_is_valid(bufnr) then
-            ui_utils.buf_set_opts(bufnr, { modifiable = not locked })
-        end
-    end
+    ui_utils.set_bufs_modifiable(bufs, locked)
+end
+
+--- Change state and re-apply the lock in one step, so a future transition
+--- cannot leave the buffers writable during an in-flight request.
+---@param next_state string
+function Kumite:set_state(next_state)
+    self.state = next_state
+    self:set_buffers_locked(kstate.is_locked(next_state))
 end
 
 function Kumite:clear_readonly_guard()
@@ -216,7 +214,7 @@ function Kumite:fork()
     end
 
     self.parent_id = self.snippet.id
-    self.state = next_state
+    self:set_state(next_state)
 
     self:clear_readonly_guard()
     ui_utils.buf_set_opts(self.bufnr, { modifiable = true })
@@ -246,8 +244,7 @@ function Kumite:save(on_done)
     local kumite_api = require("codewars.api.kumite")
     local prev = self.state
     local is_update = prev == "server_draft"
-    self.state = next_state -- "saving"
-    self:set_buffers_locked(kstate.is_locked(self.state))
+    self:set_state(next_state) -- "saving"
     self:refresh_title()
 
     local model = {
@@ -272,15 +269,13 @@ function Kumite:save(on_done)
                 require("codewars.cache.cookie").delete()
             end
             kstate.step("saving", "save_failed") -- REVERT: caller restores prev
-            self.state = prev
-            self:set_buffers_locked(kstate.is_locked(self.state))
+            self:set_state(prev)
             self:refresh_title()
             if on_done then on_done(false) end
             return log.error("Kumite save failed — " .. (serr.msg or "unknown error"))
         end
 
-        self.state = kstate.step("saving", "save_done") -- "server_draft"
-        self:set_buffers_locked(kstate.is_locked(self.state))
+        self:set_state(kstate.step("saving", "save_done")) -- "server_draft"
         -- Adopt the server draft id so later saves PUT; snapshot the saved
         -- content so is_dirty() clears until the next edit.
         self.snippet.id = res.id or self.snippet.id
@@ -325,8 +320,7 @@ end
 
 --- Run the saved code on the runner, then publish it (see kumite.publish).
 function Kumite:_do_publish()
-    self.state = "publishing"
-    self:set_buffers_locked(kstate.is_locked(self.state))
+    self:set_state("publishing")
     self:refresh_title()
     require("codewars.kumite.publish").run_and_publish({
         id = self.snippet.id,
@@ -342,13 +336,11 @@ function Kumite:_do_publish()
             if err.auth then
                 require("codewars.cache.cookie").delete()
             end
-            self.state = "server_draft" -- REVERT
-            self:set_buffers_locked(kstate.is_locked(self.state))
+            self:set_state("server_draft") -- REVERT
             self:refresh_title()
             return log.error("Publish failed — " .. (err.msg or "unknown error"))
         end
-        self.state = kstate.step("publishing", "publish_done") -- "published"
-        self:set_buffers_locked(kstate.is_locked(self.state))
+        self:set_state(kstate.step("publishing", "publish_done")) -- "published"
         if self.description then
             self.description:populate()
         end
@@ -400,7 +392,7 @@ function Kumite:unpublish()
             return log.error("Unpublish failed — " .. (err.msg or "unknown error"))
         end
         if self.state == "published" then
-            self.state = "server_draft"
+            self:set_state("server_draft")
             self:refresh_title()
             if self.description then
                 self.description:populate()
@@ -452,8 +444,7 @@ function Kumite:_do_convert()
     if not id then
         return log.warn("Save the kumite first (:CW kumite save), then convert.")
     end
-    do
-        kumite_api.convert_to_kata(id, function(url, err)
+    kumite_api.convert_to_kata(id, function(url, err)
             if err then
                 if err.auth then
                     require("codewars.cache.cookie").delete()
@@ -462,7 +453,7 @@ function Kumite:_do_convert()
                 -- requires that name to be free. Nothing else about the kumite
                 -- is wrong, and there is no rename command to send the user to,
                 -- so offer the rename here.
-                if tostring(err.msg or ""):lower():find("already taken", 1, true) then
+                if require("codewars.api.errors").is_name_taken(err) then
                     return self:_rename_and_retry_convert()
                 end
                 return log.error("Convert failed — " .. (err.msg or "unknown error"))
@@ -472,7 +463,7 @@ function Kumite:_do_convert()
             -- (it previously only caught one on a freshly-fetched snippet).
             self.snippet.state = "converted"
             if self.state == "published" then
-                self.state = "server_draft" -- the kumite is hidden now
+                self:set_state("server_draft") -- the kumite is hidden now
                 self:refresh_title()
                 if self.description then
                     self.description:populate()
@@ -489,8 +480,7 @@ function Kumite:_do_convert()
             else
                 log.info("Converted to a new kata — finish authoring it at " .. full)
             end
-        end)
-    end
+    end)
 end
 
 --- Codewars rejected the conversion because a kata already uses this title.
@@ -696,25 +686,14 @@ function Kumite:_unmount()
         if self.description then
             self.description:unmount()
         end
-        if self.bufnr and api.nvim_buf_is_valid(self.bufnr) then
-            if rescued then
-                -- the stash did not land; this buffer is the only copy left
-                pcall(ui_utils.buf_set_opts, self.bufnr, { buflisted = true, buftype = "" })
-                pcall(api.nvim_buf_set_name, self.bufnr,
-                    ("RESCUED kumite %s"):format(tostring(self.snippet.id):sub(1, 6)))
-            else
-                api.nvim_buf_delete(self.bufnr, { force = true, unload = false })
-            end
-        end
+        ui_utils.rescue_or_delete(self.bufnr, rescued
+            and ("RESCUED kumite %s"):format(tostring(self.snippet.id):sub(1, 6)) or nil)
         _Cw_state.kumite = vim.tbl_filter(function(ws)
             return ws.bufnr ~= self.bufnr
         end, _Cw_state.kumite or {})
     end)
 end
 
----@param snippet cw.KumiteSnippet
----@param opts? { state?: string } initial state (default published_view; New passes local_new)
----@return cw.ui.Kumite
 --- Initial state for a fetched snippet.
 ---
 --- Every open used to default to published_view, so opening your OWN kumite
@@ -736,6 +715,9 @@ local function initial_state(snippet)
     return "server_draft"
 end
 
+---@param snippet cw.KumiteSnippet
+---@param opts? { state?: string } explicit initial state (:CW kumite new passes local_new)
+---@return cw.ui.Kumite
 function Kumite:new(snippet, opts)
     local obj = setmetatable({}, self)
     obj.snippet = snippet

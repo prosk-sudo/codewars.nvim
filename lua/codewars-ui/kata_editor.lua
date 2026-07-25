@@ -40,8 +40,14 @@ local PANES = {
     { key = "description", label = "Description", field = nil, kind = "markdown" },
 }
 
---- The four per-language code fields, in payload terms.
-local LANG_FIELDS = { "answer", "setup", "fixture", "example_fixture" }
+--- The per-language code fields, in payload terms. Derived from PANES so the
+--- list cannot drift from the panes that carry it.
+local LANG_FIELDS = {}
+for _, pane in ipairs(PANES) do
+    if pane.field then
+        LANG_FIELDS[#LANG_FIELDS + 1] = pane.field
+    end
+end
 
 local PANE_BY_KEY = {}
 for i, pane in ipairs(PANES) do
@@ -305,10 +311,11 @@ end
 ---@param entry table
 ---@return table entry
 function KataEditor:pane_fields_into(entry)
-    entry.answer = self:pane_content("answer")
-    entry.setup = self:pane_content("setup")
-    entry.fixture = self:pane_content("fixture")
-    entry.example_fixture = self:pane_content("example")
+    for _, pane in ipairs(PANES) do
+        if pane.field then
+            entry[pane.field] = self:pane_content(pane.key)
+        end
+    end
     return entry
 end
 
@@ -360,7 +367,7 @@ end
 --- The workspace has no single title buffer (five panes share the window), so
 --- the state/dirty marker lives in the info panel, which re-renders here.
 function KataEditor:refresh_title()
-    self._refresh_pending = false
+    ui_utils.debounce_cancel(self, "refresh")
     if self.description then
         self.description:populate()
     end
@@ -376,15 +383,9 @@ end
 local REFRESH_DEBOUNCE_MS = 150
 
 function KataEditor:refresh_title_soon()
-    if self._refresh_pending then
-        return
-    end
-    self._refresh_pending = true
-    vim.defer_fn(function()
-        if self._refresh_pending then
-            self:refresh_title()
-        end
-    end, REFRESH_DEBOUNCE_MS)
+    ui_utils.debounce(self, "refresh", REFRESH_DEBOUNCE_MS, function()
+        self:refresh_title()
+    end)
 end
 
 --- Human label for a category slug / rank value, for the info panel.
@@ -539,11 +540,16 @@ end
 --- cannot drift from the payload already on its way to the server.
 ---@param locked boolean
 function KataEditor:set_panes_locked(locked)
-    for _, bufnr in pairs(self.bufs or {}) do
-        if api.nvim_buf_is_valid(bufnr) then
-            ui_utils.buf_set_opts(bufnr, { modifiable = not locked })
-        end
-    end
+    ui_utils.set_bufs_modifiable(vim.tbl_values(self.bufs or {}), locked)
+end
+
+--- Change state and re-apply the lock in one step. Pairing these by hand at
+--- every transition meant a future one could silently leave the panes
+--- writable during an in-flight request.
+---@param next_state string
+function KataEditor:set_state(next_state)
+    self.state = next_state
+    self:set_panes_locked(kstate.is_locked(next_state))
 end
 
 --- Codewars requires a kata name to be free. The rejection names the field and
@@ -567,13 +573,6 @@ function KataEditor:_rename_and_retry(what, retry)
     end)
 end
 
---- True when a rejection is the name-already-taken case.
----@param err cw.err?
----@return boolean
-local function is_name_taken(err)
-    return err ~= nil and tostring(err.msg or ""):lower():find("already taken", 1, true) ~= nil
-end
-
 --- Save the kata in place (`POST /kata/{id}`). Publication is unaffected, so
 --- the state machine reverts to whichever state we came from.
 function KataEditor:save()
@@ -583,20 +582,18 @@ function KataEditor:save()
     end
 
     local prev = self.state
-    self.state = "saving"
-    self:set_panes_locked(kstate.is_locked(self.state))
+    self:set_state("saving")
     self:refresh_title()
 
     local model = self:build_model()
     require("codewars.api.kata").save(self.model.id, model, function(serr)
-        self.state = prev -- save_done and save_failed both REVERT
-        self:set_panes_locked(kstate.is_locked(self.state))
+        self:set_state(prev) -- save_done and save_failed both REVERT
         if serr then
             if serr.auth then
                 require("codewars.cache.cookie").delete()
             end
             self:refresh_title()
-            if is_name_taken(serr) then
+            if require("codewars.api.errors").is_name_taken(serr) then
                 return self:_rename_and_retry("Save", function() self:save() end)
             end
             return log.error("Kata save failed — " .. (serr.msg or "unknown error"))
@@ -674,8 +671,7 @@ end
 
 function KataEditor:_do_publish()
     local prev = self.state
-    self.state = "publishing"
-    self:set_panes_locked(kstate.is_locked(self.state))
+    self:set_state("publishing")
     self:refresh_title()
     log.info("Publishing — Codewars runs your tests server-side, this can take a moment…")
 
@@ -686,18 +682,16 @@ function KataEditor:_do_publish()
             if perr.auth then
                 require("codewars.cache.cookie").delete()
             end
-            self.state = prev -- REVERT
-            self:set_panes_locked(kstate.is_locked(self.state))
+            self:set_state(prev) -- REVERT
             self:refresh_title()
-            if is_name_taken(perr) then
+            if require("codewars.api.errors").is_name_taken(perr) then
                 -- retry _do_publish, not publish(): the user already confirmed,
                 -- and the rename legitimately makes the workspace dirty.
                 return self:_rename_and_retry("Publish", function() self:_do_publish() end)
             end
             return log.error("Publish failed — " .. (perr.msg or "unknown error"))
         end
-        self.state = kstate.step("publishing", "publish_done") -- "published"
-        self:set_panes_locked(kstate.is_locked(self.state))
+        self:set_state(kstate.step("publishing", "publish_done")) -- "published"
         self.model.published = true
         -- Publish persists the same body a save would, so the baseline moves
         -- with it; without this the workspace still looks dirty afterwards.
@@ -720,7 +714,7 @@ function KataEditor:unpublish()
             end
             return log.error("Unpublish failed — " .. (uerr.msg or "unknown error"))
         end
-        self.state = next_state -- "draft"
+        self:set_state(next_state) -- "draft"
         self.model.published = false
         self:refresh_title()
         log.info("Unpublished — the kata is a draft again.")
@@ -1007,16 +1001,8 @@ function KataEditor:_unmount()
             self.description:unmount()
         end
         for key, bufnr in pairs(self.bufs or {}) do
-            if api.nvim_buf_is_valid(bufnr) then
-                if rescued then
-                    -- survives this workspace; the user owns it now
-                    pcall(ui_utils.buf_set_opts, bufnr, { buflisted = true, buftype = "" })
-                    pcall(api.nvim_buf_set_name, bufnr,
-                        ("RESCUED kata %s %s"):format(self.model.id:sub(1, 6), key))
-                else
-                    api.nvim_buf_delete(bufnr, { force = true, unload = false })
-                end
-            end
+            ui_utils.rescue_or_delete(bufnr, rescued
+                and ("RESCUED kata %s %s"):format(self.model.id:sub(1, 6), key) or nil)
         end
         _Cw_state.kata_editors = vim.tbl_filter(function(ws)
             return ws.model.id ~= self.model.id
@@ -1034,7 +1020,7 @@ function KataEditor:new(model)
     obj.state = kstate.of(model.published)
     obj.pane = "answer"
     obj.versions = {} -- lang -> runtime id, filled in as the user picks
-    obj.saved = { panes = {}, cc = {} }
+    obj.saved = {}
     return obj
 end
 
