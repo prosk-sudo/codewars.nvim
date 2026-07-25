@@ -27,12 +27,17 @@ local function load_stash(write_ok)
     return mod, written
 end
 
-after_each(function()
+--- plenary registers hooks against the enclosing describe; a top-level
+--- after_each has no block to attach to and kills the whole file, which then
+--- reports NO tally at all -- invisible to any check that only sums results.
+local function cleanup()
     package.loaded["codewars.cache.utils"] = real_utils
     package.loaded["codewars.cache.stash"] = nil
-end)
+end
 
 describe("cache.stash", function()
+    after_each(cleanup)
+
     it("returns a path when the write lands", function()
         local stash = load_stash(true)
         local path = stash.for_kind("kumite-stash-").save({ id = "abc", code = "x" })
