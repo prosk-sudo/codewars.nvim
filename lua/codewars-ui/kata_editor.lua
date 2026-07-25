@@ -168,6 +168,11 @@ function KataEditor:switch_language(lang)
 
     -- Adding a language: an empty entry with no snippet id, which is what the
     -- save contract expects for one that does not exist server-side yet.
+    -- Test Cases are seeded from the language's starter fixture (the same
+    -- template :CW kumite new uses) rather than left blank — an empty fixture
+    -- buffer gives you nothing to write against, and Codewars rejects a
+    -- publish without tests anyway. Unknown languages yield "", so this is
+    -- safe for every one of the ~58 the editor offers.
     local added = languages[lang] == nil
     if added then
         languages[lang] = {
@@ -175,7 +180,7 @@ function KataEditor:switch_language(lang)
             name = lang,
             answer = "",
             setup = "",
-            fixture = "",
+            fixture = require("codewars.kumite.fixtures").get(lang) or "",
             example_fixture = "",
             ["package"] = "",
         }

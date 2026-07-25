@@ -96,6 +96,23 @@ describe("KataEditor language switching", function()
         assert.are.equal("", ws.model.languages.ruby.answer)
     end)
 
+    it("seeds a new language's Test Cases from its starter template", function()
+        local ws = workspace()
+        ws:switch_language("ruby")
+        local seeded = ws.model.languages.ruby.fixture
+        assert.are.equal(require("codewars.kumite.fixtures").get("ruby"), seeded)
+        assert.is_true(#seeded > 0, "an added language must not start with an empty fixture")
+        -- and the pane reads it back, so the buffer shows the template
+        assert.are.equal(seeded, ws:pane_content("fixture"))
+    end)
+
+    it("never overwrites an existing language's fixture when switching back", function()
+        local ws = workspace()
+        ws:switch_language("ruby")
+        ws:switch_language("python")
+        assert.are.equal("py tests", ws.model.languages.python.fixture)
+    end)
+
     it("writes the outgoing language back so switching away loses nothing", function()
         local ws = workspace()
         ws:switch_language("ruby")
