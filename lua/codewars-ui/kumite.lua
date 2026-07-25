@@ -1,6 +1,6 @@
-local Description = require("codewars-ui.split.description")
-local TestcaseSplit = require("codewars-ui.split.testcase")
-local Console = require("codewars-ui.layout.console")
+-- The nui-backed splits are required inside mount(), not here: the model,
+-- dirty tracking and key legend above mount are pure, and keeping the module
+-- require-light lets them be exercised without a UI.
 local kstate = require("codewars.kumite.state")
 local kstash = require("codewars.cache.kumite_stash")
 local ui_utils = require("codewars-ui.utils")
@@ -41,7 +41,19 @@ function Kumite:keys_hint()
             "`:CW test` — run your code against the fixture",
             "`:CW kumite save` — save as a draft on codewars.com",
             "`:CW kumite publish` — publish it publicly (after saving)",
+            "`:CW kumite convert` — turn it into a kata you can author (after saving)",
             "`g?` — all commands · `:q` / `:q!` — close (unsaved edits are stashed)",
+        }
+    end
+    -- A published kumite is read-only but still YOURS: unpublish and convert
+    -- both apply, and neither was listed anywhere in the workspace before.
+    -- `published_view` is someone else's, where only fork/run make sense.
+    if self.state == "published" then
+        return {
+            "`:CW kumite unpublish` — hide it again (reversible)",
+            "`:CW kumite convert` — turn it into a kata you can author",
+            "`:CW kumite fork` — keep iterating on a local copy",
+            "`q` — close this view · `g?` — all commands",
         }
     end
     return {
@@ -437,6 +449,7 @@ function Kumite:mount()
         require("codewars.command").help()
     end, { buffer = self.bufnr })
 
+    local Description = require("codewars-ui.split.description")
     self.description = Description:new(self, function()
         return self:header_lines()
     end)
@@ -445,6 +458,7 @@ function Kumite:mount()
     -- A fixture split appears when the snippet ships one, or whenever the
     -- workspace is editable (so a fork/new has somewhere to write tests).
     if (self.snippet.fixture and self.snippet.fixture ~= "") or kstate.is_editable(self.state) then
+        local TestcaseSplit = require("codewars-ui.split.testcase")
         self.fixture_split = TestcaseSplit:new(self)
         self.fixture_split:mount()
         self.fixture_split:populate(self.snippet.fixture or "")
@@ -466,6 +480,7 @@ function Kumite:mount()
         api.nvim_set_current_win(self.winid)
     end
 
+    local Console = require("codewars-ui.layout.console")
     self.console = Console(self, function(_, result)
         require("codewars.kumite.runner").run(self, result)
     end)
