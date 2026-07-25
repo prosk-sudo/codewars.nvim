@@ -338,12 +338,33 @@ function kumite.convert_to_kata(id, cb)
                 -- Prefer whatever the server said over a generic shrug. The
                 -- usual cause is converting a kumite that already has a kata,
                 -- which the workspace pre-checks via snippet.state.
-                local reason = type(res) == "table"
-                    and (res.reason or res.error or res.message)
+                -- Surface what the server actually said. The caller adds its
+                -- own "Convert failed — " prefix, so this must NOT repeat it,
+                -- and a bare code like 422 is useless on its own: include every
+                -- field the payload carried so the cause is diagnosable.
+                local detail
+                if type(res) == "table" then
+                    local parts = {}
+                    for _, key in ipairs({ "reason", "error", "message", "status" }) do
+                        if res[key] ~= nil then
+                            parts[#parts + 1] = ("%s=%s"):format(key, tostring(res[key]))
+                        end
+                    end
+                    if type(res.data) == "table" then
+                        for k, v in pairs(res.data) do
+                            if type(v) ~= "table" then
+                                parts[#parts + 1] = ("data.%s=%s"):format(k, tostring(v))
+                            end
+                        end
+                    end
+                    detail = #parts > 0 and table.concat(parts, " ") or nil
+                elseif type(res) == "string" and res ~= "" then
+                    detail = res:sub(1, 200)
+                end
                 return cb(nil, {
-                    msg = reason and ("Convert failed — " .. tostring(reason))
-                        or "Convert failed. If this kumite was already converted, its kata "
-                        .. "already exists — look under your authored kata rather than converting again.",
+                    msg = (detail or "Codewars rejected it and said nothing useful.")
+                        .. " — if this kumite was already converted its kata exists already;"
+                        .. " otherwise check it is saved, is yours, and has a fixture.",
                 })
             end
             cb(url, nil)

@@ -165,7 +165,28 @@ describe("kumite.convert_to_kata", function()
         local got
         kumite.convert_to_kata(SERVER_ID, function(url, err) got = { url = url, err = err } end)
         assert.is_nil(got.url)
-        assert.truthy(got.err.msg:match("Convert failed"))
+        assert.truthy(got.err.msg:match("already converted"), "must name the likely cause")
+    end)
+
+    it("never repeats the caller's prefix", function()
+        -- REGRESSION: this layer used to prepend "Convert failed — " and the
+        -- workspace prepended it again, so users saw
+        -- "Convert failed — Convert failed — 422".
+        stub({ success = false, error = 422 })
+        local got
+        kumite.convert_to_kata(SERVER_ID, function(_, err) got = err end)
+        assert.is_nil(got.msg:match("Convert failed"),
+            "the workspace adds that prefix; adding it here doubles it")
+    end)
+
+    it("surfaces every field the rejection carried", function()
+        -- A bare code is undiagnosable. Whatever the server said should reach
+        -- the user verbatim.
+        stub({ success = false, error = 422, reason = "already converted" })
+        local got
+        kumite.convert_to_kata(SERVER_ID, function(_, err) got = err end)
+        assert.truthy(got.msg:match("error=422"))
+        assert.truthy(got.msg:match("reason=already converted"))
     end)
 
     it("passes transport/auth errors through", function()
