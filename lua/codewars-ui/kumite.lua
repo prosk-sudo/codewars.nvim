@@ -63,7 +63,10 @@ end
 --- could desync.
 ---@return boolean
 function Kumite:is_dirty()
-    if not kstate.is_editable(self.state) then
+    -- Locked states (saving/publishing) are NOT editable, but they can still
+    -- hold unsent edits. Calling them clean skipped the close-time stash and
+    -- dropped exactly the work most at risk of being lost.
+    if not (kstate.is_editable(self.state) or kstate.is_locked(self.state)) then
         return false
     end
     local code = table.concat(api.nvim_buf_get_lines(self.bufnr, 0, -1, false), "\n")
@@ -179,6 +182,22 @@ function Kumite:apply_readonly_guard()
     end, { buffer = self.bufnr, nowait = true })
 end
 
+--- Lock or unlock the editable buffers. Used while a save/publish is in
+--- flight (the states kumite.state marks `locked`) so the buffers cannot drift
+--- away from the payload already on its way to the server.
+---@param locked boolean
+function Kumite:set_buffers_locked(locked)
+    local bufs = { self.bufnr }
+    if self.fixture_split and self.fixture_split.bufnr then
+        bufs[#bufs + 1] = self.fixture_split.bufnr
+    end
+    for _, bufnr in ipairs(bufs) do
+        if bufnr and api.nvim_buf_is_valid(bufnr) then
+            ui_utils.buf_set_opts(bufnr, { modifiable = not locked })
+        end
+    end
+end
+
 function Kumite:clear_readonly_guard()
     for _, key in ipairs(INSERT_KEYS) do
         pcall(vim.keymap.del, "n", key, { buffer = self.bufnr })
@@ -226,6 +245,7 @@ function Kumite:save()
     local prev = self.state
     local is_update = prev == "server_draft"
     self.state = next_state -- "saving"
+    self:set_buffers_locked(kstate.is_locked(self.state))
     self:refresh_title()
 
     local model = {
@@ -251,11 +271,13 @@ function Kumite:save()
             end
             kstate.step("saving", "save_failed") -- REVERT: caller restores prev
             self.state = prev
+            self:set_buffers_locked(kstate.is_locked(self.state))
             self:refresh_title()
             return log.error("Kumite save failed — " .. (serr.msg or "unknown error"))
         end
 
         self.state = kstate.step("saving", "save_done") -- "server_draft"
+        self:set_buffers_locked(kstate.is_locked(self.state))
         -- Adopt the server draft id so later saves PUT; snapshot the saved
         -- content so is_dirty() clears until the next edit.
         self.snippet.id = res.id or self.snippet.id
@@ -300,6 +322,7 @@ end
 --- Run the saved code on the runner, then publish it (see kumite.publish).
 function Kumite:_do_publish()
     self.state = "publishing"
+    self:set_buffers_locked(kstate.is_locked(self.state))
     self:refresh_title()
     require("codewars.kumite.publish").run_and_publish({
         id = self.snippet.id,
@@ -316,10 +339,12 @@ function Kumite:_do_publish()
                 require("codewars.cache.cookie").delete()
             end
             self.state = "server_draft" -- REVERT
+            self:set_buffers_locked(kstate.is_locked(self.state))
             self:refresh_title()
             return log.error("Publish failed — " .. (err.msg or "unknown error"))
         end
         self.state = kstate.step("publishing", "publish_done") -- "published"
+        self:set_buffers_locked(kstate.is_locked(self.state))
         if self.description then
             self.description:populate()
         end
@@ -587,6 +612,9 @@ function Kumite:_unmount()
         })
         if path then
             log.info(("Unsaved kumite edits stashed to %s"):format(path))
+        else
+            log.error("COULD NOT STASH unsaved kumite edits — they are gone. "
+                .. "Check the cache directory is writable.")
         end
     end
 

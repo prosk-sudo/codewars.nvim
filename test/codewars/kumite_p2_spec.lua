@@ -116,7 +116,12 @@ describe("cache.kumite_stash", function()
     end
     package.loaded["codewars.cache.utils"] = {
         cache_file = function(name) return fake_path(name) end,
-        write_json = function(path, data) store[path.name] = vim.deepcopy(data) end,
+        -- returns ok, mirroring the real cache_utils contract: the stash
+        -- only reports a path when the write actually landed
+        write_json = function(path, data)
+            store[path.name] = vim.deepcopy(data)
+            return true
+        end,
         read_json = function(path) return store[path.name] end,
     }
 

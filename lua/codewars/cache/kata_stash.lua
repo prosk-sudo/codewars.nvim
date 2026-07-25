@@ -1,0 +1,13 @@
+--- Local stash for unsaved kata-authoring edits.
+---
+--- The kata workspace keeps five buffers, only one of them visible. Neovim
+--- guards the DISPLAYED buffer on close, so a dirty hidden pane could be
+--- destroyed without any prompt. This is the backstop: on a dirty close the
+--- whole model (every language, every pane, plus the metadata) goes to disk.
+---
+--- Mechanism lives in codewars.cache.stash, shared with the kumite stash.
+---@class cw.cache.KataStash
+---@field save fun(entry: table): string?
+---@field get fun(id: string): table?
+---@field delete fun(id: string): boolean
+return require("codewars.cache.stash").for_kind("kata-stash-")

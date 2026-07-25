@@ -831,10 +831,23 @@ function KataEditor:_unmount()
         return
     end
 
-    -- No stash yet (KP3): make unsaved work impossible to lose silently by
-    -- naming it loudly instead of closing quietly.
+    -- Neovim only guards the DISPLAYED buffer on close, so a dirty HIDDEN
+    -- pane could be destroyed with no prompt at all. Stash the whole model
+    -- (every language, every pane, plus the metadata) before the buffers go.
     if self:is_dirty() then
-        log.warn("Closed with UNSAVED kata edits — they were not sent to codewars.com.")
+        local path = require("codewars.cache.kata_stash").save({
+            id = self.model.id,
+            name = self.cc.name,
+            language = self.lang,
+            languages = self:build_model().languages,
+            code_challenge = vim.deepcopy(self.cc),
+        })
+        if path then
+            log.info(("Unsaved kata edits stashed to %s"):format(path))
+        else
+            log.error("COULD NOT STASH unsaved kata edits — they are gone. "
+                .. "Check the cache directory is writable.")
+        end
     end
 
     vim.schedule(function()
