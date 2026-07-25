@@ -248,8 +248,14 @@ function kata_page.fetch_edit(id, lang, cb)
         end
         local model = kata_page.parse_edit_page(body)
         if not model then
+            -- Codewars serves the marketing page for any kata id it will not
+            -- show you, so the body cannot say WHY. Name the causes in the
+            -- order they actually happen — by far the most common is passing a
+            -- kumite id, since a kata only exists once convert has created it.
             return cb(nil, {
-                msg = "Could not load that kata editor — check you are signed in and that the kata exists.",
+                msg = ("Could not open the kata editor for %s. If that is a kumite id, open it with "
+                    .. ":CW kumite open and run :CW kumite convert — that creates the kata. "
+                    .. "Otherwise check you are signed in and that the kata is yours."):format(id),
             })
         end
         cb(model, nil)

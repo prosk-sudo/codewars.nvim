@@ -123,6 +123,73 @@ describe("kata_page.parse_edit_page", function()
     end)
 end)
 
+describe("kata_page.fetch_edit", function()
+    --- Re-require kata_page with a stubbed page module (it binds `page` at
+    --- load, so the stub must be installed before the require).
+    local function load_with_page(body, perr)
+        local real = package.loaded["codewars.api.page"]
+        local urls = {}
+        package.loaded["codewars.api.page"] = {
+            fetch = function(url, cb)
+                urls[#urls + 1] = url
+                cb(body, perr)
+            end,
+            unescape = real.unescape,
+            fetch_err = real.fetch_err,
+        }
+        package.loaded["codewars.api.kata_page"] = nil
+        local mod = require("codewars.api.kata_page")
+        package.loaded["codewars.api.page"] = real
+        package.loaded["codewars.api.kata_page"] = kata_page
+        return mod, urls
+    end
+
+    it("omits the language segment when none is given", function()
+        local mod, urls = load_with_page(edit_page())
+        mod.fetch_edit(KATA_ID, nil, function() end)
+        assert.are.equal("https://www.codewars.com/kata/" .. KATA_ID .. "/edit", urls[1])
+
+        mod, urls = load_with_page(edit_page())
+        mod.fetch_edit(KATA_ID, "ruby", function() end)
+        assert.are.equal("https://www.codewars.com/kata/" .. KATA_ID .. "/edit/ruby", urls[1])
+    end)
+
+    it("returns the parsed model on success", function()
+        local mod = load_with_page(edit_page())
+        local got
+        mod.fetch_edit(KATA_ID, nil, function(model, err)
+            got = { model = model, err = err }
+        end)
+        assert.is_nil(got.err)
+        assert.are.equal(KATA_ID, got.model.id)
+    end)
+
+    it("points at kumite convert when the id isn't a kata", function()
+        -- Codewars serves the marketing page for a kumite id, so this is the
+        -- exact body a user hits after :CW kata open <kumite id>.
+        local marketing =
+            [[<html><script>App.setup({ data: JSON.parse("{\"routes\":{},\"controllerName\":\"code_challenges\"}") });</script></html>]]
+        local mod = load_with_page(marketing)
+        local got
+        mod.fetch_edit(KATA_ID, nil, function(model, err)
+            got = { model = model, err = err }
+        end)
+        assert.is_nil(got.model)
+        assert.truthy(got.err.msg:find(KATA_ID, 1, true), "message must name the id")
+        assert.truthy(got.err.msg:match("kumite convert"), "message must suggest convert")
+    end)
+
+    it("passes a transport failure through as a fetch error", function()
+        local mod = load_with_page(nil, { curl = true })
+        local got
+        mod.fetch_edit(KATA_ID, nil, function(model, err)
+            got = { model = model, err = err }
+        end)
+        assert.is_nil(got.model)
+        assert.truthy(got.err.msg:match("kata editor"))
+    end)
+end)
+
 describe("kata_page.parse_ref", function()
     it("accepts a bare id and every kata URL form", function()
         assert.are.equal(KATA_ID, kata_page.parse_ref(KATA_ID))
