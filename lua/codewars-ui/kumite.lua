@@ -235,9 +235,11 @@ end
 --- an unsaved local_new/local_fork (POST /kumite, adopting the returned id);
 --- update for an existing server_draft (PUT /kumite/{id}). Branch on STATE, not
 --- snippet.id — a fork's snippet.id is still the PARENT's id until first save.
-function Kumite:save()
+---@param on_done fun(ok: boolean)? called after the request settles
+function Kumite:save(on_done)
     local next_state, err = kstate.step(self.state, "save")
     if err then
+        if on_done then on_done(false) end
         return log.warn(err)
     end
 
@@ -273,6 +275,7 @@ function Kumite:save()
             self.state = prev
             self:set_buffers_locked(kstate.is_locked(self.state))
             self:refresh_title()
+            if on_done then on_done(false) end
             return log.error("Kumite save failed — " .. (serr.msg or "unknown error"))
         end
 
@@ -290,6 +293,7 @@ function Kumite:save()
         self:refresh_title()
         pcall(api.nvim_buf_set_name, self.bufnr, self:title())
         log.info("Saved as a draft on codewars.com — :CW kumite open " .. self.snippet.id)
+        if on_done then on_done(true) end
     end)
 end
 
@@ -411,7 +415,6 @@ end
 --- edit URL — finishing the kata (discipline/rank/description/publish) is done
 --- on codewars.com for now.
 function Kumite:convert()
-    local kumite_api = require("codewars.api.kumite")
     if kstate.is_locked(self.state) then
         return log.warn("A save or publish is in progress — wait for it to finish.")
     end
@@ -437,10 +440,30 @@ function Kumite:convert()
         if not confirmed then
             return log.info("Convert cancelled.")
         end
+        self:_do_convert()
+    end)
+end
+
+--- Fire the conversion. Split from convert() so a retry after a rename does
+--- not ask for confirmation a second time.
+function Kumite:_do_convert()
+    local kumite_api = require("codewars.api.kumite")
+    local id = self:server_id()
+    if not id then
+        return log.warn("Save the kumite first (:CW kumite save), then convert.")
+    end
+    do
         kumite_api.convert_to_kata(id, function(url, err)
             if err then
                 if err.auth then
                     require("codewars.cache.cookie").delete()
+                end
+                -- Convert names the kata after the kumite's TITLE, and Codewars
+                -- requires that name to be free. Nothing else about the kumite
+                -- is wrong, and there is no rename command to send the user to,
+                -- so offer the rename here.
+                if tostring(err.msg or ""):lower():find("already taken", 1, true) then
+                    return self:_rename_and_retry_convert()
                 end
                 return log.error("Convert failed — " .. (err.msg or "unknown error"))
             end
@@ -466,6 +489,31 @@ function Kumite:convert()
             else
                 log.info("Converted to a new kata — finish authoring it at " .. full)
             end
+        end)
+    end
+end
+
+--- Codewars rejected the conversion because a kata already uses this title.
+--- A kumite's title only reaches the server through a save, so rename, save,
+--- then retry -- without re-confirming, since the user already agreed to convert.
+function Kumite:_rename_and_retry_convert()
+    log.warn(('A kata named "%s" already exists — pick another name.'):format(self.snippet.title))
+    vim.ui.input({
+        prompt = "New kata name: ",
+        default = self.snippet.title .. " II",
+    }, function(name)
+        if not name or vim.trim(name) == "" then
+            return log.info("Convert cancelled — the name is still taken.")
+        end
+        self.snippet.title = vim.trim(name)
+        self:refresh_title()
+        -- The title only exists server-side after a save, and convert reads the
+        -- STORED title, so the save has to land before retrying.
+        self:save(function(ok)
+            if not ok then
+                return log.error("Renamed locally, but the save failed — convert not retried.")
+            end
+            self:_do_convert()
         end)
     end)
 end
