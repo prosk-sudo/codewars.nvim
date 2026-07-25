@@ -1,9 +1,10 @@
 local cache_utils = require("codewars.cache.utils")
 
 --- Local stash for unsaved kumite edits (design §3.6 / eng D10 safety net).
---- On a dirty-close the workspace writes one JSON file per snippet so work
---- is never lost before P3's Save Draft exists. The My Drafts picker (P3)
---- will read these back; for now they are a durable on-disk backstop.
+--- On a dirty-close the workspace writes one JSON file per snippet, so edits
+--- that were never sent to codewars.com survive the close. Nothing reads them
+--- back yet — the My Drafts picker will; until then they are a durable
+--- on-disk backstop you can recover by hand.
 ---@class cw.cache.KumiteStash
 local M = {}
 

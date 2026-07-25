@@ -366,9 +366,9 @@ function cmd.kumite_convert()
 end
 
 --- :CW kumite new [language] — start a fresh kumite from scratch. Opens a
---- blank editable workspace you can write and run locally; saving and
---- publishing to codewars.com arrive in a later update. No auth needed to
---- start (running prompts for sign-in).
+--- blank editable workspace you can write and run locally, then persist with
+--- `:CW kumite save` / `publish`. No auth needed to start (running and saving
+--- prompt for sign-in).
 function cmd.kumite_new(options)
     local kumite_api = require("codewars.api.kumite")
 

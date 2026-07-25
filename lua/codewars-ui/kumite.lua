@@ -9,7 +9,8 @@ local api = vim.api
 
 --- Kumite workspace (design §3.3). Opens read-only (`published_view`);
 --- `:CW kumite fork` turns it into an editable `local_fork` you can run.
---- Editing/running is side-effect-free; saving/publishing arrive in P3.
+--- Editing and running are side-effect-free; `:CW kumite save`, `publish`,
+--- `unpublish` and `convert` are the commands that reach codewars.com.
 ---@class cw.ui.Kumite
 ---@field snippet cw.KumiteSnippet
 ---@field state string one of codewars.kumite.state's states
@@ -485,11 +486,12 @@ function Kumite:autocmds()
             self:_unmount()
         end,
     })
-    -- :w in either editor is meaningless in P2 — steer to the real actions.
+    -- There is no file behind these buffers, so :w has nothing to write —
+    -- steer to the commands that actually persist or run the kumite.
     local function write_hint(bufnr)
         vim.bo[bufnr].modified = false
         if kstate.is_editable(self.state) then
-            log.info("Kumite runs locally — :CW test to run it. (Publishing arrives in a later update.)")
+            log.info("Nothing to write — :CW test to run it, :CW kumite save to save it on codewars.com.")
         else
             log.info("Read-only — :CW kumite fork to edit a copy.")
         end
