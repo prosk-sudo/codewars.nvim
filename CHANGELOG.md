@@ -2,7 +2,7 @@
 
 All notable changes to codewars.nvim are documented here.
 
-## [Unreleased]
+## [0.3.0] - 2026-07-25
 
 ### Added
 - **Kata authoring editor** (`:CW kata open <id|url>`): open a kata you author — the draft `:CW kumite convert` creates — and finish it without leaving Neovim. The editor's five text fields (Complete Solution, Initial Solution, Test Cases, Example Test Cases, Description) each get their own buffer, switched with `g1`…`g5` or `:CW kata pane <name>`, so edits in a hidden pane are never lost. `:CW kata meta` edits name, discipline, estimated rank, tags and allow-contributors; `:CW kata validate` runs the solution against its own test cases through the usual result console; `:CW kata save`, `publish`, `unpublish` and `delete` do the rest, with confirmations on publish and delete. A read-only side panel keeps the metadata, pane list and keys in view. Closing with unsaved edits warns (kata drafts are not stashed yet).
