@@ -26,11 +26,6 @@ Kumite.__index = Kumite
 
 local INSERT_KEYS = { "i", "I", "a", "A", "o", "O", "c", "C", "s", "S", "R" }
 
----@param id string?
----@return boolean # true for a real codewars snippet id (24 hex), false for a local one
-local function is_server_id(id)
-    return type(id) == "string" and id:match("^%x+$") ~= nil and #id == 24
-end
 
 --- The always-visible key legend shown at the top of the description panel,
 --- adapted to the current state so users know what they can do right now.
@@ -122,7 +117,7 @@ function Kumite:header_lines()
             or ("fork of " .. parent)
     end
     lines[#lines + 1] = ""
-    if is_server_id(s.id) then
+    if require("codewars.api.kumite").is_server_id(s.id) then
         lines[#lines + 1] = ("[Open on Codewars](https://www.codewars.com/kumite/%s)"):format(s.id)
         lines[#lines + 1] = ""
     end

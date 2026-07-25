@@ -1,33 +1,17 @@
---- Pure kumite workspace state machine (design §3.4, eng review D3/D16).
---- No UI access: the workspace holds the current state value and calls
---- step(); every transition and every wrong-state message lives here so
---- the full matrix is spec-able without a buffer existing.
+local state_machine = require("codewars.state_machine")
+
+--- Kumite workspace states (design §3.4, eng review D3/D16). Data only — the
+--- step/is_editable/is_locked/label engine lives in codewars.state_machine,
+--- shared with the kata machine so a fix to it cannot miss one of them.
 ---
 ---   published_view ──fork──▶ local_fork ──save──▶ saving ──save_done──▶ server_draft
 ---        │                       │                   │
 ---       run                   publish            save_failed ▶ REVERT (caller restores)
 ---        ▼                       ▼
 ---   published_view          publishing ──publish_done──▶ published
----
----@class cw.kumite.State
-local state = {}
-
---- Sentinel: caller restores the state it saved before entering
---- saving/publishing (the machine itself is memoryless).
-state.REVERT = "revert"
+local REVERT = state_machine.REVERT
 
 local EDITABLE = { local_new = true, local_fork = true, server_draft = true }
-local LOCKED = { saving = true, publishing = true }
-
-local LABELS = {
-    published_view = "Published (read-only)",
-    local_new = "New (unsaved)",
-    local_fork = "Local fork (unsaved)",
-    server_draft = "Draft",
-    saving = "Saving…",
-    publishing = "Publishing…",
-    published = "Published",
-}
 
 local READ_ONLY_EDIT = "This kumite is read-only — :CW kumite fork to edit a copy."
 local ALREADY_EDITABLE = "Already an editable local copy."
@@ -51,7 +35,7 @@ local transitions = {
         publish = { err = SAVING_LOCKED },
         fork = { err = SAVING_LOCKED },
         save_done = "server_draft",
-        save_failed = state.REVERT,
+        save_failed = REVERT,
     },
     publishing = {
         edit = { err = PUBLISHING_LOCKED },
@@ -60,7 +44,7 @@ local transitions = {
         publish = { err = "Already publishing." },
         fork = { err = PUBLISHING_LOCKED },
         publish_done = "published",
-        publish_failed = state.REVERT,
+        publish_failed = REVERT,
     },
     published = {
         run = "published",
@@ -83,43 +67,19 @@ for editable_state in pairs(EDITABLE) do
     }
 end
 
-state.transitions = transitions
-
----@param current string
----@param action string
----@return string? next_state # nil when rejected; may be state.REVERT
----@return string? err # user-facing, state-aware message when rejected
-function state.step(current, action)
-    local row = transitions[current]
-    assert(row, "unknown kumite state: " .. tostring(current))
-    local cell = row[action]
-    if cell == nil then
-        return nil, ("Action '%s' is not available in state '%s'."):format(action, current)
-    end
-    if type(cell) == "table" then
-        return nil, cell.err
-    end
-    return cell, nil
-end
-
----@param s string
----@return boolean
-function state.is_editable(s)
-    return EDITABLE[s] == true
-end
-
----@param s string
----@return boolean
-function state.is_locked(s)
-    return LOCKED[s] == true
-end
-
---- Display label for the workspace title:
---- `Kumite · {title} · {lang} · {label}[ +]`
----@param s string
----@return string
-function state.label(s)
-    return LABELS[s] or s
-end
-
-return state
+---@class cw.kumite.State
+return state_machine.new({
+    transitions = transitions,
+    editable = EDITABLE,
+    locked = { saving = true, publishing = true },
+    labels = {
+        published_view = "Published (read-only)",
+        local_new = "New (unsaved)",
+        local_fork = "Local fork (unsaved)",
+        server_draft = "Draft",
+        saving = "Saving…",
+        publishing = "Publishing…",
+        published = "Published",
+    },
+    kind = "kumite",
+})

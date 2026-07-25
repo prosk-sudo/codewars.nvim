@@ -24,7 +24,6 @@ local api = vim.api
 ---@field pane string key of the pane currently displayed
 ---@field bufs table<string, integer>
 ---@field winid integer?
----@field bufnr integer? the buffer currently in the main window (console reads this)
 ---@field description cw.ui.Description?
 ---@field console cw.ui.Console?
 local KataEditor = {}
@@ -47,12 +46,6 @@ for i, pane in ipairs(PANES) do
 end
 
 KataEditor.PANES = PANES
-
----@param key string
----@return table?
-function KataEditor.pane_spec(key)
-    return PANE_BY_KEY[key]
-end
 
 --- Live text of one pane, read from its buffer (falling back to the loaded
 --- value while the workspace is still mounting).
@@ -381,7 +374,6 @@ function KataEditor:show_pane(key)
     end
 
     self.pane = key
-    self.bufnr = bufnr
     self:refresh_title()
     log.info(spec.label)
 end
@@ -713,7 +705,6 @@ function KataEditor:mount()
         pcall(api.nvim_buf_delete, scratch, { force = true })
     end
     self.pane = "answer"
-    self.bufnr = self.bufs.answer
 
     self:snapshot()
 
