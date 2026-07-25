@@ -230,6 +230,30 @@ describe("api.kumite", function()
             assert.is_nil(got.snippet.parent_id)
         end)
 
+        it("unescapes the HTML entities the API serves in author text", function()
+            -- Live shape (2026-07-25): a snippet typed as `return "woof woof"`
+            -- on the website comes back with &quot; in code and fixture. Left
+            -- raw, the entities look like source and a save writes them back.
+            stub_get({
+                id = ID_ROOT,
+                title = "Tom &amp; Jerry",
+                description = "it&#39;s a dog",
+                language = "python",
+                code = 'def musti():\n    return &quot;woof woof&quot;',
+                fixture = '@test.describe(&quot;Example&quot;)',
+                ["package"] = "&lt;preload&gt;",
+                testFramework = "cw-2",
+                state = "draft",
+            })
+            local got
+            kumite.fetch_snippet(ID_ROOT, function(snippet) got = snippet end)
+            assert.are.equal('def musti():\n    return "woof woof"', got.code)
+            assert.are.equal('@test.describe("Example")', got.fixture)
+            assert.are.equal("Tom & Jerry", got.title)
+            assert.are.equal("it's a dog", got.description)
+            assert.are.equal("<preload>", got["package"])
+        end)
+
         it("rejects an unexpected response shape as drift", function()
             stub_get("<html>login</html>")
             local got_err

@@ -228,14 +228,22 @@ function kumite.fetch_snippet(id, cb)
             if type(res) ~= "table" or not res.id then
                 return cb(nil, { msg = "Unexpected code-snippets response. Codewars may have changed their API." })
             end
+            -- The code-snippets API serves author text HTML-ESCAPED: a
+            -- snippet typed as `return "woof"` on the website comes back as
+            -- `return &quot;woof&quot;` (verified live 2026-07-25 on `code`
+            -- and `fixture`). The website unescapes for display, so an
+            -- editable buffer must too — otherwise the entities look like
+            -- real source, and saving writes them back as literal text.
+            -- parse_list_html already does this for the browse path; this is
+            -- the same treatment for the single-snippet path.
             cb({
                 id = res.id,
-                title = res.title or "(untitled)",
-                description = res.description or "",
+                title = page.unescape(res.title or "(untitled)"),
+                description = page.unescape(res.description or ""),
                 language = res.language or "",
-                code = res.code or "",
-                fixture = res.fixture or "",
-                ["package"] = res["package"] or "",
+                code = page.unescape(res.code or ""),
+                fixture = page.unescape(res.fixture or ""),
+                ["package"] = page.unescape(res["package"] or ""),
                 test_framework = res.testFramework or "cw-2",
                 test_language = res.testLanguage,
                 state = res.state or "published",
