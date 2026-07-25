@@ -7,6 +7,20 @@ local function warn(msg) vim.health.warn(msg) end
 local function error(msg) vim.health.error(msg) end
 local function start(msg) vim.health.start(msg) end
 
+--- Run every parser self-check and report drift.
+local function check_parsers()
+    start("codewars.nvim scrapers")
+    for _, check in ipairs(require("codewars.health.parsers").checks) do
+        local passed, detail = check.run()
+        if passed then
+            ok(("%s — %s (fixture verified %s)"):format(check.name, detail, check.verified))
+        else
+            error(("%s — %s. Codewars markup may have changed; re-capture the fixture in lua/codewars/health/parsers.lua")
+                :format(check.name, detail))
+        end
+    end
+end
+
 function M.check()
     start("codewars.nvim")
 
@@ -122,6 +136,8 @@ function M.check()
     else
         ok("No completed kata cached")
     end
+
+    check_parsers()
 end
 
 return M

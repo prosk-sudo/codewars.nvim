@@ -40,6 +40,9 @@ local PANES = {
     { key = "description", label = "Description", field = nil, kind = "markdown" },
 }
 
+--- The four per-language code fields, in payload terms.
+local LANG_FIELDS = { "answer", "setup", "fixture", "example_fixture" }
+
 local PANE_BY_KEY = {}
 for i, pane in ipairs(PANES) do
     PANE_BY_KEY[pane.key] = vim.tbl_extend("force", pane, { index = i })
@@ -147,6 +150,13 @@ end
 --- back never loses work.
 ---@param lang string
 function KataEditor:switch_language(lang)
+    -- Ask the state machine BEFORE touching anything: during saving/publishing
+    -- the panes are locked, and rewriting them would throw after self.lang had
+    -- already moved, leaving the buffers and the model disagreeing.
+    local _, err = kstate.step(self.state, "edit")
+    if err then
+        return log.warn(err)
+    end
     if lang == self.lang then
         return log.info("Already editing " .. lang .. ".")
     end
@@ -241,17 +251,52 @@ end
 --- snapshot rather than trusting a flag that pane switches could desync.
 ---@return boolean
 function KataEditor:is_dirty()
-    for _, pane in ipairs(PANES) do
-        if self:pane_content(pane.key) ~= (self.saved.panes[pane.key] or "") then
+    local saved = self.saved or {}
+    local saved_langs = saved.languages or {}
+
+    -- visible language: compare the live buffers
+    local current = self:pane_fields_into({})
+    local base = saved_langs[self.lang] or {}
+    for _, field in ipairs(LANG_FIELDS) do
+        if (current[field] or "") ~= (base[field] or "") then
             return true
         end
+    end
+
+    -- hidden languages: their edits live in the model after a switch
+    for lang, lm in pairs(self.model.languages or {}) do
+        if lang ~= self.lang then
+            local other = saved_langs[lang]
+            if not other then
+                return true -- a language added since the last save
+            end
+            for _, field in ipairs(LANG_FIELDS) do
+                if (lm[field] or "") ~= (other[field] or "") then
+                    return true
+                end
+            end
+        end
+    end
+
+    if self:pane_content("description") ~= (saved.description or "") then
+        return true
     end
     for _, key in ipairs({ "name", "category", "estimated_rank", "tags_text" }) do
-        if (self.cc[key] or "") ~= (self.saved.cc[key] or "") then
+        if (self.cc[key] or "") ~= ((saved.cc or {})[key] or "") then
             return true
         end
     end
-    return (self.cc.coauthors_wanted == true) ~= (self.saved.cc.coauthors_wanted == true)
+    if (self.cc.coauthors_wanted == true) ~= ((saved.cc or {}).coauthors_wanted == true) then
+        return true
+    end
+    -- the chosen runtime is part of the payload; without this a picked version
+    -- was silently discarded on close
+    for lang, version in pairs(self.versions or {}) do
+        if version ~= (saved.versions or {})[lang] then
+            return true
+        end
+    end
+    return false
 end
 
 --- Copy the four code panes' live text into a `languages[lang]` entry. Both
@@ -269,12 +314,40 @@ end
 
 --- Snapshot the current content as "what the server holds" (on load, and
 --- after every successful save).
-function KataEditor:snapshot()
-    local panes = {}
-    for _, pane in ipairs(PANES) do
-        panes[pane.key] = self:pane_content(pane.key)
+--- Build the saved baseline from a languages table plus metadata.
+---@param languages table<string, table>
+---@param cc table
+---@param description string
+local function baseline(languages, cc, description, versions)
+    local langs = {}
+    for lang, lm in pairs(languages or {}) do
+        langs[lang] = {}
+        for _, field in ipairs(LANG_FIELDS) do
+            langs[lang][field] = lm[field] or ""
+        end
     end
-    self.saved = { panes = panes, cc = vim.deepcopy(self.cc) }
+    return {
+        languages = langs,
+        description = description or "",
+        cc = vim.deepcopy(cc or {}),
+        versions = vim.deepcopy(versions or {}),
+    }
+end
+
+--- Snapshot the current content as "what the server holds".
+---
+--- The baseline is PER LANGUAGE. One flat snapshot could not tell a real edit
+--- from a language switch: after switching, the buffers legitimately differ
+--- from the previous language's snapshot (false dirty), and switching back
+--- could read as clean while a hidden language still held unsaved edits.
+function KataEditor:snapshot()
+    local languages = {}
+    for lang, lm in pairs(self.model.languages or {}) do
+        languages[lang] = lm
+    end
+    -- the visible language's truth is its buffers, not the model copy
+    languages[self.lang] = self:pane_fields_into({})
+    self.saved = baseline(languages, self.cc, self:pane_content("description"), self.versions)
 end
 
 ---@return string
@@ -457,17 +530,8 @@ function KataEditor:adopt(model)
     -- buffers. Reading buffers here marked anything typed while the request
     -- was in flight as "saved" even though the server never received it, and
     -- closing afterwards then dropped it silently.
-    local lm = model.languages[self.lang] or {}
-    self.saved = {
-        panes = {
-            answer = lm.answer or "",
-            setup = lm.setup or "",
-            fixture = lm.fixture or "",
-            example = lm.example_fixture or "",
-            description = model.code_challenge.description or "",
-        },
-        cc = vim.deepcopy(model.code_challenge),
-    }
+    self.saved = baseline(model.languages, model.code_challenge,
+        model.code_challenge.description, self.versions)
 end
 
 --- Lock or unlock every pane. Panes are locked while a save/publish is in
@@ -509,6 +573,34 @@ function KataEditor:save()
         self:adopt(model)
         self:refresh_title()
         log.info("Saved on codewars.com.")
+
+        -- A language created by this save was sent with an empty snippet id.
+        -- The response is a Turbolinks re-render, not JSON, so the new id is
+        -- only learnable by re-reading the edit page. Without this every later
+        -- save presents the language as new again and re-creates it.
+        for _, lm in pairs(model.languages or {}) do
+            if lm.id == nil or lm.id == "" then
+                self:refresh_language_ids()
+                break
+            end
+        end
+    end)
+end
+
+--- Re-read the edit page to pick up snippet ids the server just minted for
+--- languages this workspace added. Content is untouched; only ids are adopted.
+function KataEditor:refresh_language_ids()
+    require("codewars.api.kata").load(self.model.id, self.lang, function(fresh, err)
+        if err or not fresh then
+            return log.warn("Saved — but could not read back the new language's id. "
+                .. "Reopen the kata before saving again, or it will be created twice.")
+        end
+        for lang, lm in pairs(fresh.languages or {}) do
+            local mine = (self.model.languages or {})[lang]
+            if mine and (mine.id == nil or mine.id == "") then
+                mine.id = lm.id or ""
+            end
+        end
     end)
 end
 
@@ -557,6 +649,7 @@ function KataEditor:_do_publish()
     log.info("Publishing — Codewars runs your tests server-side, this can take a moment…")
 
     local model = self:build_model()
+    self._publish_token = { live = true }
     require("codewars.api.kata").publish(self.model.id, model, function(url, perr)
         if perr then
             if perr.auth then
@@ -575,7 +668,7 @@ function KataEditor:_do_publish()
         self:adopt(model)
         self:refresh_title()
         log.info("Published! " .. url)
-    end)
+    end, self._publish_token)
 end
 
 --- Un-publish (hide) a published kata. Reversible by publishing again.
@@ -630,6 +723,12 @@ end
 --- Edit the metadata that has no buffer of its own. KP3 replaces these
 --- prompts with proper pickers; the field list and value mapping stay.
 function KataEditor:edit_meta()
+    -- Without this, metadata typed during an in-flight save is overwritten when
+    -- adopt() installs the payload that was already sent.
+    local _, blocked = kstate.step(self.state, "edit")
+    if blocked then
+        return log.warn(blocked)
+    end
     local kata_api = require("codewars.api.kata")
     local choose = require("codewars-ui.popup.choose")
 
@@ -831,22 +930,36 @@ function KataEditor:_unmount()
         return
     end
 
+    -- Stop any in-flight publish poll from outliving this workspace.
+    if self._publish_token then
+        self._publish_token.live = false
+    end
+
+    local rescued = false
+
     -- Neovim only guards the DISPLAYED buffer on close, so a dirty HIDDEN
     -- pane could be destroyed with no prompt at all. Stash the whole model
     -- (every language, every pane, plus the metadata) before the buffers go.
     if self:is_dirty() then
+        -- build_model() carries the LIVE description (it lives in a pane, not
+        -- in self.cc), so stash from it rather than from cc.
+        local model = self:build_model()
         local path = require("codewars.cache.kata_stash").save({
             id = self.model.id,
             name = self.cc.name,
             language = self.lang,
-            languages = self:build_model().languages,
-            code_challenge = vim.deepcopy(self.cc),
+            languages = model.languages,
+            code_challenge = model.code_challenge,
         })
         if path then
             log.info(("Unsaved kata edits stashed to %s"):format(path))
         else
-            log.error("COULD NOT STASH unsaved kata edits — they are gone. "
-                .. "Check the cache directory is writable.")
+            -- Deleting the buffers now would destroy the only remaining copy.
+            -- Keep them: listed, named, and out of this workspace's control,
+            -- so the user can still yank the text out by hand.
+            rescued = true
+            log.error("COULD NOT STASH unsaved kata edits — the buffers have been "
+                .. "KEPT OPEN so nothing is lost. Copy them out, then :bd! them.")
         end
     end
 
@@ -857,9 +970,16 @@ function KataEditor:_unmount()
         if self.description then
             self.description:unmount()
         end
-        for _, bufnr in pairs(self.bufs or {}) do
+        for key, bufnr in pairs(self.bufs or {}) do
             if api.nvim_buf_is_valid(bufnr) then
-                api.nvim_buf_delete(bufnr, { force = true, unload = false })
+                if rescued then
+                    -- survives this workspace; the user owns it now
+                    pcall(ui_utils.buf_set_opts, bufnr, { buflisted = true, buftype = "" })
+                    pcall(api.nvim_buf_set_name, bufnr,
+                        ("RESCUED kata %s %s"):format(self.model.id:sub(1, 6), key))
+                else
+                    api.nvim_buf_delete(bufnr, { force = true, unload = false })
+                end
             end
         end
         _Cw_state.kata_editors = vim.tbl_filter(function(ws)

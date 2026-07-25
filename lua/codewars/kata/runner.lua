@@ -31,8 +31,6 @@ function M.run(ws, result)
         return result:handle_error({ msg = "This kata has no Test Cases to validate against." })
     end
 
-    local kata_api = require("codewars.api.kata")
-
     BUSY = true
     attempt_api.submit(
         code,
@@ -40,7 +38,7 @@ function M.run(ws, result)
         fixture,
         ws:test_framework(),
         nil, -- no relay/solution id: authoring runs are unattached
-        kata_api.default_version(ws.lang),
+        ws:version(),
         { setup = ws:pane_content("setup") },
         function(res, err)
             BUSY = false

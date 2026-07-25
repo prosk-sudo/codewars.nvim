@@ -365,6 +365,14 @@ function Kumite:server_id()
     if self.state == "local_new" or self.state == "local_fork" then
         return nil
     end
+    -- A fork's first save passes through `saving`, where the state check above
+    -- no longer matches but snippet.id STILL points at the parent (save adopts
+    -- the new id only on success). Compare against parent_id directly: if they
+    -- are the same object, this workspace does not own that id yet.
+    local parent = self.parent_id or self.snippet.parent_id
+    if parent and self.snippet.id == parent then
+        return nil
+    end
     return require("codewars.api.kumite").is_server_id(self.snippet.id) and self.snippet.id or nil
 end
 
@@ -372,6 +380,9 @@ end
 --- publishing again. Only meaningful once it exists on codewars.com.
 function Kumite:unpublish()
     local kumite_api = require("codewars.api.kumite")
+    if kstate.is_locked(self.state) then
+        return log.warn("A save or publish is in progress — wait for it to finish.")
+    end
     local id = self:server_id()
     if not id then
         return log.warn("This kumite isn't on codewars.com yet — nothing to unpublish. "
@@ -401,6 +412,9 @@ end
 --- on codewars.com for now.
 function Kumite:convert()
     local kumite_api = require("codewars.api.kumite")
+    if kstate.is_locked(self.state) then
+        return log.warn("A save or publish is in progress — wait for it to finish.")
+    end
     -- server_id(), not snippet.id: an unsaved fork still carries the PARENT's
     -- id, and converting on that would convert and hide the ORIGINAL kumite
     -- while silently discarding every local edit.
@@ -598,6 +612,8 @@ function Kumite:_unmount()
         return
     end
 
+    local rescued = false
+
     -- Safety net (eng D10): unsaved fork edits are stashed to the cache so a
     -- close never silently loses work. Recovery UI lands with My Drafts (P3);
     -- until then the stash file + this message are the guarantee.
@@ -613,8 +629,9 @@ function Kumite:_unmount()
         if path then
             log.info(("Unsaved kumite edits stashed to %s"):format(path))
         else
-            log.error("COULD NOT STASH unsaved kumite edits — they are gone. "
-                .. "Check the cache directory is writable.")
+            rescued = true
+            log.error("COULD NOT STASH unsaved kumite edits — the buffers have been "
+                .. "KEPT OPEN so nothing is lost. Copy them out, then :bd! them.")
         end
     end
 
@@ -629,7 +646,14 @@ function Kumite:_unmount()
             self.description:unmount()
         end
         if self.bufnr and api.nvim_buf_is_valid(self.bufnr) then
-            api.nvim_buf_delete(self.bufnr, { force = true, unload = false })
+            if rescued then
+                -- the stash did not land; this buffer is the only copy left
+                pcall(ui_utils.buf_set_opts, self.bufnr, { buflisted = true, buftype = "" })
+                pcall(api.nvim_buf_set_name, self.bufnr,
+                    ("RESCUED kumite %s"):format(tostring(self.snippet.id):sub(1, 6)))
+            else
+                api.nvim_buf_delete(self.bufnr, { force = true, unload = false })
+            end
         end
         _Cw_state.kumite = vim.tbl_filter(function(ws)
             return ws.bufnr ~= self.bufnr

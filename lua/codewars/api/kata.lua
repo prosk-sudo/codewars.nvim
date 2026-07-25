@@ -221,9 +221,16 @@ end
 ---@param dmid string
 ---@param id string kata id (for the success URL)
 ---@param cb fun(url: string?, err: cw.err?)
+---@param token { live: boolean }? caller's cancellation token; polling stops when live is false
 ---@param tries integer?
-function kata.poll_publish(dmid, id, cb, tries)
+function kata.poll_publish(dmid, id, cb, token, tries)
     tries = tries or 0
+    -- The workspace that started this owns its lifetime. Without the token the
+    -- chain kept rescheduling (and issuing requests) for ~30s after the editor
+    -- was closed, writing into a dead object.
+    if token and token.live == false then
+        return
+    end
     if tries >= MAX_POLLS then
         return cb(nil, { msg = "Publish is taking too long — check it on codewars.com." })
     end
@@ -234,7 +241,7 @@ function kata.poll_publish(dmid, id, cb, tries)
             end
             if type(res) == "table" and res._type == "progress" then
                 return vim.defer_fn(function()
-                    kata.poll_publish(dmid, id, cb, tries + 1)
+                    kata.poll_publish(dmid, id, cb, token, tries + 1)
                 end, POLL_INTERVAL_MS)
             end
             local html = (type(res) == "table" and res.html) or (type(res) == "string" and res) or ""
@@ -271,7 +278,8 @@ end
 ---@param id string
 ---@param model table save_payload input
 ---@param cb fun(url: string?, err: cw.err?) url is the public kata URL on success
-function kata.publish(id, model, cb)
+---@param token { live: boolean }? cancellation token, checked between polls
+function kata.publish(id, model, cb, token)
     utils.post(("/kata/%s/publish"):format(id), {
         body = kata.save_payload(model),
         callback = function(res, err)
@@ -279,7 +287,7 @@ function kata.publish(id, model, cb)
                 return cb(nil, err)
             end
             if type(res) == "table" and res.success == true and type(res.dmid) == "string" then
-                return kata.poll_publish(res.dmid, id, cb)
+                return kata.poll_publish(res.dmid, id, cb, token)
             end
             -- No dmid: either a rendered validation error or an unexpected shape.
             local why = kata.render_error(res)
