@@ -17,7 +17,7 @@ local page = require("codewars.api.page")
 ---@class cw.Api.KataPage
 local kata_page = {}
 
-local HEX24 = "%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x"
+local HEX24 = require("codewars.api.utils").HEX24
 
 --- Language fields the editor percent-encodes inside the embedded blob.
 local ENCODED_FIELDS = { "answer", "setup", "fixture", "example_fixture", "package" }

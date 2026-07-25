@@ -88,9 +88,28 @@ end
 
 --- Re-derive the buffer name from title (state or dirty flag changed).
 function Kumite:refresh_title()
+    self._refresh_pending = false
     if self.bufnr and api.nvim_buf_is_valid(self.bufnr) then
         pcall(api.nvim_buf_set_name, self.bufnr, self:title())
     end
+end
+
+--- Debounced refresh for the typing path. title() calls is_dirty(), which
+--- re-serializes the whole code buffer AND the fixture split; doing that per
+--- keystroke just to redraw a "+" marker is waste. Coalescing keeps the
+--- content diff authoritative without scaling with typing speed.
+local REFRESH_DEBOUNCE_MS = 150
+
+function Kumite:refresh_title_soon()
+    if self._refresh_pending then
+        return
+    end
+    self._refresh_pending = true
+    vim.defer_fn(function()
+        if self._refresh_pending then
+            self:refresh_title()
+        end
+    end, REFRESH_DEBOUNCE_MS)
 end
 
 ---@return string[]
@@ -416,16 +435,9 @@ end
 ---@param id string
 ---@return boolean jumped
 local function focus_existing(id)
-    for _, ws in ipairs(_Cw_state.kumite or {}) do
-        if ws.snippet.id == id and ws.winid and api.nvim_win_is_valid(ws.winid) then
-            local ok, tabp = pcall(api.nvim_win_get_tabpage, ws.winid)
-            if ok then
-                pcall(api.nvim_set_current_tabpage, tabp)
-                return true
-            end
-        end
-    end
-    return false
+    return ui_utils.focus_existing_tab(_Cw_state.kumite, function(ws)
+        return ws.snippet.id == id
+    end)
 end
 
 function Kumite:mount()
@@ -443,7 +455,7 @@ function Kumite:mount()
     -- Syntax highlighting for every codewars language via the real Neovim
     -- filetype (not the file extension). Unknown/grammarless languages
     -- (eng D13) stay plain text.
-    local ft = require("codewars.kumite.filetypes").code(self.lang) or ""
+    local ft = require("codewars.languages.filetypes").code(self.lang) or ""
 
     ui_utils.buf_set_opts(self.bufnr, {
         buftype = "acwrite", -- lets :w be intercepted (fork/run hints) without a real file
@@ -484,7 +496,7 @@ function Kumite:mount()
         -- The fixture is often a different language than the solution
         -- (BF/Solidity tests are JS, SQL tests are Ruby, …); override the
         -- split's extension-derived filetype with the real test filetype.
-        local test_ft = require("codewars.kumite.filetypes").test(self.lang, self.snippet.test_language)
+        local test_ft = require("codewars.languages.filetypes").test(self.lang, self.snippet.test_language)
         ui_utils.buf_set_opts(self.fixture_split.bufnr, {
             buftype = "acwrite", -- like the code buffer: intercept :w instead of E382 on nofile
             modifiable = kstate.is_editable(self.state),
@@ -543,7 +555,7 @@ function Kumite:autocmds()
             group = group,
             buffer = bufnr,
             callback = function()
-                self:refresh_title()
+                self:refresh_title_soon()
             end,
         })
         api.nvim_create_autocmd("BufWriteCmd", {

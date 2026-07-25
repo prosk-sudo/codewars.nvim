@@ -53,21 +53,10 @@ function M.run(ws, result)
             end
 
             local r = (res and res.result) or {}
-            local output_lines = {}
-            if type(r.output) == "table" then
-                vim.list_extend(output_lines, Runner.format_output(r.output))
-            end
-            if #output_lines == 0 then
-                local fallback = (res and (res.stderr or res.stdout)) or ""
-                if fallback ~= "" then
-                    vim.list_extend(output_lines, vim.split(fallback, "\n", { plain = true }))
-                end
-            end
-
             result:handle({
                 valid = r.completed == true,
                 summary = { passed = r.passed or 0, failed = r.failed or 0, errors = r.errors or 0 },
-                output = table.concat(output_lines, "\n"),
+                output = Runner.build_output(res),
                 wall_time = res and res.wallTime,
                 success_msg = r.completed and "Solution passes its own tests — ready to publish." or nil,
                 reason = r.error,

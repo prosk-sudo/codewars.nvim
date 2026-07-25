@@ -147,8 +147,8 @@ describe("cache.kumite_stash", function()
     end)
 end)
 
-describe("kumite.filetypes", function()
-    local ft = require("codewars.kumite.filetypes")
+describe("languages.filetypes", function()
+    local ft = require("codewars.languages.filetypes")
 
     it("maps codewars slugs to real Neovim filetype names, not extensions", function()
         assert.are.equal("python", ft.code("python"))   -- not "py"
@@ -187,8 +187,8 @@ describe("kumite.filetypes", function()
     end)
 end)
 
-describe("kumite.fixtures", function()
-    local fx = require("codewars.kumite.fixtures")
+describe("languages.fixtures", function()
+    local fx = require("codewars.languages.fixtures")
 
     it("returns the python starter with the codewars_test + solution import", function()
         local t = fx.get("python")

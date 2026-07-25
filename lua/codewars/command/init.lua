@@ -387,7 +387,7 @@ function cmd.kumite_new(options)
                 description = "",
                 language = lang,
                 code = "",
-                fixture = require("codewars.kumite.fixtures").get(lang),
+                fixture = require("codewars.languages.fixtures").get(lang),
                 ["package"] = "",
                 test_framework = kumite_api.default_framework(lang),
                 language_version = kumite_api.default_version(lang),

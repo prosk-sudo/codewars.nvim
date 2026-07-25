@@ -23,7 +23,12 @@ local function load_kata(handlers)
             end
         end
     end
-    package.loaded["codewars.api.utils"] = { post = verb("post"), get = verb("get"), delete = verb("delete") }
+    -- Override only the HTTP verbs, keeping every other field of the real
+    -- module (constants like HEX24 are read at load time). A wholesale
+    -- replacement silently breaks the moment api.utils grows a non-verb field.
+    package.loaded["codewars.api.utils"] = vim.tbl_extend("force",
+        require("codewars.api.utils"),
+        { post = verb("post"), get = verb("get"), delete = verb("delete") })
     package.loaded["codewars.api.kata"] = nil
     local mod = require("codewars.api.kata")
     package.loaded["codewars.api.kata"] = kata -- restore the shared instance

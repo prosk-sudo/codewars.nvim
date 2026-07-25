@@ -55,6 +55,27 @@ function utils.win_set_buf(winid, bufnr, force)
     end
 end
 
+--- Jump to an already-open workspace's tab, if one matches.
+---
+--- Both workspaces open in their own tab and both must avoid opening a second
+--- one for the same thing; only the state list and the identity check differ,
+--- so the traversal lives here rather than once per workspace.
+---@param list table[] workspaces to scan (e.g. _Cw_state.kumite)
+---@param match fun(ws: table): boolean true for the workspace to focus
+---@return boolean jumped
+function utils.focus_existing_tab(list, match)
+    for _, ws in ipairs(list or {}) do
+        if ws.winid and vim.api.nvim_win_is_valid(ws.winid) and match(ws) then
+            local ok, tabp = pcall(vim.api.nvim_win_get_tabpage, ws.winid)
+            if ok then
+                pcall(vim.api.nvim_set_current_tabpage, tabp)
+                return true
+            end
+        end
+    end
+    return false
+end
+
 function utils.buf_set_lines(bufnr, lines)
     vim.api.nvim_set_option_value("modifiable", true, { buf = bufnr })
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)

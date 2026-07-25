@@ -77,7 +77,7 @@ end
 ---@return string test framework id for the current language
 function KataEditor:test_framework()
     return (self.model.test_frameworks or {})[self.lang]
-        or require("codewars.api.kumite").default_framework(self.lang)
+        or require("codewars.languages.runtimes").default_framework(self.lang)
 end
 
 --- Runtimes the editor offers for a language, as `{id, label, default}` rows.
@@ -152,12 +152,7 @@ function KataEditor:switch_language(lang)
     end
 
     local languages = self.model.languages or {}
-    local outgoing = languages[self.lang] or {}
-    outgoing.answer = self:pane_content("answer")
-    outgoing.setup = self:pane_content("setup")
-    outgoing.fixture = self:pane_content("fixture")
-    outgoing.example_fixture = self:pane_content("example")
-    languages[self.lang] = outgoing
+    languages[self.lang] = self:pane_fields_into(languages[self.lang] or {})
 
     -- Adding a language: an empty entry with no snippet id, which is what the
     -- save contract expects for one that does not exist server-side yet.
@@ -173,7 +168,7 @@ function KataEditor:switch_language(lang)
             name = lang,
             answer = "",
             setup = "",
-            fixture = require("codewars.kumite.fixtures").get(lang) or "",
+            fixture = require("codewars.languages.fixtures").get(lang) or "",
             example_fixture = "",
             ["package"] = "",
         }
@@ -259,6 +254,19 @@ function KataEditor:is_dirty()
     return (self.cc.coauthors_wanted == true) ~= (self.saved.cc.coauthors_wanted == true)
 end
 
+--- Copy the four code panes' live text into a `languages[lang]` entry. Both
+--- the save payload and a language switch need exactly this; keeping the
+--- field list in one place stops the two from drifting apart.
+---@param entry table
+---@return table entry
+function KataEditor:pane_fields_into(entry)
+    entry.answer = self:pane_content("answer")
+    entry.setup = self:pane_content("setup")
+    entry.fixture = self:pane_content("fixture")
+    entry.example_fixture = self:pane_content("example")
+    return entry
+end
+
 --- Snapshot the current content as "what the server holds" (on load, and
 --- after every successful save).
 function KataEditor:snapshot()
@@ -279,9 +287,31 @@ end
 --- The workspace has no single title buffer (five panes share the window), so
 --- the state/dirty marker lives in the info panel, which re-renders here.
 function KataEditor:refresh_title()
+    self._refresh_pending = false
     if self.description then
         self.description:populate()
     end
+end
+
+--- Debounced refresh for the typing path.
+---
+--- Rendering the panel runs is_dirty(), which diffs every pane's full text
+--- against the saved snapshot — correct, and deliberately not a flag (a flag
+--- desyncs on pane switches), but far too much work per keystroke. Coalescing
+--- into one refresh per idle moment keeps the diff authoritative while the
+--- cost stops scaling with typing speed.
+local REFRESH_DEBOUNCE_MS = 150
+
+function KataEditor:refresh_title_soon()
+    if self._refresh_pending then
+        return
+    end
+    self._refresh_pending = true
+    vim.defer_fn(function()
+        if self._refresh_pending then
+            self:refresh_title()
+        end
+    end, REFRESH_DEBOUNCE_MS)
 end
 
 --- Human label for a category slug / rank value, for the info panel.
@@ -402,12 +432,7 @@ function KataEditor:build_model()
     for lang, lm in pairs(self.model.languages) do
         languages[lang] = vim.deepcopy(lm)
     end
-    local current = languages[self.lang] or {}
-    current.answer = self:pane_content("answer")
-    current.setup = self:pane_content("setup")
-    current.fixture = self:pane_content("fixture")
-    current.example_fixture = self:pane_content("example")
-    languages[self.lang] = current
+    languages[self.lang] = self:pane_fields_into(languages[self.lang] or {})
 
     -- Every language carries the runtime it will run on. Without this a
     -- language the user re-versioned would silently save on the old runtime.
@@ -427,7 +452,34 @@ end
 function KataEditor:adopt(model)
     self.model.languages = model.languages
     self.cc = vim.deepcopy(model.code_challenge)
-    self:snapshot()
+
+    -- Baseline comes from the payload that was SENT, never from the live
+    -- buffers. Reading buffers here marked anything typed while the request
+    -- was in flight as "saved" even though the server never received it, and
+    -- closing afterwards then dropped it silently.
+    local lm = model.languages[self.lang] or {}
+    self.saved = {
+        panes = {
+            answer = lm.answer or "",
+            setup = lm.setup or "",
+            fixture = lm.fixture or "",
+            example = lm.example_fixture or "",
+            description = model.code_challenge.description or "",
+        },
+        cc = vim.deepcopy(model.code_challenge),
+    }
+end
+
+--- Lock or unlock every pane. Panes are locked while a save/publish is in
+--- flight (the states codewars.kata.state marks `locked`), so the buffers
+--- cannot drift from the payload already on its way to the server.
+---@param locked boolean
+function KataEditor:set_panes_locked(locked)
+    for _, bufnr in pairs(self.bufs or {}) do
+        if api.nvim_buf_is_valid(bufnr) then
+            ui_utils.buf_set_opts(bufnr, { modifiable = not locked })
+        end
+    end
 end
 
 --- Save the kata in place (`POST /kata/{id}`). Publication is unaffected, so
@@ -440,11 +492,13 @@ function KataEditor:save()
 
     local prev = self.state
     self.state = "saving"
+    self:set_panes_locked(kstate.is_locked(self.state))
     self:refresh_title()
 
     local model = self:build_model()
     require("codewars.api.kata").save(self.model.id, model, function(serr)
         self.state = prev -- save_done and save_failed both REVERT
+        self:set_panes_locked(kstate.is_locked(self.state))
         if serr then
             if serr.auth then
                 require("codewars.cache.cookie").delete()
@@ -498,20 +552,27 @@ end
 function KataEditor:_do_publish()
     local prev = self.state
     self.state = "publishing"
+    self:set_panes_locked(kstate.is_locked(self.state))
     self:refresh_title()
     log.info("Publishing — Codewars runs your tests server-side, this can take a moment…")
 
-    require("codewars.api.kata").publish(self.model.id, self:build_model(), function(url, perr)
+    local model = self:build_model()
+    require("codewars.api.kata").publish(self.model.id, model, function(url, perr)
         if perr then
             if perr.auth then
                 require("codewars.cache.cookie").delete()
             end
             self.state = prev -- REVERT
+            self:set_panes_locked(kstate.is_locked(self.state))
             self:refresh_title()
             return log.error("Publish failed — " .. (perr.msg or "unknown error"))
         end
         self.state = kstate.step("publishing", "publish_done") -- "published"
+        self:set_panes_locked(kstate.is_locked(self.state))
         self.model.published = true
+        -- Publish persists the same body a save would, so the baseline moves
+        -- with it; without this the workspace still looks dirty afterwards.
+        self:adopt(model)
         self:refresh_title()
         log.info("Published! " .. url)
     end)
@@ -645,16 +706,9 @@ end
 ---@param id string
 ---@return boolean jumped
 local function focus_existing(id)
-    for _, ws in ipairs(_Cw_state.kata_editors or {}) do
-        if ws.model.id == id and ws.winid and api.nvim_win_is_valid(ws.winid) then
-            local ok, tabp = pcall(api.nvim_win_get_tabpage, ws.winid)
-            if ok then
-                pcall(api.nvim_set_current_tabpage, tabp)
-                return true
-            end
-        end
-    end
-    return false
+    return ui_utils.focus_existing_tab(_Cw_state.kata_editors, function(ws)
+        return ws.model.id == id
+    end)
 end
 
 --- Filetype for a pane: the solution panes use the kata's language, the
@@ -663,7 +717,7 @@ end
 ---@param kind string
 ---@return string
 function KataEditor:pane_filetype(kind)
-    local filetypes = require("codewars.kumite.filetypes")
+    local filetypes = require("codewars.languages.filetypes")
     if kind == "markdown" then
         return "markdown"
     end
@@ -758,7 +812,7 @@ function KataEditor:autocmds()
             group = group,
             buffer = bufnr,
             callback = function()
-                self:refresh_title()
+                self:refresh_title_soon()
             end,
         })
         api.nvim_create_autocmd("BufWriteCmd", {

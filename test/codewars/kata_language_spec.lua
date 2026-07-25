@@ -100,7 +100,7 @@ describe("KataEditor language switching", function()
         local ws = workspace()
         ws:switch_language("ruby")
         local seeded = ws.model.languages.ruby.fixture
-        assert.are.equal(require("codewars.kumite.fixtures").get("ruby"), seeded)
+        assert.are.equal(require("codewars.languages.fixtures").get("ruby"), seeded)
         assert.is_true(#seeded > 0, "an added language must not start with an empty fixture")
         -- and the pane reads it back, so the buffer shows the template
         assert.are.equal(seeded, ws:pane_content("fixture"))

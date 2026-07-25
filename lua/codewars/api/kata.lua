@@ -1,6 +1,5 @@
 local utils = require("codewars.api.utils")
 local urls = require("codewars.api.urls")
-local kumite = require("codewars.api.kumite")
 local page = require("codewars.api.page")
 
 ---@class cw.Api.Kata
@@ -32,7 +31,7 @@ end
 --- absence of a rendered validation error (see `kata.render_error`). Publish is
 --- two-step: it returns a deferred-job id to poll at /api/v1/deferred/{dmid}.
 
-local HEX24 = "^%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x$"
+local HEX24 = "^" .. utils.HEX24 .. "$"
 
 -- Async publish: poll the deferred job until it stops reporting progress.
 local POLL_INTERVAL_MS = 1200
@@ -70,12 +69,12 @@ function kata.is_server_id(id)
     return type(id) == "string" and id:match(HEX24) ~= nil
 end
 
---- Default runtime version for a language (shared with kumite; the editor's
+--- Default runtime version for a language (codewars.languages.runtimes; the editor's
 --- versionInfo marks the same `default:true` entries).
 ---@param lang string
 ---@return string?
 function kata.default_version(lang)
-    return kumite.default_version(lang)
+    return require("codewars.languages.runtimes").default_version(lang)
 end
 
 --- Build one `languages[lang]` entry for a save/publish body. `id` is the
