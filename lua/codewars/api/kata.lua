@@ -236,6 +236,23 @@ function kata.poll_publish(dmid, id, cb, tries)
     })
 end
 
+--- Load a kata's authoring model by scraping its edit page (design KP1b).
+--- Read-only. Delegates to `api.kata_page`, which owns the page contract;
+--- kept here so callers have one kata API surface.
+---@param id string kata id (24-hex)
+---@param lang string language slug
+---@param cb fun(model: cw.KataModel?, err: cw.err?)
+function kata.load(id, lang, cb)
+    require("codewars.api.kata_page").fetch_edit(id, lang, cb)
+end
+
+--- Extract a kata id from a raw id or any `/kata/…` URL (design KP1b).
+---@param input string?
+---@return string? id
+function kata.parse_ref(input)
+    return require("codewars.api.kata_page").parse_ref(input)
+end
+
 --- Publish a kata: `POST /kata/{id}/publish` with the full model returns
 --- `{success, dmid}` for an async job we then poll. The server runs the fixture
 --- against the solution itself, so a bad solution/fixture surfaces as a deferred
