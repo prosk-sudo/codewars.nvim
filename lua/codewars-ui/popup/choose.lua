@@ -10,10 +10,12 @@ local ui_utils = require("codewars-ui.utils")
 ---@class cw.ui.Choose
 local M = {}
 
-local MIN_WIDTH = 30
-local MAX_WIDTH = 72
-local GUTTER = 4 -- "  1 " prefix
-local MAX_ROWS = 12
+local MIN_WIDTH = 46
+local MAX_WIDTH = 88
+local GUTTER = 6 -- "  1 " prefix plus breathing room at the right edge
+-- Tall enough for the full language list to be worth scrolling, and for the
+-- Edit-kata panel to show every field without feeling cramped.
+local MAX_ROWS = 20
 
 --- Render the rows. Pure, so the box's shape is testable without a window.
 ---@param title string

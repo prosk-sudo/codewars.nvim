@@ -60,7 +60,9 @@ function cmd.help()
         { "AUTHORING A KATA", "" },
         { "kata open <id|url> [lang]", "Open a kata you author in the editor" },
         { "kata pane [name]", "Show a field (answer|setup|fixture|example|description)" },
-        { "kata meta",      "Edit name, discipline, rank, tags, contributors" },
+        { "kata meta",      "Edit name, discipline, rank, tags, contributors, language" },
+        { "kata lang",      "Switch the language being edited, or add one" },
+        { "kata version",   "Pick the runtime version for the current language" },
         { "kata validate",  "Run your solution against the test cases" },
         { "kata save",      "Save the kata draft on codewars.com" },
         { "kata publish",   "Publish the kata publicly (confirms first)" },
@@ -467,6 +469,22 @@ function cmd.kata_meta()
     local ws = curr_kata_editor("edit its details")
     if ws then
         ws:edit_meta()
+    end
+end
+
+--- :CW kata lang — switch the language being edited, or add one to the kata.
+function cmd.kata_lang()
+    local ws = curr_kata_editor("switch its language")
+    if ws then
+        ws:choose_language()
+    end
+end
+
+--- :CW kata version — pick the runtime the current language runs on.
+function cmd.kata_version()
+    local ws = curr_kata_editor("change its runtime")
+    if ws then
+        ws:choose_version()
     end
 end
 
@@ -1037,6 +1055,8 @@ cmd.commands = {
             _positional_complete = { kata_pane_keys },
         },
         meta = { cmd.kata_meta },
+        lang = { cmd.kata_lang },
+        version = { cmd.kata_version },
         validate = { cmd.kata_validate },
         save = { cmd.kata_save },
         publish = { cmd.kata_publish },

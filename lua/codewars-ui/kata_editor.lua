@@ -87,6 +87,153 @@ function KataEditor:test_framework()
         or require("codewars.api.kumite").default_framework(self.lang)
 end
 
+--- Runtimes the editor offers for a language, as `{id, label, default}` rows.
+---@param lang string?
+---@return table[]
+function KataEditor:runtimes(lang)
+    local info = (self.model.version_info or {})[lang or self.lang]
+    return type(info) == "table" and info or {}
+end
+
+--- The runtime version this workspace will submit for a language: whatever the
+--- user picked, else the runtime the editor marks `default:true`, else the
+--- language's shared fallback.
+---@param lang string?
+---@return string
+function KataEditor:version(lang)
+    lang = lang or self.lang
+    if self.versions[lang] then
+        return self.versions[lang]
+    end
+    for _, runtime in ipairs(self:runtimes(lang)) do
+        if runtime.default == true then
+            return runtime.id
+        end
+    end
+    return require("codewars.api.kata").default_version(lang) or ""
+end
+
+---@param lang string
+---@param id string
+function KataEditor:set_version(lang, id)
+    self.versions[lang] = id
+end
+
+--- Languages you can switch to: the ones this kata already has (marked), then
+--- every other runtime the editor offers. Picking an unused one ADDS it — the
+--- save payload sends an empty `id` for a language being added, which is the
+--- documented way to create one.
+---@return { label: string, lang: string, existing: boolean }[]
+function KataEditor:available_languages()
+    local existing, rows = {}, {}
+    for lang in pairs(self.model.languages or {}) do
+        existing[lang] = true
+    end
+    local names = vim.tbl_keys(existing)
+    table.sort(names)
+    for _, lang in ipairs(names) do
+        local marker = lang == self.lang and "▸ " or "  "
+        rows[#rows + 1] = { label = marker .. lang .. " (in this kata)", lang = lang, existing = true }
+    end
+
+    local others = {}
+    for lang in pairs(self.model.version_info or {}) do
+        if not existing[lang] then
+            others[#others + 1] = lang
+        end
+    end
+    table.sort(others)
+    for _, lang in ipairs(others) do
+        rows[#rows + 1] = { label = "  " .. lang .. " — add to this kata", lang = lang, existing = false }
+    end
+    return rows
+end
+
+--- Show another language's code in the panes. Buffer contents for the language
+--- being left are written back into the model first, so switching away and
+--- back never loses work.
+---@param lang string
+function KataEditor:switch_language(lang)
+    if lang == self.lang then
+        return log.info("Already editing " .. lang .. ".")
+    end
+
+    local languages = self.model.languages or {}
+    local outgoing = languages[self.lang] or {}
+    outgoing.answer = self:pane_content("answer")
+    outgoing.setup = self:pane_content("setup")
+    outgoing.fixture = self:pane_content("fixture")
+    outgoing.example_fixture = self:pane_content("example")
+    languages[self.lang] = outgoing
+
+    -- Adding a language: an empty entry with no snippet id, which is what the
+    -- save contract expects for one that does not exist server-side yet.
+    local added = languages[lang] == nil
+    if added then
+        languages[lang] = {
+            id = "",
+            name = lang,
+            answer = "",
+            setup = "",
+            fixture = "",
+            example_fixture = "",
+            ["package"] = "",
+        }
+    end
+    self.model.languages = languages
+    self.lang = lang
+
+    for _, pane in ipairs(PANES) do
+        local bufnr = self.bufs and self.bufs[pane.key]
+        if bufnr and api.nvim_buf_is_valid(bufnr) and pane.field then
+            api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(self:loaded_value(pane.key), "\n"))
+            ui_utils.buf_set_opts(bufnr, { filetype = self:pane_filetype(pane.kind) })
+            vim.bo[bufnr].modified = false
+        end
+    end
+
+    self:refresh_title()
+    log.info(added
+        and ("Added %s — write its solution and tests, then :CW kata save."):format(lang)
+        or ("Editing %s (%s)."):format(lang, self:version()))
+end
+
+--- Pick the language to edit (or add one).
+function KataEditor:choose_language()
+    local rows = self:available_languages()
+    require("codewars-ui.popup.choose").open({ title = "Language", items = rows }, function(row)
+        if row then
+            self:switch_language(row.lang)
+        end
+    end)
+end
+
+--- Pick the runtime version submitted for the current language.
+function KataEditor:choose_version()
+    local runtimes = self:runtimes()
+    if #runtimes == 0 then
+        return log.warn(("Codewars lists no runtimes for %s — the language default is used.")
+            :format(self.lang))
+    end
+    local current = self:version()
+    local items = {}
+    for _, runtime in ipairs(runtimes) do
+        local marker = runtime.id == current and "▸ " or "  "
+        local note = runtime.default == true and " (default)" or ""
+        items[#items + 1] = { label = marker .. (runtime.label or runtime.id) .. note, id = runtime.id }
+    end
+    require("codewars-ui.popup.choose").open({
+        title = self.lang .. " runtime",
+        items = items,
+    }, function(item)
+        if item then
+            self:set_version(self.lang, item.id)
+            self:refresh_title()
+            log.info(("%s runtime: %s"):format(self.lang, item.id))
+        end
+    end)
+end
+
 --- Live edits: compare every pane and the metadata against the last-saved
 --- snapshot rather than trusting a flag that pane switches could desync.
 ---@return boolean
@@ -146,7 +293,9 @@ function KataEditor:header_lines()
     local lines = {
         "# " .. (cc.name ~= "" and cc.name or "(untitled kata)"),
         "",
-        ("**%s** · %s%s"):format(kstate.label(self.state), self.lang, self:is_dirty() and " · unsaved +" or ""),
+        ("**%s** · %s %s%s"):format(
+            kstate.label(self.state), self.lang, self:version(),
+            self:is_dirty() and " · unsaved +" or ""),
         "",
         "## Kata",
         "- Discipline: " .. label_for(kata_api.CATEGORIES, cc.category),
@@ -252,6 +401,12 @@ function KataEditor:build_model()
     current.fixture = self:pane_content("fixture")
     current.example_fixture = self:pane_content("example")
     languages[self.lang] = current
+
+    -- Every language carries the runtime it will run on. Without this a
+    -- language the user re-versioned would silently save on the old runtime.
+    for lang, lm in pairs(languages) do
+        lm.default_version = self:version(lang)
+    end
 
     local cc = vim.deepcopy(self.cc)
     cc.description = self:pane_content("description")
@@ -425,7 +580,18 @@ function KataEditor:edit_meta()
             key = "coauthors_wanted",
             label = "Allow Contributors: " .. (self.cc.coauthors_wanted and "yes" or "no"),
         },
+        { key = "language", label = "Language: " .. self.lang },
+        { key = "version", label = "Runtime: " .. self:version() },
     }
+
+    -- Editing one field almost always means editing another, so the panel
+    -- REOPENS after each change (with the new value already shown) instead of
+    -- making the user re-run the command five times. `q`/`Esc` closes it.
+    local function reopen()
+        vim.schedule(function()
+            self:edit_meta()
+        end)
+    end
 
     choose.open({ title = "Edit kata", items = fields }, function(field)
         if not field then
@@ -437,6 +603,7 @@ function KataEditor:edit_meta()
                     self.cc.name = value
                     self:refresh_title()
                 end
+                reopen()
             end)
         elseif field.key == "tags_text" then
             vim.ui.input({ prompt = "Tags (comma separated): ", default = self.cc.tags_text }, function(value)
@@ -444,11 +611,17 @@ function KataEditor:edit_meta()
                     self.cc.tags_text = value
                     self:refresh_title()
                 end
+                reopen()
             end)
         elseif field.key == "coauthors_wanted" then
             self.cc.coauthors_wanted = self.cc.coauthors_wanted ~= true
             self:refresh_title()
             log.info("Allow contributors: " .. (self.cc.coauthors_wanted and "yes" or "no"))
+            reopen()
+        elseif field.key == "language" then
+            self:choose_language()
+        elseif field.key == "version" then
+            self:choose_version()
         else
             local is_discipline = field.key == "category"
             choose.open({
@@ -459,6 +632,7 @@ function KataEditor:edit_meta()
                     self.cc[field.key] = entry.value
                     self:refresh_title()
                 end
+                reopen()
             end)
         end
     end)
@@ -634,6 +808,7 @@ function KataEditor:new(model)
     obj.cc = vim.deepcopy(model.code_challenge)
     obj.state = kstate.of(model.published)
     obj.pane = "answer"
+    obj.versions = {} -- lang -> runtime id, filled in as the user picks
     obj.saved = { panes = {}, cc = {} }
     return obj
 end

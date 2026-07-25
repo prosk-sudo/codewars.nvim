@@ -21,9 +21,9 @@ describe("choose.layout", function()
         end
         items[1] = { label = string.rep("wide ", 8) }
         local box = choose.layout("Pick", items)
-        assert.is_true(box.width <= 72)
-        assert.is_true(box.width >= 30)
-        assert.is_true(box.height <= 12, "tall lists must not run off screen")
+        assert.is_true(box.width <= 88)
+        assert.is_true(box.width >= 46)
+        assert.is_true(box.height <= 20, "tall lists must not run off screen")
         assert.are.equal(30, #box.lines, "every item stays in the buffer")
     end)
 

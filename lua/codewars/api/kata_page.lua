@@ -181,6 +181,7 @@ end
 ---@field languages table<string, table> per-language { id, name, answer, setup, fixture, example_fixture, package }
 ---@field code_challenge table { name, category, estimated_rank, tags_text, coauthors_wanted, description }
 ---@field test_frameworks table<string, string>
+---@field version_info table<string, { id: string, label: string, default: boolean }[]> every runtime the editor offers, per language
 ---@field fixtures_locked boolean
 
 --- Parse a kata edit page into the workspace model. Returns nil when the page
@@ -212,6 +213,10 @@ function kata_page.parse_edit_page(html)
         languages = languages,
         code_challenge = kata_page.parse_code_challenge(html),
         test_frameworks = type(data.testFrameworks) == "table" and data.testFrameworks or {},
+        -- The editor ships every runtime it offers for all 58 languages, not
+        -- just the ones this kata uses — that is what makes adding a language
+        -- possible without a second request.
+        version_info = type(data.versionInfo) == "table" and data.versionInfo or {},
         fixtures_locked = data.fixturesLocked == true,
     }
 end
