@@ -395,13 +395,6 @@ function KataEditor:delete()
                 if derr.auth then
                     require("codewars.cache.cookie").delete()
                 end
-                -- Already gone: the goal is met, and keeping an editor open on
-                -- a kata that no longer exists only invites a confusing save.
-                if derr.gone then
-                    log.warn(derr.msg)
-                    self:snapshot()
-                    return self:close()
-                end
                 return log.error("Delete failed — " .. (derr.msg or "unknown error"))
             end
             log.info("Kata deleted.")

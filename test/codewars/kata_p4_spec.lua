@@ -147,6 +147,23 @@ describe("kata.delete", function()
         assert.are.equal("/kata/" .. KATA_ID, calls[1].endpoint)
         assert.is_nil(got)
     end)
+
+    it("treats a 404 as success, because destroy redirects onto the deleted kata", function()
+        -- Confirmed live: the delete removes the kata and the followed
+        -- redirect then reports 404. Surfacing that as an error told users a
+        -- delete had failed when it had actually worked.
+        local mod = load_kata({ delete = { err = { status = 404, msg = "http error 404" } } })
+        local got = "sentinel"
+        mod.delete(KATA_ID, function(err) got = err end)
+        assert.is_nil(got)
+    end)
+
+    it("still reports a real failure", function()
+        local mod = load_kata({ delete = { err = { status = 500, msg = "http error 500" } } })
+        local got
+        mod.delete(KATA_ID, function(err) got = err end)
+        assert.are.equal(500, got.status)
+    end)
 end)
 
 describe("kata.unpublish", function()

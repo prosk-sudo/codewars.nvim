@@ -175,15 +175,17 @@ end
 function kata.delete(id, cb)
     utils.delete(("/kata/%s"):format(id), {
         callback = function(_, err)
-            -- A 404 here means the kata is not there to delete — most often
-            -- it is already gone (deleted from another window or the website)
-            -- and this workspace is holding a stale view. "http error 404"
-            -- tells the user nothing they can act on.
+            -- 404 IS the success signal here. Destroy responds with a
+            -- redirect, and following it lands back on the kata that was just
+            -- deleted — so a successful delete reports "not found" (confirmed
+            -- live: the delete really did remove the kata). Reporting that as
+            -- an error told users their delete had failed when it had worked.
+            --
+            -- Treating it as success is also the right semantics regardless:
+            -- delete is idempotent, and "the kata is not there" is precisely
+            -- the state the caller asked for.
             if err and err.status == 404 then
-                return cb({
-                    msg = "That kata no longer exists on codewars.com — it may already be deleted.",
-                    gone = true,
-                })
+                return cb(nil)
             end
             cb(err)
         end,
