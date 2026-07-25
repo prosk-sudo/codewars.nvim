@@ -395,6 +395,13 @@ function KataEditor:delete()
                 if derr.auth then
                     require("codewars.cache.cookie").delete()
                 end
+                -- Already gone: the goal is met, and keeping an editor open on
+                -- a kata that no longer exists only invites a confusing save.
+                if derr.gone then
+                    log.warn(derr.msg)
+                    self:snapshot()
+                    return self:close()
+                end
                 return log.error("Delete failed — " .. (derr.msg or "unknown error"))
             end
             log.info("Kata deleted.")
@@ -408,41 +415,55 @@ end
 --- prompts with proper pickers; the field list and value mapping stay.
 function KataEditor:edit_meta()
     local kata_api = require("codewars.api.kata")
-    local fields = { "Name", "Discipline", "Estimated Rank", "Tags", "Allow Contributors" }
+    local choose = require("codewars-ui.popup.choose")
 
-    vim.ui.select(fields, { prompt = "Edit which kata field?" }, function(choice)
-        if not choice then
+    -- Each row shows the field's CURRENT value, so the box doubles as a
+    -- summary of what will be saved.
+    local function current(key)
+        local value = self.cc[key]
+        return (value ~= nil and value ~= "") and value or "—"
+    end
+    local fields = {
+        { key = "name", label = "Name: " .. current("name") },
+        { key = "category", label = "Discipline: " .. label_for(kata_api.CATEGORIES, self.cc.category) },
+        { key = "estimated_rank", label = "Estimated Rank: " .. label_for(kata_api.RANKS, self.cc.estimated_rank) },
+        { key = "tags_text", label = "Tags: " .. current("tags_text") },
+        {
+            key = "coauthors_wanted",
+            label = "Allow Contributors: " .. (self.cc.coauthors_wanted and "yes" or "no"),
+        },
+    }
+
+    choose.open({ title = "Edit kata", items = fields }, function(field)
+        if not field then
             return
         end
-        if choice == "Name" then
+        if field.key == "name" then
             vim.ui.input({ prompt = "Kata name: ", default = self.cc.name }, function(value)
                 if value then
                     self.cc.name = value
                     self:refresh_title()
                 end
             end)
-        elseif choice == "Tags" then
+        elseif field.key == "tags_text" then
             vim.ui.input({ prompt = "Tags (comma separated): ", default = self.cc.tags_text }, function(value)
                 if value then
                     self.cc.tags_text = value
                     self:refresh_title()
                 end
             end)
-        elseif choice == "Allow Contributors" then
+        elseif field.key == "coauthors_wanted" then
             self.cc.coauthors_wanted = self.cc.coauthors_wanted ~= true
             self:refresh_title()
             log.info("Allow contributors: " .. (self.cc.coauthors_wanted and "yes" or "no"))
         else
-            local list = choice == "Discipline" and kata_api.CATEGORIES or kata_api.RANKS
-            local key = choice == "Discipline" and "category" or "estimated_rank"
-            vim.ui.select(list, {
-                prompt = choice .. ":",
-                format_item = function(entry)
-                    return entry.label
-                end,
+            local is_discipline = field.key == "category"
+            choose.open({
+                title = is_discipline and "Discipline" or "Estimated Rank",
+                items = is_discipline and kata_api.CATEGORIES or kata_api.RANKS,
             }, function(entry)
                 if entry then
-                    self.cc[key] = entry.value
+                    self.cc[field.key] = entry.value
                     self:refresh_title()
                 end
             end)

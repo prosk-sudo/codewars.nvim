@@ -336,6 +336,13 @@ function Kumite:convert()
     if not kumite_api.is_server_id(self.snippet.id) then
         return log.warn("Save the kumite first (:CW kumite save), then convert.")
     end
+    -- Converting flips the snippet's state to "converted" (verified live
+    -- 2026-07-25). Catching it here turns a confusing server rejection into
+    -- the one thing the user actually wants to know: the kata already exists.
+    if self.snippet.state == "converted" then
+        return log.warn("This kumite was already converted — the kata exists. "
+            .. "Find it under your authored kata, then :CW kata open <id>.")
+    end
     require("codewars-ui.popup.confirm").open({
         title = "Convert to kata",
         message = "Convert this kumite into a new kata?\n\nThis creates a kata and hides the kumite.",

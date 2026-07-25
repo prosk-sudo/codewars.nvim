@@ -175,6 +175,16 @@ end
 function kata.delete(id, cb)
     utils.delete(("/kata/%s"):format(id), {
         callback = function(_, err)
+            -- A 404 here means the kata is not there to delete — most often
+            -- it is already gone (deleted from another window or the website)
+            -- and this workspace is holding a stale view. "http error 404"
+            -- tells the user nothing they can act on.
+            if err and err.status == 404 then
+                return cb({
+                    msg = "That kata no longer exists on codewars.com — it may already be deleted.",
+                    gone = true,
+                })
+            end
             cb(err)
         end,
     })

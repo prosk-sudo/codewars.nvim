@@ -368,7 +368,16 @@ function kumite.convert_to_kata(id, cb)
             local url = type(res) == "table" and res.success == true
                 and type(res.data) == "table" and res.data.url
             if type(url) ~= "string" then
-                return cb(nil, { msg = "Convert failed, or Codewars changed the response shape." })
+                -- Prefer whatever the server said over a generic shrug. The
+                -- usual cause is converting a kumite that already has a kata,
+                -- which the workspace pre-checks via snippet.state.
+                local reason = type(res) == "table"
+                    and (res.reason or res.error or res.message)
+                return cb(nil, {
+                    msg = reason and ("Convert failed — " .. tostring(reason))
+                        or "Convert failed. If this kumite was already converted, its kata "
+                        .. "already exists — look under your authored kata rather than converting again.",
+                })
             end
             cb(url, nil)
         end,
