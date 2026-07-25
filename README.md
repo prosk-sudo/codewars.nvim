@@ -76,6 +76,11 @@ See [COMMANDS.md](COMMANDS.md) for the full list, or run `:CW help` inside Neovi
 :CW kumite publish       " publish the saved kumite publicly (tests must pass)
 :CW kumite unpublish     " hide a published kumite again (reversible)
 :CW kumite convert       " convert the kumite into a new kata (hides the kumite)
+:CW kata open <id|url>   " open a kata you author in the editor
+:CW kata meta            " name, discipline, estimated rank, tags, contributors
+:CW kata validate        " run your solution against the kata's own test cases
+:CW kata save            " save the kata draft on codewars.com
+:CW kata publish         " publish it publicly (confirms first; server re-runs your tests)
 ```
 
 This opens the `8 kyu Multiply` kata with:
