@@ -220,3 +220,38 @@ describe("KataEditor:header_lines", function()
         assert.is_nil(text:match("kata publish"))
     end)
 end)
+
+describe("name-already-taken recovery", function()
+    --- Codewars rejects a kata whose name is in use. The name travels inside
+    --- the same payload, so a rename can be applied and the request retried
+    --- with no intermediate save.
+    local function taken(msg)
+        return { msg = msg }
+    end
+
+    it("recognises the rejection by its wording, not its status", function()
+        local ws = workspace()
+        -- render_error yields "<field>: <reason>" from the re-rendered form
+        local err = taken("name: Name is already taken")
+        assert.truthy(tostring(err.msg):lower():find("already taken", 1, true))
+        -- and does NOT fire on unrelated validation failures
+        local other = taken("setup: Initial Solution is required")
+        assert.is_nil(tostring(other.msg):lower():find("already taken", 1, true))
+        assert.are.equal("My Kata", ws.cc.name)
+    end)
+
+    it("carries the new name into the very next payload", function()
+        -- the retry is what makes this work: no save in between, so the
+        -- renamed cc must reach build_model directly
+        local ws = workspace()
+        ws.cc.name = "My Kata II"
+        assert.are.equal("My Kata II", ws:build_model().code_challenge.name)
+    end)
+
+    it("counts a rename as unsaved work", function()
+        local ws = workspace()
+        assert.is_false(ws:is_dirty())
+        ws.cc.name = "My Kata II"
+        assert.is_true(ws:is_dirty(), "a rename must not be silently lost on close")
+    end)
+end)

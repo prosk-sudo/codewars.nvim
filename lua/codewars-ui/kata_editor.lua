@@ -546,6 +546,34 @@ function KataEditor:set_panes_locked(locked)
     end
 end
 
+--- Codewars requires a kata name to be free. The rejection names the field and
+--- the reason, and the name travels inside the same payload, so a rename can be
+--- applied and the request retried immediately -- no intermediate save, unlike
+--- the kumite path where convert reads the STORED title.
+---@param what string "save" or "publish", for the prompt
+---@param retry fun() re-issues the request that was rejected
+function KataEditor:_rename_and_retry(what, retry)
+    log.warn(('A kata named "%s" already exists — pick another name.'):format(self.cc.name))
+    vim.ui.input({
+        prompt = "New kata name: ",
+        default = (self.cc.name or "") .. " II",
+    }, function(name)
+        if not name or vim.trim(name) == "" then
+            return log.info(("%s cancelled — the name is still taken."):format(what))
+        end
+        self.cc.name = vim.trim(name)
+        self:refresh_title()
+        retry()
+    end)
+end
+
+--- True when a rejection is the name-already-taken case.
+---@param err cw.err?
+---@return boolean
+local function is_name_taken(err)
+    return err ~= nil and tostring(err.msg or ""):lower():find("already taken", 1, true) ~= nil
+end
+
 --- Save the kata in place (`POST /kata/{id}`). Publication is unaffected, so
 --- the state machine reverts to whichever state we came from.
 function KataEditor:save()
@@ -568,6 +596,9 @@ function KataEditor:save()
                 require("codewars.cache.cookie").delete()
             end
             self:refresh_title()
+            if is_name_taken(serr) then
+                return self:_rename_and_retry("Save", function() self:save() end)
+            end
             return log.error("Kata save failed — " .. (serr.msg or "unknown error"))
         end
         self:adopt(model)
@@ -658,6 +689,11 @@ function KataEditor:_do_publish()
             self.state = prev -- REVERT
             self:set_panes_locked(kstate.is_locked(self.state))
             self:refresh_title()
+            if is_name_taken(perr) then
+                -- retry _do_publish, not publish(): the user already confirmed,
+                -- and the rename legitimately makes the workspace dirty.
+                return self:_rename_and_retry("Publish", function() self:_do_publish() end)
+            end
             return log.error("Publish failed — " .. (perr.msg or "unknown error"))
         end
         self.state = kstate.step("publishing", "publish_done") -- "published"
