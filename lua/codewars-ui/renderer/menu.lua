@@ -366,40 +366,23 @@ function Menu:draw()
     table.insert(lines, "")
     table.insert(lines, "")
 
-    -- Profile badge: the text stand-in for codewars.com's SVG badge (see
-    -- renderer/badge.lua for why it is drawn rather than fetched). Each of its
-    -- rows is centered independently, so highlight columns are shifted by that
-    -- row's own padding.
-    local badge_hls = {}
+    local honor_row = nil
     local username = config.user.username
     if username ~= "" then
         local cached_data = self._user_data
         if cached_data then
-            local overall = (cached_data.ranks and cached_data.ranks.overall) or {}
-            local badge = require("codewars-ui.renderer.badge").render({
-                username = username,
-                rank_name = overall.name,
-                rank = overall.rank,
-                honor = cached_data.honor or 0,
-                completed = cached_data.codeChallenges and cached_data.codeChallenges.totalCompleted or 0,
-            })
-
-            local first_row = #lines
-            local pads = {}
-            for i, line in ipairs(badge.lines) do
-                local padded, pad = center_pad(line, badge.width)
-                pads[i] = pad
-                table.insert(lines, padded)
+            local rank_name = ""
+            if cached_data.ranks and cached_data.ranks.overall then
+                rank_name = cached_data.ranks.overall.name or ""
             end
-            for _, hl in ipairs(badge.highlights) do
-                local pad = pads[hl.row + 1] or 0
-                badge_hls[#badge_hls + 1] = {
-                    row = first_row + hl.row,
-                    col_start = hl.col_start + pad,
-                    col_end = hl.col_end + pad,
-                    hl = hl.hl,
-                }
+            local honor = cached_data.honor or 0
+            local completed = 0
+            if cached_data.codeChallenges then
+                completed = cached_data.codeChallenges.totalCompleted or 0
             end
+            local info_line = rank_name .. "  |  " .. honor .. " honor  |  " .. completed .. " kata completed"
+            honor_row = #lines
+            table.insert(lines, center(info_line))
             table.insert(lines, "")
         end
     end
@@ -428,8 +411,8 @@ function Menu:draw()
         end
     end
 
-    for _, hl in ipairs(badge_hls) do
-        api.nvim_buf_add_highlight(self.bufnr, ns, hl.hl, hl.row, hl.col_start, hl.col_end)
+    if honor_row then
+        api.nvim_buf_add_highlight(self.bufnr, ns, "codewars_ref", honor_row, 0, -1)
     end
 
     if signed_in and username ~= "" then
