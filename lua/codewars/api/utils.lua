@@ -12,6 +12,12 @@ local urls = require("codewars.api.urls")
 ---@class cw.Api.Utils
 local utils = {}
 
+--- Lua pattern matching a Codewars id: 24 hex characters. Unanchored, so
+--- callers can embed it (`"/kumite/(" .. HEX24 .. ")"`) or anchor it
+--- themselves. Was typed out by hand in three modules; one copy means the
+--- three cannot drift.
+utils.HEX24 = ("%x"):rep(24)
+
 ---@param endpoint string
 ---@param opts? table
 function utils.post(endpoint, opts)
@@ -30,6 +36,26 @@ function utils.get(endpoint, opts)
     }, opts or {})
 
     return utils.curl("get", options)
+end
+
+---@param endpoint string
+---@param opts? table
+function utils.put(endpoint, opts)
+    local options = vim.tbl_deep_extend("force", {
+        endpoint = endpoint,
+    }, opts or {})
+
+    return utils.curl("put", options)
+end
+
+---@param endpoint string
+---@param opts? table
+function utils.delete(endpoint, opts)
+    local options = vim.tbl_deep_extend("force", {
+        endpoint = endpoint,
+    }, opts or {})
+
+    return utils.curl("delete", options)
 end
 
 ---@private

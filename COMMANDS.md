@@ -21,7 +21,40 @@ Run `:CW help` inside Neovim for a quick reference.
 | `:CW list` | Browse kata with filters (telescope) |
 | `:CW completed` | Browse completed kata (telescope) |
 | `:CW solutions` | View community solutions for current kata |
+| `:CW leaderboard [category]` | Top 500 leaderboard: `overall`, `kata` (completed), `authored`, `ranks`. No args opens the category picker; also in the menu under `l` |
+| `:CW kumite` | Browse Freestyle Sparring (kumite): server-paged picker (`Ctrl-n`/`Ctrl-p` page, `Ctrl-g` go to page, `Ctrl-l` language). Menu `m`; works signed out |
+| `:CW kumite open <id\|url>` | Open a kumite read-only from a `/kumite/…` link or 24-hex id |
+| `:CW kumite fork` | Fork the current kumite into an editable local copy (also `Ctrl-f` in the browser) |
+| `:CW kumite new [language]` | Start a fresh kumite from scratch (menu `m` → New); write code + a fixture and run it locally |
+| `:CW kumite save` | Save the current kumite to codewars.com — new draft first time, in-place update after (signed-out prompts to sign in, then saves) |
+| `:CW kumite publish` | Publish the saved kumite publicly (confirms first; runs the fixture and only publishes if tests pass) |
+| `:CW kumite unpublish` | Hide a published kumite again (reversible) |
+| `:CW kumite convert` | Convert the kumite into a new kata (confirms first; hides the kumite, reports the kata's edit URL) |
+| `:CW test` | In a forked/new kumite, run your code against its fixture (signed-out prompts to sign in, then runs) |
+
+The kumite workspace shows its available keys at the top of the description panel; the browser lists its keys on the results border. `g?` opens the full command list.
 | `:CW open` | Open kata in browser |
+
+## Authoring a Kata
+
+A kata reaches the editor via `:CW kumite convert`, which creates the draft. These commands all act on the kata workspace in the current tab.
+
+| Command | Description |
+|---------|-------------|
+| `:CW kata open <id\|url> [lang]` | Open a kata you author, from a `/kata/…` link or 24-hex id. Without a language, Codewars picks the kata's default |
+| `:CW kata pane [name]` | Show one field: `answer`, `setup`, `fixture`, `example`, `description`. No name cycles to the next |
+| `:CW kata meta` | Edit name, discipline, estimated rank, tags, allow-contributors. The panel stays open after each change so you can edit several fields in one go; `q` or `Esc` closes it |
+| `:CW kata lang` | Switch the language you're editing, or add one — same icon dropdown as `:CW train` |
+| `:CW kata version` | Pick the runtime version for the current language (e.g. Python 3.8 / 3.10 / 3.11) |
+| `:CW kata validate` | Run your Complete Solution against the Test Cases (same runner as `:CW test`) |
+| `:CW kata save` | Save the draft on codewars.com |
+| `:CW kata publish` | Publish it publicly — confirms first, and refuses while there are unsaved edits. Codewars re-runs your tests server-side, so a failing solution/fixture pair is rejected |
+| `:CW kata unpublish` | Take a published kata back to a draft (reversible) |
+| `:CW kata delete` | Delete the kata for good (confirms with its name first) |
+
+The editor's five text fields each get their own buffer; the main window shows one at a time and `g1`…`g5` switch between them, so edits in a hidden pane are never lost. The side panel is read-only and always shows the metadata, the pane list, and the keys.
+
+Closing the tab with unsaved edits warns you — kata drafts are not stashed to the cache yet (kumite ones are).
 
 ## UI Toggles
 

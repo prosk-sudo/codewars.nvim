@@ -2,6 +2,26 @@
 
 All notable changes to codewars.nvim are documented here.
 
+## [0.3.0] - 2026-07-25
+
+### Added
+- **Kata authoring editor** (`:CW kata open <id|url>`): open a kata you author — the draft `:CW kumite convert` creates — and finish it without leaving Neovim. The editor's five text fields (Complete Solution, Initial Solution, Test Cases, Example Test Cases, Description) each get their own buffer, switched with `g1`…`g5` or `:CW kata pane <name>`, so edits in a hidden pane are never lost. `:CW kata meta` edits name, discipline, estimated rank, tags and allow-contributors; `:CW kata validate` runs the solution against its own test cases through the usual result console; `:CW kata save`, `publish`, `unpublish` and `delete` do the rest, with confirmations on publish and delete. A read-only side panel keeps the metadata, pane list and keys in view. Closing with unsaved edits warns (kata drafts are not stashed yet).
+- **Leaderboard** (`:CW leaderboard [category]`, menu `l`): top-500 boards for Overall, Completed Kata, Authored Kata & Translations, and Ranks — position, rank-colored user, clan, and honor/score, scraped live from codewars.com.
+- **Kumite browsing** (`:CW kumite`, menu `m`): browse Freestyle Sparring with server paging (page/goto/language keys), open any kumite read-only — including directly from a link via `:CW kumite open <id|url>` — with description, author lineage, and fixture shown in the familiar kata-style layout. Works signed out (public view).
+- **Kumite fork & run**: `:CW kumite fork` (or `Ctrl-f` in the browser) turns a kumite into an editable local copy; `:CW test` runs your edited code against its fixture in the familiar result console — no server side effects. Signed-out runs prompt to sign in and then resume. Unsaved edits are stashed to the cache on close so nothing is lost.
+- **Start a new kumite**: `:CW kumite new [language]` (menu `m` → New) opens a blank workspace with the language's default test framework — write code and a fixture and run it locally.
+- **Save a kumite as a draft** (`:CW kumite save`): saves the current workspace to your codewars.com account — a new draft the first time (a forked/new kumite), an in-place update every time after. Signed-out saves prompt to sign in and then resume.
+- **Publish a kumite** (`:CW kumite publish`): after saving, publishes the draft publicly — it runs your code against the fixture on the Codewars runner, and only publishes if the tests pass. Confirms first (publishing is public and can't be casually undone).
+- **Unpublish a kumite** (`:CW kumite unpublish`): hides a published kumite again (reversible — publish to re-list it).
+- **Convert a kumite to a kata** (`:CW kumite convert`): creates a new kata from the kumite (and hides the kumite); confirms first, then reports the new kata's edit URL to finish authoring on codewars.com. A My Drafts list, draft deletion, and in-editor kata authoring arrive in a later phase.
+- **Discoverable keys**: the kumite workspace lists its available commands at the top of the description panel, and the browser now shows a light-blue keybinding box (view / fork / next / prev / go-to-page / language) beside the picker, so it's clear what you can do.
+
+### Fixed
+- Kumite runs now submit the language's real runtime version, so `:CW test` no longer fails on Python with `ImportError: No module named codewars_test`. Codewars' runner defaults an unversioned submission to a legacy runtime (Python 2.7, which has no `codewars_test`); the snippet JSON never carries a version, so new kumites and forks now fall back to each language's Codewars-default runtime (verified from `/kumite/new`, e.g. Python `3.11`).
+- The kumite fixture buffer can be written with `:w` without `E382: Cannot write, 'buftype' option is set`. Like the code buffer it's now an `acwrite` buffer whose `:w` shows the "runs locally — `:CW test`" hint instead of erroring; editing the fixture also updates the dirty `+` marker.
+- `:CW` argument parsing no longer swallows URL positionals containing `=` (e.g. `/kumite/…?sel=…` links) as options.
+- Kumite code and fixture buffers now get correct syntax highlighting for every Codewars language: the workspace was setting the buffer's filetype to a file extension (e.g. `py`) instead of the real Neovim filetype (`python`), so only languages where those coincide highlighted. A slug→filetype map now covers 56 languages, and the fixture split uses the fixture's own language (BF/Solidity tests are JavaScript, SQL tests are Ruby, etc.). Highlighting still requires a built-in syntax file or a treesitter parser (`:TSInstall <ft>`) for that language.
+
 ## [0.2.0] - 2026-07-22
 
 ### Added

@@ -1,5 +1,5 @@
 local urls = require("codewars.api.urls")
-local headers_mod = require("codewars.api.headers")
+local page = require("codewars.api.page")
 local log = require("codewars.logger")
 
 ---@class cw.Api.Solutions
@@ -12,58 +12,28 @@ local solutions = {}
 ---@param opts? { unranked: boolean } unranked (beta) kata have no public solutions until approved
 function solutions.fetch(kata_id, language, cb, opts)
     local url = ("%s/kata/%s/solutions/%s"):format(urls.base, kata_id, language)
-    local hdrs = headers_mod.get()
 
-    local header_args = {}
-    for k, v in pairs(hdrs) do
-        table.insert(header_args, "-H")
-        table.insert(header_args, k .. ": " .. v)
-    end
+    page.fetch(url, function(body, perr)
+        if perr then
+            return cb(nil, { msg = perr.curl and "Failed to fetch solutions (curl error)"
+                or "Empty response when fetching solutions. Your session may have expired." })
+        end
 
-    -- Write to temp file to preserve newlines exactly
-    local tmp = vim.fn.tempname()
-
-    local cmd = vim.list_extend({
-        "curl", "-s", "-L",
-        "-o", tmp,
-        url,
-        "--max-time", "15",
-    }, header_args)
-
-    vim.fn.jobstart(cmd, {
-        on_exit = vim.schedule_wrap(function(_, exit_code)
-            local body = ""
-            local f = io.open(tmp, "r")
-            if f then
-                body = f:read("*a")
-                f:close()
+        -- Detect login page redirect (expired session)
+        if body:match("^<!DOCTYPE") or body:match("^<html") then
+            local has_code = body:find("<pre") and body:find("<code")
+            if not has_code then
+                return cb(nil, { msg = "Session expired or invalid. Run :CW cookie to re-authenticate.", auth = true })
             end
-            pcall(os.remove, tmp)
+        end
 
-            if exit_code ~= 0 then
-                return cb(nil, { msg = "Failed to fetch solutions (curl error)" })
-            end
-
-            if body == "" then
-                return cb(nil, { msg = "Empty response when fetching solutions. Your session may have expired." })
-            end
-
-            -- Detect login page redirect (expired session)
-            if body:match("^<!DOCTYPE") or body:match("^<html") then
-                local has_code = body:find("<pre") and body:find("<code")
-                if not has_code then
-                    return cb(nil, { msg = "Session expired or invalid. Run :CW cookie to re-authenticate.", auth = true })
-                end
-            end
-
-            local result = solutions.parse_html(body, language)
-            if #result == 0 then
-                local level, msg = solutions.empty_reason(body, opts and opts.unranked)
-                log[level](msg)
-            end
-            cb(result)
-        end),
-    })
+        local result = solutions.parse_html(body, language)
+        if #result == 0 then
+            local level, msg = solutions.empty_reason(body, opts and opts.unranked)
+            log[level](msg)
+        end
+        cb(result)
+    end)
 end
 
 --- Explain why a solutions page yielded zero parsed solutions.
@@ -110,15 +80,7 @@ function solutions.parse_html(html, language)
         local code = html:sub(code_content_s, code_e - 1)
         pos = code_e + 7
 
-        -- Unescape HTML entities
-        code = code:gsub("&lt;", "<")
-        code = code:gsub("&gt;", ">")
-        code = code:gsub("&amp;", "&")
-        code = code:gsub("&quot;", '"')
-        code = code:gsub("&#39;", "'")
-        code = code:gsub("&#x27;", "'")
-        code = code:gsub("&#x2F;", "/")
-        code = code:gsub("&nbsp;", " ")
+        code = page.unescape(code)
 
         -- Trim
         code = code:gsub("^%s+", ""):gsub("%s+$", "")

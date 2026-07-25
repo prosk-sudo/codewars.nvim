@@ -1,0 +1,12 @@
+--- Local stash for unsaved kumite edits (design §3.6 / eng D10 safety net).
+--- On a dirty-close the workspace writes one JSON file per snippet, so edits
+--- that were never sent to codewars.com survive the close. Nothing reads them
+--- back yet — the My Drafts picker will; until then they are a durable
+--- on-disk backstop you can recover by hand.
+---
+--- Mechanism lives in codewars.cache.stash, shared with the kata stash.
+---@class cw.cache.KumiteStash
+---@field save fun(entry: table): string?
+---@field get fun(id: string): table?
+---@field delete fun(id: string): boolean
+return require("codewars.cache.stash").for_kind("kumite-stash-")

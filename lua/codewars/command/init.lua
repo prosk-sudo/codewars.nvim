@@ -10,6 +10,14 @@ local lang_slugs = vim.tbl_map(function(l) return l.slug end, require("codewars.
 -- and vim.tbl_keys would lose this stable display order.
 local focus_category_keys = { "fundamentals", "rank_up", "practice_and_repeat", "beta", "random" }
 
+-- Keep in sync with api/leaderboard.CATEGORIES (literal for the same
+-- lazy-loading reasons as focus_category_keys above).
+local leaderboard_category_keys = { "overall", "kata", "authored", "ranks" }
+
+-- Keep in sync with codewars-ui/kata_editor.PANES (literal so completion does
+-- not eager-load the UI chain, same reasoning as the two lists above).
+local kata_pane_keys = { "answer", "setup", "fixture", "example", "description" }
+
 local arguments = {
     list = {
         difficulty = { "8", "7", "6", "5", "4", "3", "2", "1" },
@@ -38,7 +46,29 @@ function cmd.help()
         { "list",           "Browse all kata (with filters)" },
         { "completed",      "Browse completed kata" },
         { "solutions",      "View community solutions" },
+        { "leaderboard",    "Top 500 leaderboard (4 categories)" },
+        { "kumite",         "Browse Freestyle Sparring (kumite)" },
+        { "kumite open <id|url>", "Open a kumite by id or link" },
+        { "kumite fork",    "Fork the current kumite to edit it" },
+        { "kumite new [lang]", "Start a fresh kumite from scratch" },
+        { "kumite save",    "Save the kumite as a draft on codewars.com" },
+        { "kumite publish", "Publish the saved kumite publicly" },
+        { "kumite unpublish", "Hide a published kumite again (reversible)" },
+        { "kumite convert", "Convert the kumite into a new kata" },
         { "open",           "Open kata in browser" },
+        { "",               "" },
+        { "AUTHORING A KATA", "" },
+        { "kata open <id|url> [lang]", "Open a kata you author in the editor" },
+        { "kata pane [name]", "Show a field (answer|setup|fixture|example|description)" },
+        { "kata meta",      "Edit name, discipline, rank, tags, contributors" },
+        { "kata lang",      "Switch the language being edited, or add one" },
+        { "kata version",   "Pick the runtime version for the current language" },
+        { "kata validate",  "Run your solution against the test cases" },
+        { "kata save",      "Save the kata draft on codewars.com" },
+        { "kata publish",   "Publish the kata publicly (confirms first)" },
+        { "kata unpublish", "Take a published kata back to a draft" },
+        { "kata delete",    "Delete the kata for good (confirms first)" },
+        { "g1 … g5",        "Switch panes inside the kata editor" },
         { "",               "" },
         { "UI TOGGLES",     "" },
         { "desc",           "Toggle description split" },
@@ -160,8 +190,32 @@ function cmd.train(options)
     k:mount()
 end
 
+--- Run `action` now if signed in, otherwise prompt for a cookie and resume
+--- it on success (design §3.6 auth-resume; T12 — a closure through the
+--- existing cookie_prompt, no pending-action store). Cancel drops it.
+---@param action fun()
+function cmd.with_auth(action)
+    if require("codewars.cache.cookie").get() then
+        return action()
+    end
+    log.info("Sign in to continue…")
+    cmd.cookie_prompt(function(ok)
+        if ok then action() end
+    end)
+end
+
 function cmd.test()
     local utils = require("codewars.utils")
+
+    -- A kumite workspace in this tab takes priority; its runner needs auth
+    -- but no kata session, and resumes after sign-in.
+    local kw = utils.curr_kumite()
+    if kw then
+        return cmd.with_auth(function()
+            kw.console:run("test")
+        end)
+    end
+
     utils.auth_guard()
     local k = utils.curr_kata()
     if k then
@@ -207,6 +261,283 @@ function cmd.solutions()
         local Solutions = require("codewars-ui.popup.solutions")
         Solutions:new(sols, k.lang):show()
     end, { unranked = require("codewars.theme").is_unranked(k.rank) })
+end
+
+--- Fetch and show one leaderboard category.
+---@param category_key string
+local function leaderboard_show(category_key)
+    log.info("Fetching leaderboard...")
+    require("codewars.api.leaderboard").fetch(category_key, function(entries, err)
+        if err then
+            return log.err(err)
+        end
+        local Leaderboard = require("codewars-ui.popup.leaderboard")
+        Leaderboard:new(entries, category_key):show()
+    end)
+end
+
+--- :CW leaderboard [category] — top-500 leaderboard.
+--- No args opens the category picker. Public page: no auth required.
+function cmd.leaderboard(options)
+    local key = options._positional and options._positional[1]
+    if key then
+        if not vim.tbl_contains(leaderboard_category_keys, key) then
+            return log.error(("Unknown leaderboard category: %s (overall|kata|authored|ranks)"):format(key))
+        end
+        return leaderboard_show(key)
+    end
+
+    require("codewars.picker").leaderboard_category(leaderboard_show)
+end
+
+--- :CW kumite — browse Freestyle Sparring (public; works signed out).
+function cmd.kumite()
+    require("codewars.picker").kumite_browse()
+end
+
+--- :CW kumite open <id|url> — open a kumite directly (design §3.2).
+function cmd.kumite_open(options)
+    local ref = options._positional and options._positional[1]
+    local id = require("codewars.api.kumite").parse_ref(ref)
+    if not id then
+        return log.error("Usage: :CW kumite open <id|url> — paste a /kumite/… link or a 24-hex id")
+    end
+
+    log.info("Loading kumite…")
+    require("codewars.api.kumite").fetch_snippet(id, function(snippet, err)
+        if err then
+            return log.err(err)
+        end
+        vim.schedule(function()
+            require("codewars-ui.kumite"):new(snippet):mount()
+        end)
+    end)
+end
+
+--- :CW kumite fork — turn the current kumite into an editable local copy.
+--- Local transition, no auth (running the fork later prompts for it).
+function cmd.kumite_fork()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open one with :CW kumite, then fork.")
+    end
+    kw:fork()
+end
+
+--- :CW kumite save — save the current kumite as a draft on codewars.com.
+--- Needs auth (a real POST/PUT); signed out, prompts to sign in then resumes.
+function cmd.kumite_save()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open or start one first, then save.")
+    end
+    cmd.with_auth(function()
+        kw:save()
+    end)
+end
+
+--- :CW kumite publish — publish the current kumite publicly on codewars.com.
+--- Needs auth; the workspace confirms and requires a saved, passing draft.
+function cmd.kumite_publish()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open or start one first, then publish.")
+    end
+    cmd.with_auth(function()
+        kw:publish()
+    end)
+end
+
+--- :CW kumite unpublish — hide a published kumite (reversible). Needs auth.
+function cmd.kumite_unpublish()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open one first, then unpublish.")
+    end
+    cmd.with_auth(function()
+        kw:unpublish()
+    end)
+end
+
+--- :CW kumite convert — convert the current kumite into a new kata (creates a
+--- kata, hides the kumite). Needs auth; the workspace confirms first.
+function cmd.kumite_convert()
+    local kw = require("codewars.utils").curr_kumite()
+    if not kw then
+        return log.error("No kumite here. Open or save one first, then convert.")
+    end
+    cmd.with_auth(function()
+        kw:convert()
+    end)
+end
+
+--- :CW kumite new [language] — start a fresh kumite from scratch. Opens a
+--- blank editable workspace you can write and run locally, then persist with
+--- `:CW kumite save` / `publish`. No auth needed to start (running and saving
+--- prompt for sign-in).
+function cmd.kumite_new(options)
+    local kumite_api = require("codewars.api.kumite")
+
+    local function start(lang)
+        vim.ui.input({ prompt = "Kumite title: ", default = "Untitled kumite" }, function(title)
+            if not title then return end -- cancelled
+            local snippet = {
+                id = "local-" .. tostring(vim.loop.now()),
+                title = title ~= "" and title or "Untitled kumite",
+                description = "",
+                language = lang,
+                code = "",
+                fixture = require("codewars.languages.fixtures").get(lang),
+                ["package"] = "",
+                test_framework = kumite_api.default_framework(lang),
+                language_version = kumite_api.default_version(lang),
+                state = "draft",
+                author = config.user.username ~= "" and config.user.username or nil,
+            }
+            require("codewars-ui.kumite"):new(snippet, { state = "local_new" }):mount()
+            log.info("New kumite — write your code and a fixture, then :CW test to run it.")
+        end)
+    end
+
+    local lang_arg = options._positional and options._positional[1]
+    if lang_arg then
+        local utils = require("codewars.utils")
+        if not utils.resolve_lang_arg(lang_arg) then
+            return
+        end
+        return start(lang_arg)
+    end
+    require("codewars.picker").pick_language(start)
+end
+
+--- The kata authoring workspace in this tab, or nil after reporting why.
+---@param verb string what the caller wanted to do, for the message
+---@return cw.ui.KataEditor?
+local function curr_kata_editor(verb)
+    local ws = require("codewars.utils").curr_kata_editor()
+    if not ws then
+        log.error(("No kata editor here. Open one with :CW kata open <id|url>, then %s."):format(verb))
+        return nil
+    end
+    return ws
+end
+
+--- :CW kata open <id|url> [lang] — open a kata you author in the editor
+--- (design KP1b/KP2). Needs auth: the edit page is yours, not public. With no
+--- language, Codewars redirects to the kata's own default.
+function cmd.kata_open(options)
+    local positional = options._positional or {}
+    local id = require("codewars.api.kata").parse_ref(positional[1])
+    if not id then
+        return log.error("Usage: :CW kata open <id|url> [lang] — paste a /kata/… link or a 24-hex id")
+    end
+
+    local lang = positional[2]
+    if lang and not require("codewars.utils").resolve_lang_arg(lang) then
+        return
+    end
+
+    cmd.with_auth(function()
+        log.info("Loading the kata editor…")
+        require("codewars.api.kata").load(id, lang, function(model, err)
+            if err then
+                return log.err(err)
+            end
+            vim.schedule(function()
+                require("codewars-ui.kata_editor"):new(model):mount()
+            end)
+        end)
+    end)
+end
+
+--- :CW kata pane <name> — show one of the editor's five fields. `g1`…`g5` do
+--- the same from inside the workspace; with no name it cycles.
+function cmd.kata_pane(options)
+    local ws = curr_kata_editor("switch panes")
+    if not ws then
+        return
+    end
+    local key = options._positional and options._positional[1]
+    if not key then
+        return ws:cycle_pane(1)
+    end
+    ws:show_pane(key)
+end
+
+--- :CW kata meta — edit name / discipline / rank / tags / contributors.
+function cmd.kata_meta()
+    local ws = curr_kata_editor("edit its details")
+    if ws then
+        ws:edit_meta()
+    end
+end
+
+--- :CW kata lang — switch the language being edited, or add one to the kata.
+function cmd.kata_lang()
+    local ws = curr_kata_editor("switch its language")
+    if ws then
+        ws:choose_language()
+    end
+end
+
+--- :CW kata version — pick the runtime the current language runs on.
+function cmd.kata_version()
+    local ws = curr_kata_editor("change its runtime")
+    if ws then
+        ws:choose_version()
+    end
+end
+
+--- :CW kata validate — run the solution against the kata's own test cases.
+--- Needs auth (it is a real runner call).
+function cmd.kata_validate()
+    local ws = curr_kata_editor("validate it")
+    if ws then
+        cmd.with_auth(function()
+            ws:validate()
+        end)
+    end
+end
+
+--- :CW kata save — save the kata draft on codewars.com.
+function cmd.kata_save()
+    local ws = curr_kata_editor("save it")
+    if ws then
+        cmd.with_auth(function()
+            ws:save()
+        end)
+    end
+end
+
+--- :CW kata publish — publish the kata publicly. The workspace confirms first
+--- and refuses while there are unsaved edits; Codewars re-runs the tests.
+function cmd.kata_publish()
+    local ws = curr_kata_editor("publish it")
+    if ws then
+        cmd.with_auth(function()
+            ws:publish()
+        end)
+    end
+end
+
+--- :CW kata unpublish — take a published kata back to a draft (reversible).
+function cmd.kata_unpublish()
+    local ws = curr_kata_editor("unpublish it")
+    if ws then
+        cmd.with_auth(function()
+            ws:unpublish()
+        end)
+    end
+end
+
+--- :CW kata delete — delete the kata for good. Confirms with its name first.
+function cmd.kata_delete()
+    local ws = curr_kata_editor("delete it")
+    if ws then
+        cmd.with_auth(function()
+            ws:delete()
+        end)
+    end
 end
 
 function cmd.desc_toggle()
@@ -535,6 +866,16 @@ function cmd.start_with_cmd()
     end
 end
 
+--- The one definition of "what counts as a key=value option token":
+--- word-shaped keys only (difficulty=8). URLs and other '='-bearing
+--- positionals (/kumite/{id}?sel={id}) are never options. Shared by
+--- exec and parse/complete so the rule can't fork.
+---@param token string
+---@return string? key, string? value
+local function split_option(token)
+    return token:match("^([%w_]+)=(.*)$")
+end
+
 ---@param args string
 ---@return string[], string[]
 function cmd.parse(args)
@@ -545,7 +886,7 @@ function cmd.parse(args)
 
     local options = {}
     for _, part in ipairs(parts) do
-        local opt = part:match("(.-)=.-")
+        local opt = split_option(part)
         if opt then
             table.insert(options, opt)
         end
@@ -633,10 +974,10 @@ function cmd.exec(args)
     local parts = vim.split(vim.trim(args.args), "%s+", { trimempty = true })
 
     for _, s in ipairs(parts) do
-        local opt = vim.split(s, "=")
+        local key, value = split_option(s)
 
-        if opt[2] then
-            options[opt[1]] = vim.split(opt[2], ",", { trimempty = true })
+        if key then
+            options[key] = vim.split(value, ",", { trimempty = true })
         elseif cmds and type(cmds) == "table" and cmds[s:lower()] then
             cmds = cmds[s:lower()]
         else
@@ -687,6 +1028,41 @@ cmd.commands = {
     attempt = { cmd.attempt },
     submit = { cmd.submit },
     solutions = { cmd.solutions },
+    leaderboard = {
+        cmd.leaderboard,
+        _positional_complete = { leaderboard_category_keys },
+    },
+    kumite = {
+        cmd.kumite,
+        open = { cmd.kumite_open },
+        fork = { cmd.kumite_fork },
+        save = { cmd.kumite_save },
+        publish = { cmd.kumite_publish },
+        unpublish = { cmd.kumite_unpublish },
+        convert = { cmd.kumite_convert },
+        new = {
+            cmd.kumite_new,
+            _positional_complete = { lang_slugs },
+        },
+    },
+    kata = {
+        open = {
+            cmd.kata_open,
+            _positional_complete = { nil, lang_slugs },
+        },
+        pane = {
+            cmd.kata_pane,
+            _positional_complete = { kata_pane_keys },
+        },
+        meta = { cmd.kata_meta },
+        lang = { cmd.kata_lang },
+        version = { cmd.kata_version },
+        validate = { cmd.kata_validate },
+        save = { cmd.kata_save },
+        publish = { cmd.kata_publish },
+        unpublish = { cmd.kata_unpublish },
+        delete = { cmd.kata_delete },
+    },
     desc = {
         cmd.desc_toggle,
         toggle = { cmd.desc_toggle },

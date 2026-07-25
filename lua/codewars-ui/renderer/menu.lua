@@ -65,6 +65,12 @@ end
 local function build_pages(menu)
     I = require("codewars.icons").get()
 
+    local function leaderboard_show(category_key)
+        return function()
+            require("codewars.command").leaderboard({ _positional = { category_key } })
+        end
+    end
+
     local function signin_fn()
         require("codewars.command").cookie_prompt(function(success)
             if success then
@@ -87,8 +93,14 @@ local function build_pages(menu)
             { icon = I.katas,   label = "Katas",       sc = "k", expandable = true, fn = function()
                 menu:set_page("katas")
             end },
+            { icon = I.kumite,  label = "Kumite",      sc = "m", expandable = true, fn = function()
+                menu:set_page("kumite")
+            end },
             { icon = I.stats,   label = "Statistics",  sc = "s", fn = function()
                 require("codewars.command").stats({})
+            end },
+            { icon = I.leaderboard, label = "Leaderboard", sc = "l", expandable = true, fn = function()
+                menu:set_page("leaderboard")
             end },
             { icon = I.cookie,  label = "Cookie",      sc = "i", expandable = true, fn = function()
                 menu:set_page("cookie")
@@ -124,6 +136,29 @@ local function build_pages(menu)
             end },
         },
 
+        leaderboard = {
+            { icon = I.leaderboard,          label = "Overall",                      sc = "o", fn = leaderboard_show("overall") },
+            { icon = I.completed,            label = "Completed Kata",               sc = "k", fn = leaderboard_show("kata") },
+            { icon = I.leaderboard_authored, label = "Authored Kata & Translations", sc = "a", fn = leaderboard_show("authored") },
+            { icon = I.focus_rank_up,        label = "Ranks",                        sc = "r", fn = leaderboard_show("ranks") },
+            { icon = I.back,                 label = "Back",                         sc = "b", fn = function()
+                menu:set_page("main")
+            end },
+        },
+
+        -- Browse + New ship now; My Drafts mounts with P3's drafts registry.
+        kumite = {
+            { icon = I.kumite,  label = "Browse",      sc = "l", fn = function()
+                require("codewars.command").kumite()
+            end },
+            { icon = I.search,  label = "New",         sc = "n", fn = function()
+                require("codewars.command").kumite_new({})
+            end },
+            { icon = I.back,    label = "Back",        sc = "b", fn = function()
+                menu:set_page("main")
+            end },
+        },
+
         cookie = {
             { icon = I.update,  label = "Update",      sc = "u", fn = signin_fn },
             { icon = I.signout, label = "Delete / Sign Out",    sc = "d", fn = function()
@@ -152,6 +187,8 @@ local page_titles = {
     signin = { { "Sign In", "Title" } },
     main = { { "Menu", "Title" } },
     katas = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Katas", "Title" } },
+    leaderboard = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Leaderboard", "Title" } },
+    kumite = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Kumite", "Title" } },
     cookie = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Cookie", "Title" } },
     cache = { { "Menu", "codewars_breadcrumb" }, { " > ", "codewars_icon" }, { "Cache", "Title" } },
 }

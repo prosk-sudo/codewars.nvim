@@ -30,6 +30,29 @@ end
 --- Format structured runner output into readable lines
 ---@param output table[]
 ---@return string[]
+--- Build the console's output text from a runner response: the structured
+--- `result.output` when present, else whatever landed on stderr/stdout.
+---
+--- Every caller that renders a run needs exactly this, and it had been copied
+--- three times (here, kumite/runner, kata/runner) — which had already started
+--- to drift. One implementation, so a fix reaches all of them.
+---@param res table? decoded runner response
+---@return string
+function Runner.build_output(res)
+    local r = (res and res.result) or {}
+    local lines = {}
+    if type(r.output) == "table" then
+        vim.list_extend(lines, Runner.format_output(r.output))
+    end
+    if #lines == 0 then
+        local fallback = (res and (res.stderr or res.stdout)) or ""
+        if fallback ~= "" then
+            vim.list_extend(lines, vim.split(fallback, "\n", { plain = true }))
+        end
+    end
+    return table.concat(lines, "\n")
+end
+
 function Runner.format_output(output)
     local icons = require("codewars.icons").get()
     local lines = {}
@@ -227,21 +250,7 @@ function Runner:handle(mode)
                     local errors = r.errors or 0
                     kata.last_attempt_success = r.completed == true
 
-                    local output_lines = {}
-
-                    if r.output and type(r.output) == "table" then
-                        vim.list_extend(output_lines, Runner.format_output(r.output))
-                    end
-
-                    -- Fallback: use stderr/stdout when no structured output
-                    if #output_lines == 0 then
-                        local fallback = res.stderr or res.stdout or ""
-                        if fallback ~= "" then
-                            for _, line in ipairs(vim.split(fallback, "\n", { plain = true })) do
-                                table.insert(output_lines, line)
-                            end
-                        end
-                    end
+                    local output = Runner.build_output(res)
 
                     local success_msg = nil
                     if r.completed then
@@ -255,7 +264,7 @@ function Runner:handle(mode)
                             failed = failed,
                             errors = errors,
                         },
-                        output = table.concat(output_lines, "\n"),
+                        output = output,
                         wall_time = res.wallTime,
                         success_msg = success_msg,
                         reason = r.error,

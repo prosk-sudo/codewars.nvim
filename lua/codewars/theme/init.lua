@@ -11,6 +11,10 @@ local highlights = {
     codewars_icon = { fg = "#DA70D6" },
     codewars_shortcut = { fg = "#40E0D0" },
     codewars_breadcrumb = { fg = "#5c6370" },
+    -- Light-blue hint box (keybinding legends)
+    codewars_hint = { fg = "#7dcfff" },
+    codewars_hint_border = { fg = "#7dcfff" },
+    codewars_hint_key = { fg = "#7dcfff", bold = true },
     codewars_rank_white = { fg = "#e6e6e6" },
     codewars_rank_yellow = { fg = "#ecb613" },
     codewars_rank_blue = { fg = "#3c7ebb" },
