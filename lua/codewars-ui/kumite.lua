@@ -315,14 +315,30 @@ function Kumite:_do_publish()
     end)
 end
 
+--- The id of THIS workspace on codewars.com, or nil when it does not have one.
+---
+--- A fork keeps the PARENT's id in `snippet.id` until its first save (see
+--- save(), which branches on state for exactly this reason), so the id alone
+--- cannot authorize a mutation: acting on it would hit the parent. Any command
+--- that changes something on codewars.com must resolve its target through here.
+---@return string?
+function Kumite:server_id()
+    if self.state == "local_new" or self.state == "local_fork" then
+        return nil
+    end
+    return require("codewars.api.kumite").is_server_id(self.snippet.id) and self.snippet.id or nil
+end
+
 --- Unpublish (hide) this kumite (design §2.4, P3). Owner action; reversible by
 --- publishing again. Only meaningful once it exists on codewars.com.
 function Kumite:unpublish()
     local kumite_api = require("codewars.api.kumite")
-    if not kumite_api.is_server_id(self.snippet.id) then
-        return log.warn("This kumite isn't on codewars.com yet — nothing to unpublish.")
+    local id = self:server_id()
+    if not id then
+        return log.warn("This kumite isn't on codewars.com yet — nothing to unpublish. "
+            .. "(A fork isn't saved until :CW kumite save.)")
     end
-    kumite_api.unpublish(self.snippet.id, function(err)
+    kumite_api.unpublish(id, function(err)
         if err then
             if err.auth then
                 require("codewars.cache.cookie").delete()
@@ -346,7 +362,11 @@ end
 --- on codewars.com for now.
 function Kumite:convert()
     local kumite_api = require("codewars.api.kumite")
-    if not kumite_api.is_server_id(self.snippet.id) then
+    -- server_id(), not snippet.id: an unsaved fork still carries the PARENT's
+    -- id, and converting on that would convert and hide the ORIGINAL kumite
+    -- while silently discarding every local edit.
+    local id = self:server_id()
+    if not id then
         return log.warn("Save the kumite first (:CW kumite save), then convert.")
     end
     -- Converting flips the snippet's state to "converted" (verified live
@@ -364,13 +384,17 @@ function Kumite:convert()
         if not confirmed then
             return log.info("Convert cancelled.")
         end
-        kumite_api.convert_to_kata(self.snippet.id, function(url, err)
+        kumite_api.convert_to_kata(id, function(url, err)
             if err then
                 if err.auth then
                     require("codewars.cache.cookie").delete()
                 end
                 return log.error("Convert failed — " .. (err.msg or "unknown error"))
             end
+            -- Record what the server just did, so the already-converted guard
+            -- above also catches a second convert within this same session
+            -- (it previously only caught one on a freshly-fetched snippet).
+            self.snippet.state = "converted"
             if self.state == "published" then
                 self.state = "server_draft" -- the kumite is hidden now
                 self:refresh_title()
