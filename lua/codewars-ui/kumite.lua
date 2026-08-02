@@ -147,7 +147,7 @@ function Kumite:header_lines()
     lines[#lines + 1] = "---"
     lines[#lines + 1] = ""
     if s.description and s.description ~= "" then
-        for line in s.description:gmatch("[^\r\n]*") do
+        for line in require("codewars-ui.markdown").from_html(s.description):gmatch("[^\r\n]*") do
             lines[#lines + 1] = line
         end
     end

@@ -111,7 +111,11 @@ function Description:populate()
     table.insert(lines, "")
 
     if kata.description_text then
-        for line in kata.description_text:gmatch("[^\r\n]*") do
+        -- Descriptions are markdown with raw HTML mixed in; translate the
+        -- embedded tags so the panel shows a quote/bullet/link instead of
+        -- literal `<blockquote>` markup.
+        local md = require("codewars-ui.markdown").from_html(kata.description_text)
+        for line in md:gmatch("[^\r\n]*") do
             table.insert(lines, line)
         end
     end
