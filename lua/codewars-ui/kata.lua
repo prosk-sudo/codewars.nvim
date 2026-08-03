@@ -210,6 +210,20 @@ function Kata:handle_mount()
     table.insert(_Cw_state.katas, self)
 
     self:autocmds()
+
+    -- Optional one-shot callback for callers that must act only once this
+    -- kata is really on screen. mount() is async and can bail early (404,
+    -- auth failure, or a jump to an already-open duplicate tab), so
+    -- "mount() returned" is NOT the same as "a window exists". :CW focus
+    -- skip relies on this to close the kata it replaces only after the
+    -- replacement is visible.
+    if self._on_mounted then
+        local on_mounted = self._on_mounted
+        self._on_mounted = nil
+        local ok, err = pcall(on_mounted, self)
+        if not ok then log.debug("kata on_mounted hook failed: " .. tostring(err)) end
+    end
+
     utils.exec_hooks("kata_enter", self)
 end
 

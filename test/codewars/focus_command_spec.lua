@@ -32,18 +32,41 @@ describe("cmd.focus", function()
         parse_slug = function(s) return s end,
     }
 
-    -- Kata UI stub: record mounts/unmounts and mirror the real _Cw_state
-    -- registration so "skip closes the previous kata" is observable.
+    -- Kata UI stub mirroring the real lifecycle in lua/codewars-ui/kata.lua:
+    -- registration into _Cw_state.katas and the _on_mounted hook both happen
+    -- in handle_mount, which the real mount() only reaches after two async
+    -- API calls and NOT at all when it early-returns to a duplicate tab.
+    -- `mount_outcome` switches between those cases so the async gap and the
+    -- duplicate-tab short circuit are both testable.
     local mounts = {}
     local unmounts = {}
+    local mount_outcome = "handle_mount" -- "handle_mount" | "duplicate" | "pending"
+    local pending_mounts = {}
+    -- NOTE: _Cw_state is a shared global; see TODOS.md for spec-isolation cleanup.
     _Cw_state = _Cw_state or {}
     _Cw_state.katas = _Cw_state.katas or {}
     package.loaded["codewars-ui.kata"] = {
         new = function(_, slug, lang)
             local k = { slug = slug, lang = lang }
+            local function handle_mount()
+                table.insert(_Cw_state.katas, k)
+                if k._on_mounted then
+                    local hook = k._on_mounted
+                    k._on_mounted = nil
+                    hook(k)
+                end
+            end
             k.mount = function()
                 table.insert(mounts, { slug = slug, lang = lang })
-                table.insert(_Cw_state.katas, k)
+                if mount_outcome == "duplicate" then
+                    -- Jumped to an existing tab: never registers, never hooks.
+                    return k
+                elseif mount_outcome == "pending" then
+                    -- Fetch still in flight; resolve later via finish_mounts().
+                    table.insert(pending_mounts, handle_mount)
+                    return k
+                end
+                handle_mount()
                 return k
             end
             k.unmount = function()
@@ -53,6 +76,13 @@ describe("cmd.focus", function()
             return k
         end,
     }
+
+    --- Resolve every mount parked by mount_outcome == "pending".
+    local function finish_mounts()
+        local queued = pending_mounts
+        pending_mounts = {}
+        for _, fn in ipairs(queued) do fn() end
+    end
 
     -- Trainer stub: serves a numbered kata per call so freshness is observable
     local trainer_calls = {}
@@ -114,8 +144,12 @@ describe("cmd.focus", function()
         advance_calls = {}
         random_calls = {}
         trainer_response = { err = nil }
+        mount_outcome = "handle_mount"
+        pending_mounts = {}
+        picker_choices = { lang = "python", category = "rank_up" }
         _Cw_state.katas = {}
     end)
+
 
     it("direct args: peeks the trainer and mounts", function()
         cmd.focus({ _positional = { "python", "rank_up" } })
@@ -166,7 +200,6 @@ describe("cmd.focus", function()
         cmd.focus({})
         assert.are.same({ cat = "beta", lang = "go" }, trainer_calls[1])
         assert.are.same({ slug = "served-kata-1", lang = "go" }, mounts[1])
-        picker_choices = { lang = "python", category = "rank_up" }
     end)
 
     it("trainer errors are reported, nothing mounts", function()
@@ -197,6 +230,47 @@ describe("cmd.focus", function()
         assert.are.same({ { slug = "served-kata-1", lang = "python" } }, unmounts)
         assert.are.equal(1, #_Cw_state.katas) -- only the replacement remains
         assert.are.equal("skipped-to-kata-1", _Cw_state.katas[1].slug)
+    end)
+
+    it("never closes a same-slug kata the user opened themselves", function()
+        -- Kata:unmount force-deletes the buffer, discarding unsaved code, so
+        -- the close must match the tracked INSTANCE and nothing else.
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        local user_opened = { slug = "served-kata-1", lang = "python", kata_id = "served-kata-1" }
+        user_opened.unmount = function()
+            table.insert(unmounts, { slug = "USER-OPENED-SHOULD-NOT-CLOSE" })
+        end
+        _Cw_state.katas = { user_opened } -- focus's own instance no longer mounted
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts)
+        assert.are.equal(2, #_Cw_state.katas) -- user's kata untouched, new one added
+    end)
+
+    it("does not close the previous kata until the replacement is on screen", function()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        mount_outcome = "pending" -- replacement mount still in flight
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts) -- nothing closed yet
+        finish_mounts()
+        assert.are.same({ { slug = "served-kata-1", lang = "python" } }, unmounts)
+    end)
+
+    it("keeps the previous kata open when the replacement never mounts", function()
+        -- Replacement 404s or jumps to a duplicate tab: closing anyway would
+        -- leave the user with nothing.
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        mount_outcome = "duplicate"
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts)
+        assert.are.equal(1, #_Cw_state.katas)
+    end)
+
+    it("random skip that re-rolls the same kata does not close it", function()
+        cmd.focus({ _positional = { "python", "random" } })
+        mount_outcome = "duplicate" -- same kata already open → mount jumps to it
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts)
+        assert.are.equal(1, #_Cw_state.katas)
     end)
 
     it("skip after the kata was closed manually just opens the next", function()

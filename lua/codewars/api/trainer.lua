@@ -82,27 +82,37 @@ function trainer._parse(res)
     }
 end
 
---- Has this kata already been completed? Reads the completed cache, which
---- also covers kata solved on the website or another machine.
---- Overridable in tests.
----@param kata { slug: string, id: string? }
----@return boolean
-function trainer._is_completed(kata)
-    if not kata then return false end
+--- Build a slug/id lookup of every completed kata. Reading the cache is a
+--- file read plus a JSON decode, and the self-heal can ask up to
+--- MAX_AUTO_ADVANCE+1 times per focus, so resolve_head builds this ONCE and
+--- passes it down rather than re-reading per iteration.
+---@return table<string, boolean>? nil when the cache is unavailable
+function trainer._completed_keys()
     local ok, completed_cache = pcall(require, "codewars.cache.completed")
-    if not ok then return false end
+    if not ok then return nil end
     local got, items = pcall(completed_cache.get)
-    if not got or type(items) ~= "table" then return false end
+    if not got or type(items) ~= "table" then return nil end
 
     local keys = {}
-    if kata.slug then keys[kata.slug] = true end
-    if kata.id then keys[kata.id] = true end
     for _, item in ipairs(items) do
-        if (item.slug and keys[item.slug]) or (item.id and keys[item.id]) then
-            return true
-        end
+        if item.slug then keys[item.slug] = true end
+        if item.id then keys[item.id] = true end
     end
-    return false
+    return keys
+end
+
+--- Has this kata already been completed? Covers kata solved on the website
+--- or another machine, since it reads the same completed cache.
+--- Overridable in tests.
+---@param kata { slug: string, id: string? }
+---@param keys table<string, boolean>? prebuilt lookup; read fresh when absent
+---@return boolean
+function trainer._is_completed(kata, keys)
+    if not kata then return false end
+    keys = keys or trainer._completed_keys()
+    if not keys then return false end
+    return (kata.slug ~= nil and keys[kata.slug] == true)
+        or (kata.id ~= nil and keys[kata.id] == true)
 end
 
 -- One fetch at a time: dequeue advances the server-side focus queue, so a
@@ -152,15 +162,24 @@ end
 --- previous session stays at the head forever.
 local function resolve_head(category, strategy, language, finish)
     local advanced = 0
+    -- Read the completed cache once per resolve, not once per iteration.
+    local completed_keys = SERVES_COMPLETED[category] and {} or trainer._completed_keys()
 
     local function peek_head()
         request(category, strategy, language, false, function(kata, err)
             if err then return finish(nil, err) end
 
-            local stale = not SERVES_COMPLETED[category]
-                and advanced < MAX_AUTO_ADVANCE
-                and trainer._is_completed(kata)
-            if not stale then
+            local solved = not SERVES_COMPLETED[category]
+                and trainer._is_completed(kata, completed_keys)
+            if not solved then
+                return finish(kata)
+            end
+
+            if advanced >= MAX_AUTO_ADVANCE then
+                -- Out of budget with a solved kata still at the head. Serve
+                -- it rather than erroring, but say so — silently reopening a
+                -- finished kata is the bug this whole path exists to fix.
+                log.warn(("This %s kata is already completed. Run :CW focus skip to advance the queue."):format(category))
                 return finish(kata)
             end
 

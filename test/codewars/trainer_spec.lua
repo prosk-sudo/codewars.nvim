@@ -1,7 +1,8 @@
 describe("api.trainer", function()
+    local warnings = {}
     package.loaded["codewars.logger"] = {
         info = function() end,
-        warn = function() end,
+        warn = function(m) table.insert(warnings, tostring(m)) end,
         error = function() end,
         err = function() end,
         debug = function() end,
@@ -31,11 +32,17 @@ describe("api.trainer", function()
 
     local HEX = ("a"):rep(24)
 
-    -- Completed-kata set driving the self-heal, swapped in per test.
+    -- Keep the real implementations so they can be tested directly; the
+    -- self-heal tests below drive a simple in-memory set instead.
+    local real_is_completed = trainer._is_completed
+    local real_completed_keys = trainer._completed_keys
+
     local completed = {}
     trainer._is_completed = function(kata)
         return kata ~= nil and completed[kata.slug] == true
     end
+    -- resolve_head prebuilds this once per call; keep it off the real cache.
+    trainer._completed_keys = function() return {} end
 
     before_each(function()
         get_calls = {}
@@ -43,6 +50,7 @@ describe("api.trainer", function()
         hold = false
         held = {}
         completed = {}
+        warnings = {}
     end)
 
     describe("_parse", function()
@@ -183,6 +191,64 @@ describe("api.trainer", function()
         end)
     end)
 
+    describe("_completed_keys / _is_completed (real implementations)", function()
+        local saved_cache
+
+        before_each(function()
+            saved_cache = package.loaded["codewars.cache.completed"]
+        end)
+
+        after_each(function()
+            package.loaded["codewars.cache.completed"] = saved_cache
+        end)
+
+        it("indexes completed kata by BOTH slug and id", function()
+            package.loaded["codewars.cache.completed"] = {
+                get = function()
+                    return { { id = "5277c8a2", slug = "valid-braces" }, { id = "abc123" } }
+                end,
+            }
+            local keys = real_completed_keys()
+            assert.is_true(keys["valid-braces"])
+            assert.is_true(keys["5277c8a2"])
+            assert.is_true(keys["abc123"])
+        end)
+
+        it("matches an id-only kata, which is all the peek endpoint returns", function()
+            local keys = { ["5277c8a2"] = true }
+            assert.is_true(real_is_completed({ slug = "5277c8a2", id = "5277c8a2" }, keys))
+            assert.is_true(real_is_completed({ slug = "readable-name", id = "5277c8a2" }, keys))
+            assert.is_false(real_is_completed({ slug = "other", id = "other" }, keys))
+        end)
+
+        it("treats a kata with no cache entry as not completed", function()
+            assert.is_false(real_is_completed({ slug = "fresh" }, {}))
+        end)
+
+        it("returns false rather than throwing when the cache module is missing", function()
+            package.loaded["codewars.cache.completed"] = nil
+            local ok = pcall(real_is_completed, { slug = "x" })
+            assert.is_true(ok)
+        end)
+
+        it("survives a cache.get() that throws", function()
+            package.loaded["codewars.cache.completed"] = {
+                get = function() error("corrupt cache") end,
+            }
+            assert.is_nil(real_completed_keys())
+            assert.is_false(real_is_completed({ slug = "x" }))
+        end)
+
+        it("survives a cache.get() that returns a non-table", function()
+            package.loaded["codewars.cache.completed"] = { get = function() return nil end }
+            assert.is_nil(real_completed_keys())
+        end)
+
+        it("handles a nil kata", function()
+            assert.is_false(real_is_completed(nil, {}))
+        end)
+    end)
+
     describe("completed self-heal", function()
         it("pops a solved kata off the head and serves the next one", function()
             completed["solved-one"] = true
@@ -215,6 +281,19 @@ describe("api.trainer", function()
             trainer.next_kata("rank_up", "python", function(kata) got = kata end)
             assert.are.equal("solved-one", got.slug) -- returns it rather than spinning
             assert.are.equal(7, #get_calls)          -- peek + 3x(pop, peek)
+        end)
+
+        it("warns instead of silently reopening a solved kata when it gives up", function()
+            completed["solved-one"] = true
+            for _ = 1, 12 do
+                table.insert(get_responses, { res = { success = true, slug = "solved-one" } })
+            end
+            trainer.next_kata("rank_up", "python", function() end)
+            local warned = false
+            for _, entry in ipairs(warnings) do
+                if entry:match("already completed") then warned = true end
+            end
+            assert.is_true(warned)
         end)
 
         it("does not pop an unsolved head", function()

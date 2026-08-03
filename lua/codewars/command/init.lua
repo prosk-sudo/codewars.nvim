@@ -601,11 +601,13 @@ end
 
 --- Open a random kata from the cached problem list (client-side).
 ---@param lang string
+---@param on_mounted? fun() runs once the kata is actually on screen
 ---@return table? kata the mounted cw.ui.Kata instance (nil when the list is empty)
-local function open_random_kata(lang)
+local function open_random_kata(lang, on_mounted)
     local item, err = require("codewars.cache.problemlist_utils").random_for_lang(lang)
     if err then return log.warn(err) end
     local kata = require("codewars-ui.kata"):new(item.slug or item.id, lang)
+    kata._on_mounted = on_mounted
     kata:mount()
     return kata
 end
@@ -631,18 +633,22 @@ end
 -- focus pointer itself.
 local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
 
---- Close the kata window a skip abandons — its tab must not linger behind
---- the replacement. Matches the tracked instance, the API-normalized slug,
---- or the hex id (peek responses are id-only; mount rewrites slug from the
---- API). Kata:unmount is validity-guarded, so an already-closed kata no-ops.
----@param prev { lang: string, slug: string?, kata: table? }?
+--- Close the kata window a skip abandons.
+---
+--- IDENTITY ONLY, deliberately. Matching by slug would also match a window
+--- the user opened themselves (`:CW train <same-slug>`), and Kata:unmount
+--- force-closes the window, which force-deletes the buffer
+--- (kata.lua:244-246) and discards unsaved solution code with no prompt.
+--- When the instance is not on screen — Kata:mount early-returns to an
+--- existing tab for a duplicate (kata.lua:79-83), or the mount is still in
+--- flight — nothing is closed. A lingering tab is the safe failure; eating
+--- someone's unsaved solution is not.
+---@param prev { kata: table? }?
 local function close_skipped_kata(prev)
-    if not prev then return end
+    if not prev or not prev.kata then return end
     local katas = (_Cw_state and _Cw_state.katas) or {}
     for _, k in ipairs(katas) do
-        if k == prev.kata
-            or (prev.slug and k.lang == prev.lang and (k.slug == prev.slug or k.kata_id == prev.slug))
-        then
+        if k == prev.kata then
             pcall(k.unmount, k)
             return
         end
@@ -655,12 +661,13 @@ end
 --- solved or skipped via :CW focus skip).
 ---@param lang string
 ---@param category string
-local function focus_run(lang, category)
+---@param on_mounted? fun() runs once the served kata is actually on screen
+local function focus_run(lang, category, on_mounted)
     local lf = { lang = lang, category = category }
     _last_focus = lf
 
     if category == "random" then
-        lf.kata = open_random_kata(lang)
+        lf.kata = open_random_kata(lang, on_mounted)
         lf.slug = lf.kata and lf.kata.slug or nil
         return
     end
@@ -671,6 +678,7 @@ local function focus_run(lang, category)
         local ui = require("codewars-ui.kata"):new(kata.slug, lang)
         lf.slug = kata.slug
         lf.kata = ui
+        ui._on_mounted = on_mounted
         ui:mount()
     end)
 end
@@ -723,9 +731,13 @@ function cmd.focus(options)
     end)
 end
 
---- :CW focus skip — pop the current focus kata, close its window, and open
---- the next one. The previous kata only closes after the replacement is
---- secured, so a failed fetch never leaves the user with nothing.
+--- :CW focus skip — pop the current focus kata, open the next one, and close
+--- the one it replaces.
+---
+--- The old kata closes only once the replacement is ON SCREEN, not merely
+--- once the trainer fetch returned: Kata:mount is itself async and can fail
+--- (404 on a stale id, expired cookie), and closing on fetch-success alone
+--- would leave the user with nothing open.
 function cmd.focus_skip()
     local utils = require("codewars.utils")
     utils.auth_guard()
@@ -735,22 +747,21 @@ function cmd.focus_skip()
     end
     local prev = _last_focus
     local lang, category = prev.lang, prev.category
+    local function close_prev() close_skipped_kata(prev) end
 
     if category == "random" then
         -- Client-side random has no server queue; a skip is just a re-roll.
-        focus_run(lang, category)
-        if _last_focus.kata then
-            close_skipped_kata(prev)
-        end
-        return
+        -- If the re-roll lands on the same kata, mount jumps to the open tab
+        -- and never fires on_mounted, so nothing is closed. Correct.
+        return focus_run(lang, category, close_prev)
     end
 
     log.info(("Skipping the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").skip(category, lang, function(kata, err)
         if err then return log.err(err) end
-        close_skipped_kata(prev)
         local ui = require("codewars-ui.kata"):new(kata.slug, lang)
         _last_focus = { lang = lang, category = category, slug = kata.slug, kata = ui }
+        ui._on_mounted = close_prev
         ui:mount()
     end)
 end
