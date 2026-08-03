@@ -311,12 +311,35 @@ describe("api.trainer", function()
             get_responses = {
                 { res = { success = true, slug = "solved-one" } },  -- stale head
                 { res = { success = true, slug = "solved-one" } },  -- the pop
-                { res = { success = true, slug = "fresh-one" } },   -- new head
+                { res = { success = true, slug = "fresh-one" } },   -- re-peek: moved
             }
             local got
             trainer.next_kata("fundamentals", "python", function(kata) got = kata end)
             assert.are.equal("fresh-one", got.slug)
             assert.are.equal("/trainer/peek/python/reference_workout?dequeue=true", get_calls[2].endpoint)
+            assert.are.equal(3, #get_calls) -- the re-peek is not repeated
+        end)
+
+        -- Nothing about peek/pop is atomic, and the pop's own response shape
+        -- is not dependable, so the loop proves the head MOVED rather than
+        -- trusting the pop. A queue that will not budge must stop the loop,
+        -- not keep issuing irreversible pops.
+        it("stops and warns when a pop leaves the same kata at the head", function()
+            completed["stuck-one"] = true
+            get_responses = {
+                { res = { success = true, slug = "stuck-one" } },  -- head
+                { res = { success = true, slug = "stuck-one" } },  -- pop
+                { res = { success = true, slug = "stuck-one" } },  -- re-peek: unchanged
+            }
+            local got
+            trainer.next_kata("fundamentals", "python", function(kata) got = kata end)
+            assert.are.equal("stuck-one", got.slug)
+            assert.are.equal(3, #get_calls) -- exactly one pop, then it gives up
+            local warned = false
+            for _, m in ipairs(warnings) do
+                if m:match("did not advance") then warned = true end
+            end
+            assert.is_true(warned)
         end)
 
         it("leaves practice_and_repeat alone (it serves solved kata by design)", function()
@@ -329,14 +352,29 @@ describe("api.trainer", function()
         end)
 
         it("gives up after 3 advances instead of looping forever", function()
-            completed["solved-one"] = true
-            for _ = 1, 12 do
-                table.insert(get_responses, { res = { success = true, slug = "solved-one" } })
+            -- A queue where every head is solved AND the head keeps moving,
+            -- so the loop runs to its budget rather than the stuck-head exit.
+            for _, slug in ipairs({ "solved-a", "solved-b", "solved-c", "solved-d" }) do
+                completed[slug] = true
             end
+            get_responses = {
+                { res = { success = true, slug = "solved-a" } },  -- head
+                { res = { success = true, slug = "popped" } },    -- pop
+                { res = { success = true, slug = "solved-b" } },  -- moved
+                { res = { success = true, slug = "popped" } },
+                { res = { success = true, slug = "solved-c" } },  -- moved
+                { res = { success = true, slug = "popped" } },
+                { res = { success = true, slug = "solved-d" } },  -- moved, budget spent
+            }
             local got
             trainer.next_kata("rank_up", "python", function(kata) got = kata end)
-            assert.are.equal("solved-one", got.slug) -- returns it rather than spinning
-            assert.are.equal(7, #get_calls)          -- peek + 3x(pop, peek)
+            assert.are.equal("solved-d", got.slug) -- served rather than spinning
+            assert.are.equal(7, #get_calls)        -- peek + 3x(pop, re-peek)
+            local warned = false
+            for _, m in ipairs(warnings) do
+                if m:match("already completed") then warned = true end
+            end
+            assert.is_true(warned)
         end)
 
         it("warns instead of silently reopening a solved kata when it gives up", function()
@@ -385,14 +423,47 @@ describe("api.trainer", function()
     end)
 
     describe("advance", function()
-        it("pops the queue once, with no retries and no follow-up peek", function()
-            get_responses = { { res = { success = true, slug = "popped" } } }
+        it("confirms the head before popping it", function()
+            get_responses = {
+                { res = { success = true, slug = "solved-one" } }, -- peek: still the head
+                { res = { success = true, slug = "solved-one" } }, -- the pop
+            }
             local got_err = "unset"
-            trainer.advance("fundamentals", "python", function(err) got_err = err end)
-            assert.are.equal(1, #get_calls)
-            assert.are.equal("/trainer/peek/python/reference_workout?dequeue=true", get_calls[1].endpoint)
-            assert.are.equal(0, get_calls[1].retry)
+            trainer.advance("fundamentals", "python", { slug = "solved-one" }, function(err) got_err = err end)
+            assert.are.equal(2, #get_calls)
+            assert.are.equal("/trainer/peek/python/reference_workout?dequeue=false", get_calls[1].endpoint)
+            assert.are.equal("/trainer/peek/python/reference_workout?dequeue=true", get_calls[2].endpoint)
+            assert.are.equal(0, get_calls[2].retry)
             assert.is_nil(got_err)
+        end)
+
+        -- The pop is irreversible: if the queue moved while the kata was open
+        -- (solved on the website, another Neovim), popping blind would destroy
+        -- an unrelated, unsolved kata.
+        it("does NOT pop when the head is no longer the kata being retired", function()
+            get_responses = { { res = { success = true, slug = "someone-elses-kata" } } }
+            local got_err = "unset"
+            trainer.advance("rank_up", "python", { slug = "solved-one" }, function(err) got_err = err end)
+            assert.are.equal(1, #get_calls) -- peeked, never popped
+            assert.is_nil(got_err)
+        end)
+
+        it("matches the expected kata by hex id as well as slug", function()
+            get_responses = {
+                { res = { success = true, id = HEX } },
+                { res = { success = true, id = HEX } },
+            }
+            trainer.advance("beta", "python", { slug = nil, id = HEX }, function() end)
+            assert.are.equal(2, #get_calls)
+        end)
+
+        it("pops unconditionally when no expected kata is supplied", function()
+            get_responses = {
+                { res = { success = true, slug = "whatever" } },
+                { res = { success = true, slug = "whatever" } },
+            }
+            trainer.advance("beta", "python", nil, function() end)
+            assert.are.equal(2, #get_calls)
         end)
 
         it("reports errors to the caller and frees the lock", function()
@@ -401,7 +472,7 @@ describe("api.trainer", function()
                 { res = { success = true, slug = "fresh-one" } },
             }
             local got_err
-            trainer.advance("rank_up", "python", function(err) got_err = err end)
+            trainer.advance("rank_up", "python", nil, function(err) got_err = err end)
             assert.is_true(got_err.auth)
 
             local got
@@ -409,16 +480,30 @@ describe("api.trainer", function()
             assert.are.equal("fresh-one", got.slug)
         end)
 
+        it("frees the lock when the head check declines to pop", function()
+            get_responses = {
+                { res = { success = true, slug = "someone-elses-kata" } },
+                { res = { success = true, slug = "fresh-one" } },
+            }
+            trainer.advance("rank_up", "python", { slug = "solved-one" }, function() end)
+            local got
+            trainer.next_kata("rank_up", "python", function(kata) got = kata end)
+            assert.are.equal("fresh-one", got.slug)
+        end)
+
         it("rejects unknown categories without calling the API", function()
             local got_err
-            trainer.advance("random", "python", function(err) got_err = err end)
+            trainer.advance("random", "python", nil, function(err) got_err = err end)
             assert.truthy(got_err.msg:match("Unknown focus category"))
             assert.are.equal(0, #get_calls)
         end)
 
         it("works without a callback", function()
-            get_responses = { { res = { success = true, slug = "popped" } } }
-            assert.has_no.errors(function() trainer.advance("beta", "python") end)
+            get_responses = {
+                { res = { success = true, slug = "popped" } },
+                { res = { success = true, slug = "popped" } },
+            }
+            assert.has_no.errors(function() trainer.advance("beta", "python", nil) end)
         end)
     end)
 

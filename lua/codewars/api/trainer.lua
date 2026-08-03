@@ -174,6 +174,17 @@ local function request(category, strategy, language, dequeue, cb)
     })
 end
 
+--- Do two trainer responses name the same kata? The endpoint returns an id
+--- for some shapes and a slug for others, so compare across both fields.
+---@return boolean
+local function same_kata(a, b)
+    if not a or not b then return false end
+    for _, key in ipairs({ a.slug, a.id }) do
+        if key ~= nil and (key == b.slug or key == b.id) then return true end
+    end
+    return false
+end
+
 --- Peek the queue head, popping past kata that are already completed.
 --- The queue only advances on dequeue, so without this a kata solved in a
 --- previous session stays at the head forever.
@@ -187,8 +198,19 @@ local function resolve_head(category, strategy, language, finish)
         completed_keys = trainer._completed_keys(language) or {}
     end
 
-    local function peek_head()
-        request(category, strategy, language, false, function(kata, err)
+    local judge
+
+    --- Resolve the current head, then judge it.
+    --- @param known table? a head already fetched, so we do not re-peek it
+    local function peek_head(known)
+        if known then return judge(known) end
+        request(category, strategy, language, false, judge)
+    end
+
+    --- Decide whether the head is servable or must be advanced past.
+    ---@param kata table?
+    ---@param err table?
+    judge = function(kata, err)
             if err then return finish(nil, err) end
 
             -- The SERVES_COMPLETED check is deliberately repeated here even
@@ -212,11 +234,24 @@ local function resolve_head(category, strategy, language, finish)
             advanced = advanced + 1
             log.debug(("focus: '%s' is already completed, advancing the %s queue"):format(
                 tostring(kata.slug), category))
+            local dropped = kata
             request(category, strategy, language, true, function(_, perr)
                 if perr then return finish(nil, perr) end
-                peek_head()
+                -- The pop's own response shape is not something we can rely
+                -- on (it may echo the old head or the new one), so verify by
+                -- re-peeking and checking the head actually MOVED. If it did
+                -- not, the pop had no effect — keep popping and we would just
+                -- burn requests, or worse, destroy kata once it starts
+                -- working again. Stop and hand back what is there.
+                request(category, strategy, language, false, function(next_head, nerr)
+                    if nerr then return finish(nil, nerr) end
+                    if same_kata(next_head, dropped) then
+                        log.warn(("The %s queue did not advance past a kata you have already completed. Run :CW focus skip to move it manually."):format(category))
+                        return finish(next_head)
+                    end
+                    peek_head(next_head)
+                end)
             end)
-        end)
     end
 
     peek_head()
@@ -282,10 +317,18 @@ end
 --- Pop the queue without opening anything. Called after a focus kata is
 --- finalized: completing a kata does not move the server's pointer, so
 --- without this the next :CW focus re-serves the kata you just solved.
+---
+--- Peeks first and pops ONLY if the head is still `expected`. The pop is
+--- irreversible and nothing here is atomic, so if the queue moved in the
+--- meantime — solved on the website, advanced by another Neovim — a blind
+--- pop would destroy an unrelated, unsolved kata. Confirming the head first
+--- shrinks that window to a single round-trip instead of the whole span
+--- between opening a kata and finishing it, which can be hours.
 ---@param category string
 ---@param language string
+---@param expected table? { slug?, id? } the kata this advance is retiring
 ---@param cb? fun(err: cw.err?)
-function trainer.advance(category, language, cb)
+function trainer.advance(category, language, expected, cb)
     cb = cb or function() end
 
     local strategy, serr = strategy_for(category)
@@ -296,9 +339,23 @@ function trainer.advance(category, language, cb)
     end
     pending = true
 
-    request(category, strategy, language, true, function(_, err)
-        pending = false
-        cb(err)
+    request(category, strategy, language, false, function(head, err)
+        if err then
+            pending = false
+            return cb(err)
+        end
+
+        if expected and not same_kata(head, expected) then
+            pending = false
+            log.debug(("focus: %s queue head is '%s', not the finished '%s' — not advancing"):format(
+                category, tostring(head and head.slug), tostring(expected.slug or expected.id)))
+            return cb(nil)
+        end
+
+        request(category, strategy, language, true, function(_, perr)
+            pending = false
+            cb(perr)
+        end)
     end)
 end
 

@@ -98,6 +98,10 @@ describe("cmd.focus", function()
     local skip_calls = {}
     local advance_calls = {}
     local trainer_response = { err = nil }
+    -- Park a fetch mid-flight so a second command can be issued during the
+    -- window where the first has not resolved.
+    local trainer_hold = false
+    local held_fetches = {}
     package.loaded["codewars.api.trainer"] = {
         STRATEGIES = {
             fundamentals = "reference_workout",
@@ -107,6 +111,12 @@ describe("cmd.focus", function()
         },
         next_kata = function(cat, lang, cb)
             table.insert(trainer_calls, { cat = cat, lang = lang })
+            if trainer_hold then
+                table.insert(held_fetches, function()
+                    cb({ slug = "served-kata-" .. #trainer_calls })
+                end)
+                return
+            end
             if trainer_response.err then
                 return cb(nil, trainer_response.err)
             end
@@ -119,8 +129,8 @@ describe("cmd.focus", function()
             end
             cb({ slug = "skipped-to-kata-" .. #skip_calls })
         end,
-        advance = function(cat, lang, cb)
-            table.insert(advance_calls, { cat = cat, lang = lang })
+        advance = function(cat, lang, expected, cb)
+            table.insert(advance_calls, { cat = cat, lang = lang, expected = expected })
             if cb then cb(trainer_response.err) end
         end,
     }
@@ -159,6 +169,8 @@ describe("cmd.focus", function()
         pending_mounts = {}
         picker_choices = { lang = "python", category = "rank_up" }
         random_err = nil
+        trainer_hold = false
+        held_fetches = {}
         _Cw_state.katas = {}
     end)
 
@@ -347,7 +359,12 @@ describe("cmd.focus", function()
     it("finalizing the focus kata advances the queue (solve does not move it)", function()
         cmd.focus({ _positional = { "python", "fundamentals" } })
         cmd.focus_kata_completed(_Cw_state.katas[1])
-        assert.are.same({ { cat = "fundamentals", lang = "python" } }, advance_calls)
+        assert.are.equal(1, #advance_calls)
+        assert.are.equal("fundamentals", advance_calls[1].cat)
+        assert.are.equal("python", advance_calls[1].lang)
+        -- advance re-checks the head before popping, so it needs to know
+        -- which kata this is retiring.
+        assert.are.equal("served-kata-1", advance_calls[1].expected.slug)
     end)
 
     it("finalizing a kata matched by hex id also advances (peek returns id only)", function()
@@ -355,7 +372,9 @@ describe("cmd.focus", function()
         -- The mounted kata keeps the served id in kata_id and gets a readable
         -- slug back from the API, so id matching has to work on its own.
         cmd.focus_kata_completed({ slug = "readable-name", kata_id = "served-kata-1", lang = "python" })
-        assert.are.same({ { cat = "rank_up", lang = "python" } }, advance_calls)
+        assert.are.equal(1, #advance_calls)
+        assert.are.equal("rank_up", advance_calls[1].cat)
+        assert.are.equal("served-kata-1", advance_calls[1].expected.id)
     end)
 
     it("finalizing an unrelated kata does not advance the queue", function()
@@ -385,6 +404,45 @@ describe("cmd.focus", function()
         cmd.focus_skip()
         assert.are.equal(0, #unmounts) -- no replacement, so nothing is closed
         assert.are.equal(1, #_Cw_state.katas)
+    end)
+
+    -- The dequeue a skip issues is irreversible, so the record it reads must
+    -- never describe a focus that failed to load.
+    it("a second focus during an in-flight fetch is refused, not silently queued", function()
+        trainer_hold = true
+        cmd.focus({ _positional = { "python", "fundamentals" } })
+        cmd.focus({ _positional = { "go", "beta" } })
+        assert.are.equal(1, #trainer_calls) -- the second never reached the API
+        local last = logged[#logged]
+        assert.are.equal("warn", last[1])
+        assert.truthy(last[2]:match("Already fetching"))
+
+        -- Release the parked fetch: the in-flight flag lives in the command
+        -- module, so leaving it set would refuse every focus in later tests.
+        trainer_hold = false
+        for _, resolve in ipairs(held_fetches) do resolve() end
+    end)
+
+    it("a refused second focus cannot redirect a later skip to the wrong queue", function()
+        trainer_hold = true
+        cmd.focus({ _positional = { "python", "fundamentals" } })
+        cmd.focus({ _positional = { "go", "beta" } }) -- refused
+        trainer_hold = false
+        for _, resolve in ipairs(held_fetches) do resolve() end
+
+        cmd.focus_skip()
+        -- The skip must target the focus that actually loaded (python /
+        -- fundamentals), never the rejected go / beta.
+        assert.are.same({ cat = "fundamentals", lang = "python" }, skip_calls[1])
+    end)
+
+    it("the in-flight guard releases after a failed fetch", function()
+        trainer_response = { err = { msg = "boom" } }
+        cmd.focus({ _positional = { "python", "fundamentals" } })
+        trainer_response = { err = nil }
+        cmd.focus({ _positional = { "python", "fundamentals" } })
+        assert.are.equal(2, #trainer_calls)
+        assert.are.equal(1, #mounts)
     end)
 
     it("a nil kata never advances the queue", function()

@@ -633,6 +633,14 @@ end
 -- focus pointer itself.
 local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
 
+-- One focus fetch at a time, enforced HERE and not just in the api layer.
+-- The api mutex rejects the second request, but by then the old code had
+-- already overwritten _last_focus — so a later `:CW focus skip` would
+-- advance the queue of a focus that never actually loaded, and a dequeue
+-- cannot be undone. Serializing at the command layer means _last_focus is
+-- only ever written for a fetch that succeeded.
+local _focus_inflight = false
+
 -- Categories resolved entirely client-side, with no server queue behind
 -- them. One source of truth for every place that has to treat them
 -- differently: resolving, skipping, validating, and advancing on complete.
@@ -682,18 +690,29 @@ end
 ---@param category string
 ---@param on_mounted? fun() runs once the served kata is actually on screen
 local function focus_run(lang, category, on_mounted)
-    local lf = { lang = lang, category = category }
-    _last_focus = lf
-
     if LOCAL_CATEGORIES[category] then
-        lf.kata = open_random_kata(lang, on_mounted)
-        lf.slug = lf.kata and lf.kata.slug or nil
+        -- No server queue behind this one, so a stale record here can never
+        -- cause a dequeue; resolve it directly.
+        local kata = open_random_kata(lang, on_mounted)
+        if kata then
+            _last_focus = { lang = lang, category = category, slug = kata.slug, kata = kata }
+        end
         return
     end
 
+    if _focus_inflight then
+        return log.warn("Already fetching a focus kata — try again in a moment.")
+    end
+    _focus_inflight = true
+
     log.info(("Fetching the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").next_kata(category, lang, function(kata, err)
+        _focus_inflight = false
         if err then return log.err(err) end
+        -- Only now is this the current focus. Recording it earlier is what
+        -- let a rejected second request point a later skip at the wrong queue.
+        local lf = { lang = lang, category = category }
+        _last_focus = lf
         mount_focus_kata(lf, lang, kata, on_mounted)
     end)
 end
@@ -771,8 +790,14 @@ function cmd.focus_skip()
         return focus_run(lang, category, close_prev)
     end
 
+    if _focus_inflight then
+        return log.warn("Already fetching a focus kata — try again in a moment.")
+    end
+    _focus_inflight = true
+
     log.info(("Skipping the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").skip(category, lang, function(kata, err)
+        _focus_inflight = false
         if err then return log.err(err) end
         local lf = { lang = lang, category = category }
         _last_focus = lf
@@ -794,7 +819,10 @@ function cmd.focus_kata_completed(kata)
         or (lf.slug ~= nil and (lf.slug == kata.slug or lf.slug == kata.kata_id))
     if not matches then return end
 
-    require("codewars.api.trainer").advance(lf.category, lf.lang, function(err)
+    -- Pass what we believe the head is: advance re-checks before popping, so
+    -- a queue that moved while this kata was open is left alone.
+    local expected = { slug = lf.slug, id = kata.kata_id }
+    require("codewars.api.trainer").advance(lf.category, lf.lang, expected, function(err)
         if err then
             -- Best effort: the completed self-heal in trainer.next_kata
             -- catches this kata on the next focus anyway.
