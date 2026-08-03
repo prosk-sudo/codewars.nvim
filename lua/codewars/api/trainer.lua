@@ -4,12 +4,13 @@ local api_utils = require("codewars.api.utils")
 ---@class cw.Api.Trainer
 local trainer = {}
 
---- Server strategy tokens for POST /api/v1/code-challenges/{lang}/train.
---- LIVE-VERIFIED 2026-07-02 against an authenticated session: all four
---- tokens return HTTP 200 with { success, name, slug, href, rank, ... }.
---- Token source: the dashboard focus chooser markup (strategy="..."
---- attributes). A changed token or response shape surfaces through the
---- drift error in _parse — never silently.
+--- Server strategy tokens for GET /trainer/peek/{language}/{strategy}.
+--- LIVE-CAPTURED 2026-08-03 from authenticated browser devtools: all four
+--- return HTTP 200 JSON { success, strategy, language, id, name, rank, href }.
+--- `dequeue=false` is an idempotent peek — the server keeps the current
+--- challenge per (strategy, language), so re-running returns the SAME kata.
+--- `dequeue=true` pops the queue (the skip mechanism). A changed token or
+--- response shape surfaces through the drift error in _parse — never silently.
 trainer.STRATEGIES = {
     fundamentals = "reference_workout",
     rank_up = "default",
@@ -44,7 +45,7 @@ function trainer._parse(res)
         if slug then
             return { slug = slug, id = id }
         end
-        -- Some endpoints return only an id; Kata:new accepts slug or hex id
+        -- The peek endpoint returns only an id; Kata:new accepts slug or hex id
         if id then
             return { slug = id, id = id }
         end
@@ -68,11 +69,46 @@ function trainer._parse(res)
     }
 end
 
--- One fetch at a time: each POST advances the server-side focus queue, so
--- a second in-flight request would skip kata and race the mounts.
+-- One fetch at a time: skip advances the server-side focus queue, so a
+-- second in-flight request would double-pop and race the mounts.
 local pending = false
 
---- Fetch the next kata for a focus category + language.
+---@param strategy string
+---@param language string
+---@param dequeue boolean
+---@return string endpoint
+local function peek_endpoint(strategy, language, dequeue)
+    return ("/trainer/peek/%s/%s?dequeue=%s"):format(language, strategy, dequeue and "true" or "false")
+end
+
+--- Shared response handling: 404 language mapping, parse, drift error.
+---@param category string
+---@param language string
+---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
+local function handle_response(category, language, cb, res, err)
+    if err then
+        if not err.auth and err.status == 404 then
+            err = {
+                status = 404,
+                msg = ("No %s kata available for %s — the trainer may not support this language."):format(
+                    category, language
+                ),
+            }
+        end
+        return cb(nil, err)
+    end
+
+    local kata, perr = trainer._parse(res)
+    if perr then
+        log.debug(res)
+        return cb(nil, perr)
+    end
+    cb(kata)
+end
+
+--- Peek the current kata for a focus category + language.
+--- Idempotent: the server owns the focus pointer, so re-running returns the
+--- same kata until it is solved or skipped (trainer.skip).
 ---@param category string plugin-internal key (see picker.focus_categories)
 ---@param language string
 ---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
@@ -87,32 +123,56 @@ function trainer.next_kata(category, language, cb)
     end
     pending = true
 
-    local endpoint = ("/api/v1/code-challenges/%s/train"):format(language)
-    api_utils.post(endpoint, {
-        body = { strategy = strategy },
-        -- Non-idempotent: every POST advances the server-side focus queue,
-        -- so the shared 5xx retry default would silently skip kata.
-        retry = 0,
+    -- Idempotent peek: the shared 5xx retry default is safe here.
+    api_utils.get(peek_endpoint(strategy, language, false), {
         callback = function(res, err)
             pending = false
+            handle_response(category, language, cb, res, err)
+        end,
+    })
+end
+
+--- Skip the current kata: pop the queue (dequeue=true), then peek the new
+--- head and return it. The follow-up peek makes the result deterministic
+--- regardless of whether the pop returns the old or the new head.
+---@param category string plugin-internal key (see picker.focus_categories)
+---@param language string
+---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
+function trainer.skip(category, language, cb)
+    local strategy = trainer.STRATEGIES[category]
+    if not strategy then
+        return cb(nil, { msg = ("Unknown focus category: %s"):format(tostring(category)) })
+    end
+
+    if pending then
+        return cb(nil, { msg = "Already fetching a focus kata..." })
+    end
+    pending = true
+
+    api_utils.get(peek_endpoint(strategy, language, true), {
+        -- Non-idempotent: the pop advances the queue, so no retries.
+        retry = 0,
+        callback = function(res, err)
             if err then
-                if not err.auth and err.status == 404 then
-                    err = {
-                        status = 404,
-                        msg = ("No %s kata available for %s — the trainer may not support this language."):format(
-                            category, language
-                        ),
-                    }
-                end
-                return cb(nil, err)
+                pending = false
+                return handle_response(category, language, cb, res, err)
             end
 
-            local kata, perr = trainer._parse(res)
+            -- Confirm the pop parsed (drift check) before trusting the queue
+            -- state, then fetch the new head.
+            local _, perr = trainer._parse(res)
             if perr then
+                pending = false
                 log.debug(res)
                 return cb(nil, perr)
             end
-            cb(kata)
+
+            api_utils.get(peek_endpoint(strategy, language, false), {
+                callback = function(res2, err2)
+                    pending = false
+                    handle_response(category, language, cb, res2, err2)
+                end,
+            })
         end,
     })
 end

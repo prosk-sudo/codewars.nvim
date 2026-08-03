@@ -7,22 +7,35 @@ describe("api.trainer", function()
         debug = function() end,
     }
 
-    -- Controllable api.utils stub
-    local post_calls = {}
-    local post_response = { res = nil, err = nil }
+    -- Controllable api.utils stub. Responses are consumed FIFO so multi-call
+    -- flows (skip = pop + peek) can be scripted per test; `hold` parks
+    -- callbacks to exercise the in-flight mutex.
+    local get_calls = {}
+    local get_responses = {}
+    local hold = false
+    local held = {}
     package.loaded["codewars.api.utils"] = {
-        post = function(endpoint, opts)
-            table.insert(post_calls, { endpoint = endpoint, body = opts.body, retry = opts.retry })
-            opts.callback(post_response.res, post_response.err)
+        get = function(endpoint, opts)
+            table.insert(get_calls, { endpoint = endpoint, retry = opts.retry })
+            if hold then
+                table.insert(held, opts.callback)
+                return
+            end
+            local r = table.remove(get_responses, 1) or {}
+            opts.callback(r.res, r.err)
         end,
     }
 
     package.loaded["codewars.api.trainer"] = nil
     local trainer = require("codewars.api.trainer")
 
+    local HEX = ("a"):rep(24)
+
     before_each(function()
-        post_calls = {}
-        post_response = { res = nil, err = nil }
+        get_calls = {}
+        get_responses = {}
+        hold = false
+        held = {}
     end)
 
     describe("_parse", function()
@@ -32,7 +45,7 @@ describe("api.trainer", function()
             assert.are.equal("abc123", kata.id)
         end)
 
-        it("parses an id-only response", function()
+        it("parses an id-only response (peek endpoint shape)", function()
             local kata = trainer._parse({ id = "abc123" })
             assert.are.equal("abc123", kata.slug)
         end)
@@ -86,43 +99,34 @@ describe("api.trainer", function()
             local got_err
             trainer.next_kata("nonsense", "python", function(_, err) got_err = err end)
             assert.truthy(got_err.msg:match("Unknown focus category"))
-            assert.are.equal(0, #post_calls)
+            assert.are.equal(0, #get_calls)
         end)
 
-        it("posts the mapped strategy token to the per-language endpoint", function()
-            post_response.res = { slug = "multiply" }
+        it("peeks the mapped strategy token with dequeue=false", function()
+            get_responses = { { res = { success = true, id = HEX } } }
             trainer.next_kata("fundamentals", "python", function() end)
-            assert.are.equal("/api/v1/code-challenges/python/train", post_calls[1].endpoint)
-            assert.are.equal("reference_workout", post_calls[1].body.strategy)
+            assert.are.equal("/trainer/peek/python/reference_workout?dequeue=false", get_calls[1].endpoint)
         end)
 
-        it("disables retries (each POST advances the focus queue)", function()
-            post_response.res = { slug = "multiply" }
+        it("keeps the shared retry default (peek is idempotent)", function()
+            get_responses = { { res = { success = true, id = HEX } } }
             trainer.next_kata("fundamentals", "python", function() end)
-            assert.are.equal(0, post_calls[1].retry)
+            assert.is_nil(get_calls[1].retry)
         end)
 
         it("rejects a second fetch while one is in flight", function()
-            local api = package.loaded["codewars.api.utils"]
-            local orig_post = api.post
-            local held
-            api.post = function(endpoint, opts)
-                table.insert(post_calls, { endpoint = endpoint })
-                held = opts.callback
-            end
-
+            hold = true
             trainer.next_kata("fundamentals", "python", function() end)
             local got_err
             trainer.next_kata("rank_up", "python", function(_, err) got_err = err end)
             assert.truthy(got_err.msg:match("Already fetching"))
-            assert.are.equal(1, #post_calls)
+            assert.are.equal(1, #get_calls)
 
-            held({ slug = "multiply" })
+            held[1]({ success = true, id = HEX })
+            hold = false
+            get_responses = { { res = { success = true, id = HEX } } }
             trainer.next_kata("rank_up", "python", function() end)
-            assert.are.equal(2, #post_calls)
-
-            held({ slug = "multiply" })
-            api.post = orig_post
+            assert.are.equal(2, #get_calls)
         end)
 
         it("maps every category to a distinct token", function()
@@ -131,29 +135,33 @@ describe("api.trainer", function()
                 assert.is_nil(seen[token], cat .. " duplicates token " .. token)
                 seen[token] = cat
             end
-            assert.is_not_nil(trainer.STRATEGIES.fundamentals)
-            assert.is_not_nil(trainer.STRATEGIES.rank_up)
-            assert.is_not_nil(trainer.STRATEGIES.practice_and_repeat)
-            assert.is_not_nil(trainer.STRATEGIES.beta)
+            assert.are.equal("reference_workout", trainer.STRATEGIES.fundamentals)
+            assert.are.equal("default", trainer.STRATEGIES.rank_up)
+            assert.are.equal("retrain_workout", trainer.STRATEGIES.practice_and_repeat)
+            assert.are.equal("beta_workout", trainer.STRATEGIES.beta)
             assert.is_nil(trainer.STRATEGIES.random) -- client-side by design
         end)
 
-        it("returns the parsed kata on success", function()
-            post_response.res = { slug = "multiply", id = "abc" }
+        it("returns the parsed kata (peek returns id only, like the live capture)", function()
+            get_responses = { { res = {
+                success = true, strategy = "default", language = "java",
+                id = "5277c8a221e209d3f6000b56", name = "Valid Braces", rank = -6,
+                href = "/kata/5277c8a221e209d3f6000b56",
+            } } }
             local got
-            trainer.next_kata("rank_up", "go", function(kata) got = kata end)
-            assert.are.equal("multiply", got.slug)
+            trainer.next_kata("rank_up", "java", function(kata) got = kata end)
+            assert.are.equal("5277c8a221e209d3f6000b56", got.slug)
         end)
 
         it("maps 404 to a language-support message", function()
-            post_response.err = { status = 404, msg = "http error 404" }
+            get_responses = { { err = { status = 404, msg = "http error 404" } } }
             local got_err
             trainer.next_kata("beta", "cobol", function(_, err) got_err = err end)
             assert.truthy(got_err.msg:match("may not support"))
         end)
 
         it("passes auth errors through untouched", function()
-            post_response.err = { status = 401, auth = true, msg = "Session expired or invalid. Run :CW cookie to re-authenticate." }
+            get_responses = { { err = { status = 401, auth = true, msg = "Session expired or invalid. Run :CW cookie to re-authenticate." } } }
             local got_err
             trainer.next_kata("beta", "python", function(_, err) got_err = err end)
             assert.is_true(got_err.auth)
@@ -161,10 +169,71 @@ describe("api.trainer", function()
         end)
 
         it("surfaces drift as an explicit error (never silent)", function()
-            post_response.res = { totally = "unexpected" }
+            get_responses = { { res = { totally = "unexpected" } } }
             local got_err
             trainer.next_kata("rank_up", "python", function(_, err) got_err = err end)
             assert.truthy(got_err.msg:match("unexpected shape"))
+        end)
+    end)
+
+    describe("skip", function()
+        it("pops with dequeue=true (no retries), then peeks the new head", function()
+            get_responses = {
+                { res = { success = true, id = ("b"):rep(24) } }, -- popped (old head)
+                { res = { success = true, id = ("c"):rep(24) } }, -- new head
+            }
+            local got
+            trainer.skip("rank_up", "java", function(kata) got = kata end)
+            assert.are.equal("/trainer/peek/java/default?dequeue=true", get_calls[1].endpoint)
+            assert.are.equal(0, get_calls[1].retry)
+            assert.are.equal("/trainer/peek/java/default?dequeue=false", get_calls[2].endpoint)
+            assert.are.equal(("c"):rep(24), got.slug)
+        end)
+
+        it("aborts on a pop error without a second request", function()
+            get_responses = { { err = { status = 500, msg = "http error 500" } } }
+            local got_err
+            trainer.skip("beta", "python", function(_, err) got_err = err end)
+            assert.is_not_nil(got_err)
+            assert.are.equal(1, #get_calls)
+        end)
+
+        it("aborts on pop drift without a second request", function()
+            get_responses = { { res = { totally = "unexpected" } } }
+            local got_err
+            trainer.skip("beta", "python", function(_, err) got_err = err end)
+            assert.truthy(got_err.msg:match("unexpected shape"))
+            assert.are.equal(1, #get_calls)
+        end)
+
+        it("rejects unknown categories without calling the API", function()
+            local got_err
+            trainer.skip("hardcore", "python", function(_, err) got_err = err end)
+            assert.truthy(got_err.msg:match("Unknown focus category"))
+            assert.are.equal(0, #get_calls)
+        end)
+
+        it("holds the in-flight lock across both requests", function()
+            hold = true
+            trainer.skip("rank_up", "python", function() end)
+
+            local got_err
+            trainer.next_kata("rank_up", "python", function(_, err) got_err = err end)
+            assert.truthy(got_err.msg:match("Already fetching"))
+
+            -- Release the pop; the follow-up peek is issued and parked too.
+            held[1]({ success = true, id = HEX })
+            got_err = nil
+            trainer.next_kata("rank_up", "python", function(_, err) got_err = err end)
+            assert.truthy(got_err.msg:match("Already fetching"))
+
+            -- Release the peek; the lock frees.
+            held[2]({ success = true, id = HEX })
+            hold = false
+            get_responses = { { res = { success = true, id = HEX } } }
+            local got
+            trainer.next_kata("rank_up", "python", function(kata) got = kata end)
+            assert.are.equal(HEX, got.slug)
         end)
     end)
 end)

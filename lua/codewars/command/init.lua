@@ -36,7 +36,8 @@ function cmd.help()
         { "TRAINING",       "" },
         { "train <slug> [lang]", "Open a kata by slug or URL" },
         { "random [lang]",  "Open a random kata" },
-        { "focus [lang] [category]", "Choose Today's Focus (re-run for the next kata)" },
+        { "focus [lang] [category]", "Choose Today's Focus (re-run returns the same kata)" },
+        { "focus skip", "Skip the current focus kata and open the next" },
         { "test",           "Quick test with example fixtures" },
         { "attempt",        "Full attempt with all tests" },
         { "submit",         "Finalize solution (after passing attempt)" },
@@ -622,18 +623,23 @@ function cmd.random(options)
     open_random_kata(lang)
 end
 
---- Resolve and open a kata for a focus category + language.
---- Random resolves client-side; the other categories hit the trainer
---- endpoint. Every invocation fetches a fresh kata — same behavior as
---- clicking a focus on codewars.com repeatedly.
+-- Last focus target, so `:CW focus skip` knows which queue to advance.
+-- In-memory only: the server owns the focus pointer itself.
+local _last_focus = nil ---@type { lang: string, category: string }?
+
+--- Resolve and open the current kata for a focus category + language.
+--- Random resolves client-side; the other categories peek the server-side
+--- trainer queue (idempotent — re-running returns the same kata until it is
+--- solved or skipped via :CW focus skip).
 ---@param lang string
 ---@param category string
 local function focus_run(lang, category)
+    _last_focus = { lang = lang, category = category }
     if category == "random" then
         return open_random_kata(lang)
     end
 
-    log.info(("Fetching next '%s' kata for %s..."):format(category, lang))
+    log.info(("Fetching the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").next_kata(category, lang, function(kata, err)
         if err then return log.err(err) end
         require("codewars-ui.kata"):new(kata.slug, lang):mount()
@@ -665,7 +671,8 @@ local function focus_args(options)
 end
 
 --- :CW focus [lang] [category] — Choose Today's Focus.
---- Re-running the same focus serves the next kata, like the website.
+--- Re-running the same focus returns the same kata (server-side pointer);
+--- `:CW focus skip` advances to the next one.
 function cmd.focus(options)
     local utils = require("codewars.utils")
     utils.auth_guard()
@@ -684,6 +691,28 @@ function cmd.focus(options)
         picker.focus_category(function(picked_cat)
             focus_run(picked_lang, picked_cat)
         end)
+    end)
+end
+
+--- :CW focus skip — pop the current focus kata and open the next one.
+function cmd.focus_skip()
+    local utils = require("codewars.utils")
+    utils.auth_guard()
+
+    if not _last_focus then
+        return log.error("No focus to skip — run :CW focus first.")
+    end
+    local lang, category = _last_focus.lang, _last_focus.category
+
+    if category == "random" then
+        -- Client-side random has no server queue; a skip is just a re-roll.
+        return open_random_kata(lang)
+    end
+
+    log.info(("Skipping the current '%s' kata for %s..."):format(category, lang))
+    require("codewars.api.trainer").skip(category, lang, function(kata, err)
+        if err then return log.err(err) end
+        require("codewars-ui.kata"):new(kata.slug, lang):mount()
     end)
 end
 
@@ -1022,6 +1051,7 @@ cmd.commands = {
     },
     focus = {
         cmd.focus,
+        skip = { cmd.focus_skip },
         _positional_complete = { lang_slugs, focus_category_keys },
     },
     test = { cmd.test },
