@@ -131,7 +131,12 @@ describe("Runner", function()
             restore()
         end)
 
-        it("still finalizes when the focus hook throws", function()
+        it("still finalizes when the focus hook throws, and says so at debug level", function()
+            local logger = package.loaded["codewars.logger"]
+            local real_debug = logger.debug
+            local debugs = {}
+            logger.debug = function(m) table.insert(debugs, tostring(m)) end
+
             local restore = stub_finalize_deps(function() error("focus blew up") end)
 
             local kata = submit_kata(-7)
@@ -140,6 +145,13 @@ describe("Runner", function()
             end)
             assert.is_true(kata.finalized)
 
+            local logged = false
+            for _, m in ipairs(debugs) do
+                if m:match("focus advance failed") then logged = true end
+            end
+            assert.is_true(logged)
+
+            logger.debug = real_debug
             restore()
         end)
     end)

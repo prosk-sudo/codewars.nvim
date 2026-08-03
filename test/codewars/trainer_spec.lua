@@ -41,8 +41,13 @@ describe("api.trainer", function()
     trainer._is_completed = function(kata)
         return kata ~= nil and completed[kata.slug] == true
     end
-    -- resolve_head prebuilds this once per call; keep it off the real cache.
-    trainer._completed_keys = function() return {} end
+    -- resolve_head prebuilds this once per call; keep it off the real cache
+    -- and record how often it is asked (the per-resolve read budget).
+    local completed_keys_calls = 0
+    trainer._completed_keys = function()
+        completed_keys_calls = completed_keys_calls + 1
+        return {}
+    end
 
     before_each(function()
         get_calls = {}
@@ -175,6 +180,14 @@ describe("api.trainer", function()
             assert.truthy(got_err.msg:match("may not support"))
         end)
 
+        it("does not remap a 404 that is really an auth failure", function()
+            get_responses = { { err = { status = 404, auth = true, msg = "Session expired or invalid. Run :CW cookie to re-authenticate." } } }
+            local got_err
+            trainer.next_kata("beta", "python", function(_, err) got_err = err end)
+            assert.is_true(got_err.auth)
+            assert.is_nil(got_err.msg:match("may not support"))
+        end)
+
         it("passes auth errors through untouched", function()
             get_responses = { { err = { status = 401, auth = true, msg = "Session expired or invalid. Run :CW cookie to re-authenticate." } } }
             local got_err
@@ -202,16 +215,59 @@ describe("api.trainer", function()
             package.loaded["codewars.cache.completed"] = saved_cache
         end)
 
-        it("indexes completed kata by BOTH slug and id", function()
+        it("indexes completed kata by BOTH slug and id, for the given language", function()
             package.loaded["codewars.cache.completed"] = {
                 get = function()
-                    return { { id = "5277c8a2", slug = "valid-braces" }, { id = "abc123" } }
+                    return {
+                        { id = "5277c8a2", slug = "valid-braces", completedLanguages = { "python" } },
+                        { id = "abc123", completedLanguages = { "python", "go" } },
+                    }
                 end,
             }
-            local keys = real_completed_keys()
+            local keys = real_completed_keys("python")
             assert.is_true(keys["valid-braces"])
             assert.is_true(keys["5277c8a2"])
             assert.is_true(keys["abc123"])
+        end)
+
+        -- Completion is per-language. A language-blind set would let the
+        -- self-heal irreversibly pop a kata never attempted in this language.
+        it("excludes kata completed only in a DIFFERENT language", function()
+            package.loaded["codewars.cache.completed"] = {
+                get = function()
+                    return { { id = "5277c8a2", slug = "valid-braces", completedLanguages = { "python" } } }
+                end,
+            }
+            local keys = real_completed_keys("javascript")
+            assert.is_nil(keys["valid-braces"])
+            assert.is_nil(keys["5277c8a2"])
+            assert.is_false(real_is_completed({ slug = "valid-braces", id = "5277c8a2" }, keys))
+        end)
+
+        it("treats an entry with no completedLanguages as NOT completed (never burn a kata)", function()
+            package.loaded["codewars.cache.completed"] = {
+                get = function()
+                    return {
+                        { id = "no-langs", slug = "no-langs" },
+                        { id = "empty-langs", slug = "empty-langs", completedLanguages = {} },
+                    }
+                end,
+            }
+            local keys = real_completed_keys("python")
+            assert.is_nil(keys["no-langs"])
+            assert.is_nil(keys["empty-langs"])
+        end)
+
+        it("reads the completed cache at most once per resolve, even while self-healing", function()
+            -- The `or {}` default in resolve_head exists so _is_completed
+            -- never falls back to re-reading the cache per iteration.
+            completed_keys_calls = 0
+            completed["solved-one"] = true
+            for _ = 1, 8 do
+                table.insert(get_responses, { res = { success = true, slug = "solved-one" } })
+            end
+            trainer.next_kata("rank_up", "python", function() end)
+            assert.are.equal(1, completed_keys_calls)
         end)
 
         it("matches an id-only kata, which is all the peek endpoint returns", function()
@@ -235,13 +291,13 @@ describe("api.trainer", function()
             package.loaded["codewars.cache.completed"] = {
                 get = function() error("corrupt cache") end,
             }
-            assert.is_nil(real_completed_keys())
-            assert.is_false(real_is_completed({ slug = "x" }))
+            assert.is_nil(real_completed_keys("python"))
+            assert.is_false(real_is_completed({ slug = "x" }, {}))
         end)
 
         it("survives a cache.get() that returns a non-table", function()
             package.loaded["codewars.cache.completed"] = { get = function() return nil end }
-            assert.is_nil(real_completed_keys())
+            assert.is_nil(real_completed_keys("python"))
         end)
 
         it("handles a nil kata", function()
@@ -401,6 +457,32 @@ describe("api.trainer", function()
             trainer.skip("hardcore", "python", function(_, err) got_err = err end)
             assert.truthy(got_err.msg:match("Unknown focus category"))
             assert.are.equal(0, #get_calls)
+        end)
+
+        it("surfaces a failure of the peek that follows a successful pop", function()
+            -- The queue HAS advanced server-side at this point; the user must
+            -- see the error rather than believe nothing happened.
+            get_responses = {
+                { res = { success = true, slug = "popped-one" } },
+                { err = { status = 401, auth = true, msg = "Session expired" } },
+            }
+            local got, got_err
+            trainer.skip("rank_up", "python", function(kata, err) got, got_err = kata, err end)
+            assert.is_nil(got)
+            assert.is_true(got_err.auth)
+            assert.are.equal(2, #get_calls)
+        end)
+
+        it("releases the lock when the post-pop peek fails", function()
+            get_responses = {
+                { res = { success = true, slug = "popped-one" } },
+                { err = { status = 500, msg = "http error 500" } },
+                { res = { success = true, slug = "later-one" } },
+            }
+            trainer.skip("rank_up", "python", function() end)
+            local got
+            trainer.next_kata("rank_up", "python", function(kata) got = kata end)
+            assert.are.equal("later-one", got.slug)
         end)
 
         it("holds the in-flight lock across both requests", function()

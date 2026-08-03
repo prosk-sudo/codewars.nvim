@@ -82,12 +82,22 @@ function trainer._parse(res)
     }
 end
 
---- Build a slug/id lookup of every completed kata. Reading the cache is a
---- file read plus a JSON decode, and the self-heal can ask up to
---- MAX_AUTO_ADVANCE+1 times per focus, so resolve_head builds this ONCE and
---- passes it down rather than re-reading per iteration.
+--- Build a slug/id lookup of the kata completed IN THIS LANGUAGE.
+---
+--- Completion on Codewars is per-language: solving a kata in Python does not
+--- complete it in JavaScript. This set decides whether the self-heal pops the
+--- queue head, and a pop is irreversible — so a language-blind set would burn
+--- a kata the user has never attempted in the language they are training.
+--- An entry with no `completedLanguages` (older cache writes) is treated as
+--- NOT completed here: failing toward "leave it alone" costs the user a
+--- manual `:CW focus skip`, while failing the other way destroys a kata.
+---
+--- Reading the cache is a file read plus a JSON decode, and the self-heal can
+--- ask up to MAX_AUTO_ADVANCE+1 times per focus, so resolve_head builds this
+--- ONCE and passes it down rather than re-reading per iteration.
+---@param language string
 ---@return table<string, boolean>? nil when the cache is unavailable
-function trainer._completed_keys()
+function trainer._completed_keys(language)
     local ok, completed_cache = pcall(require, "codewars.cache.completed")
     if not ok then return nil end
     local got, items = pcall(completed_cache.get)
@@ -95,8 +105,11 @@ function trainer._completed_keys()
 
     local keys = {}
     for _, item in ipairs(items) do
-        if item.slug then keys[item.slug] = true end
-        if item.id then keys[item.id] = true end
+        local langs = item.completedLanguages
+        if type(langs) == "table" and vim.tbl_contains(langs, language) then
+            if item.slug then keys[item.slug] = true end
+            if item.id then keys[item.id] = true end
+        end
     end
     return keys
 end
@@ -137,10 +150,14 @@ local function request(category, strategy, language, dequeue, cb)
         callback = function(res, err)
             if err then
                 if not err.auth and err.status == 404 then
+                    -- Keep the server's own reason: a 404 here can equally be
+                    -- an empty queue or a drifted strategy token, and throwing
+                    -- the original away makes real drift look like a language
+                    -- problem.
                     err = {
                         status = 404,
-                        msg = ("No %s kata available for %s — the trainer may not support this language."):format(
-                            category, language
+                        msg = ("No %s kata available for %s — the trainer may not support this language. (server said: %s)"):format(
+                            category, language, tostring(err.msg)
                         ),
                     }
                 end
@@ -167,7 +184,7 @@ local function resolve_head(category, strategy, language, finish)
     -- _is_completed never falls back to re-reading it per iteration.
     local completed_keys = {}
     if not SERVES_COMPLETED[category] then
-        completed_keys = trainer._completed_keys() or {}
+        completed_keys = trainer._completed_keys(language) or {}
     end
 
     local function peek_head()

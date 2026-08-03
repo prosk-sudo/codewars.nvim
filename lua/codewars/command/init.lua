@@ -650,8 +650,10 @@ local LOCAL_CATEGORIES = { random = true }
 ---@param prev { kata: table? }?
 local function close_skipped_kata(prev)
     if not prev or not prev.kata then return end
-    -- Same "is this instance on screen" check curr_kata and
-    -- detect_duplicate_kata use, rather than a fourth hand-rolled scan.
+    -- kata_tabp is the winid-validity primitive underneath curr_kata and
+    -- detect_duplicate_kata (they reach it through kata_tabs, which filters
+    -- to registered instances first). Here the instance is already known, so
+    -- the liveness check alone is what matters.
     if not require("codewars.utils").kata_tabp(prev.kata) then return end
     pcall(prev.kata.unmount, prev.kata)
 end
@@ -664,14 +666,12 @@ end
 ---@param lang string
 ---@param kata { slug: string }
 ---@param on_mounted? fun()
----@return table ui
 local function mount_focus_kata(target, lang, kata, on_mounted)
     local ui = require("codewars-ui.kata"):new(kata.slug, lang)
     target.slug = kata.slug
     target.kata = ui
     ui._on_mounted = on_mounted
     ui:mount()
-    return ui
 end
 
 --- Resolve and open the current kata for a focus category + language.

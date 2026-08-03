@@ -30,12 +30,13 @@ describe("cmd.focus", function()
             return li
         end,
         parse_slug = function(s) return s end,
-        -- Real kata_tabp answers "does this instance have a live window".
-        -- Registered in _Cw_state.katas is the stub's stand-in for on screen.
+        -- Mirrors the real utils.kata_tabp: a tabpage for the instance's
+        -- winid, nil when that window is gone. Deliberately keyed off the
+        -- fake winid rather than _Cw_state membership — those are separate
+        -- facts in production, and a kata can be registered with a dead
+        -- window.
         kata_tabp = function(k)
-            for _, x in ipairs(_Cw_state.katas) do
-                if x == k then return 1 end
-            end
+            if k and k.winid and not k._win_closed then return 1 end
         end,
     }
 
@@ -56,6 +57,7 @@ describe("cmd.focus", function()
         new = function(_, slug, lang)
             local k = { slug = slug, lang = lang }
             local function handle_mount()
+                k.winid = 1000 + #mounts -- a live window, as create_buffer sets
                 table.insert(_Cw_state.katas, k)
                 if k._on_mounted then
                     local hook = k._on_mounted
@@ -125,9 +127,11 @@ describe("cmd.focus", function()
 
     -- Random path stub
     local random_calls = {}
+    local random_err = nil
     package.loaded["codewars.cache.problemlist_utils"] = {
         random_for_lang = function(lang)
             table.insert(random_calls, lang)
+            if random_err then return nil, random_err end
             return { slug = "random-kata" }, nil
         end,
     }
@@ -154,6 +158,7 @@ describe("cmd.focus", function()
         mount_outcome = "handle_mount"
         pending_mounts = {}
         picker_choices = { lang = "python", category = "rank_up" }
+        random_err = nil
         _Cw_state.katas = {}
     end)
 
@@ -243,14 +248,26 @@ describe("cmd.focus", function()
         -- Kata:unmount force-deletes the buffer, discarding unsaved code, so
         -- the close must match the tracked INSTANCE and nothing else.
         cmd.focus({ _positional = { "python", "rank_up" } })
-        local user_opened = { slug = "served-kata-1", lang = "python", kata_id = "served-kata-1" }
+        -- Focus's own instance is gone (window closed), but a kata with the
+        -- SAME slug is open because the user ran :CW train on it. A slug
+        -- fallback would force-close theirs; identity matching must not.
+        _Cw_state.katas[1]._win_closed = true
+        local user_opened = { slug = "served-kata-1", lang = "python", kata_id = "served-kata-1", winid = 999 }
         user_opened.unmount = function()
             table.insert(unmounts, { slug = "USER-OPENED-SHOULD-NOT-CLOSE" })
         end
-        _Cw_state.katas = { user_opened } -- focus's own instance no longer mounted
+        table.insert(_Cw_state.katas, user_opened)
         cmd.focus_skip()
         assert.are.equal(0, #unmounts)
-        assert.are.equal(2, #_Cw_state.katas) -- user's kata untouched, new one added
+    end)
+
+    it("does not close a tracked kata whose window is already gone", function()
+        -- Registered in _Cw_state but the window died (user :q'd it). The
+        -- real kata_tabp returns nil here, so there is nothing to close.
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        _Cw_state.katas[1]._win_closed = true
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts)
     end)
 
     it("does not close the previous kata until the replacement is on screen", function()
@@ -282,7 +299,7 @@ describe("cmd.focus", function()
 
     it("skip after the kata was closed manually just opens the next", function()
         cmd.focus({ _positional = { "python", "rank_up" } })
-        _Cw_state.katas = {} -- simulate the user :q-ing the kata tab
+        _Cw_state.katas[1]._win_closed = true -- the user :q'd the kata tab
         cmd.focus_skip()
         assert.are.equal(0, #unmounts)
         assert.are.same({ slug = "skipped-to-kata-1", lang = "python" }, mounts[2])
@@ -350,6 +367,29 @@ describe("cmd.focus", function()
     it("finalizing in a different language does not advance the queue", function()
         cmd.focus({ _positional = { "python", "fundamentals" } })
         cmd.focus_kata_completed({ slug = "served-kata-1", lang = "go" })
+        assert.are.equal(0, #advance_calls)
+    end)
+
+    it("an empty problem list warns and mounts nothing", function()
+        random_err = "Problem list empty. Run :CW cache update first."
+        cmd.focus({ _positional = { "python", "random" } })
+        assert.are.equal(0, #mounts)
+        local last = logged[#logged]
+        assert.are.equal("warn", last[1])
+        assert.truthy(tostring(last[2]):match("cache update"))
+    end)
+
+    it("a random skip with an empty problem list keeps the current kata open", function()
+        cmd.focus({ _positional = { "python", "random" } })
+        random_err = "Problem list empty. Run :CW cache update first."
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts) -- no replacement, so nothing is closed
+        assert.are.equal(1, #_Cw_state.katas)
+    end)
+
+    it("a nil kata never advances the queue", function()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        cmd.focus_kata_completed(nil)
         assert.are.equal(0, #advance_calls)
     end)
 
