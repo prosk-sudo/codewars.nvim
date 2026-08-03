@@ -32,13 +32,25 @@ describe("cmd.focus", function()
         parse_slug = function(s) return s end,
     }
 
-    -- Kata UI stub: record every mount
+    -- Kata UI stub: record mounts/unmounts and mirror the real _Cw_state
+    -- registration so "skip closes the previous kata" is observable.
     local mounts = {}
+    local unmounts = {}
+    _Cw_state = _Cw_state or {}
+    _Cw_state.katas = _Cw_state.katas or {}
     package.loaded["codewars-ui.kata"] = {
         new = function(_, slug, lang)
-            return {
-                mount = function() table.insert(mounts, { slug = slug, lang = lang }) end,
-            }
+            local k = { slug = slug, lang = lang }
+            k.mount = function()
+                table.insert(mounts, { slug = slug, lang = lang })
+                table.insert(_Cw_state.katas, k)
+                return k
+            end
+            k.unmount = function()
+                table.insert(unmounts, { slug = slug, lang = lang })
+                _Cw_state.katas = vim.tbl_filter(function(x) return x ~= k end, _Cw_state.katas)
+            end
+            return k
         end,
     }
 
@@ -91,10 +103,12 @@ describe("cmd.focus", function()
     before_each(function()
         logged = {}
         mounts = {}
+        unmounts = {}
         trainer_calls = {}
         skip_calls = {}
         random_calls = {}
         trainer_response = { err = nil }
+        _Cw_state.katas = {}
     end)
 
     it("direct args: peeks the trainer and mounts", function()
@@ -171,6 +185,30 @@ describe("cmd.focus", function()
         assert.are.same({ slug = "skipped-to-kata-1", lang = "python" }, mounts[2])
     end)
 
+    it("skip closes the kata it replaces (no lingering tab)", function()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        cmd.focus_skip()
+        assert.are.same({ { slug = "served-kata-1", lang = "python" } }, unmounts)
+        assert.are.equal(1, #_Cw_state.katas) -- only the replacement remains
+        assert.are.equal("skipped-to-kata-1", _Cw_state.katas[1].slug)
+    end)
+
+    it("skip after the kata was closed manually just opens the next", function()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        _Cw_state.katas = {} -- simulate the user :q-ing the kata tab
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts)
+        assert.are.same({ slug = "skipped-to-kata-1", lang = "python" }, mounts[2])
+    end)
+
+    it("failed skip keeps the current kata open", function()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        trainer_response = { err = { msg = "boom" } }
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts) -- never close before the replacement is secured
+        assert.are.equal(1, #_Cw_state.katas)
+    end)
+
     it("skip without a prior focus errors instead of guessing", function()
         -- Fresh module instance: _last_focus must start unset.
         package.loaded["codewars.command"] = nil
@@ -182,12 +220,14 @@ describe("cmd.focus", function()
         assert.truthy(last[2]:match("No focus to skip"))
     end)
 
-    it("skip with a random focus re-rolls client-side", function()
+    it("skip with a random focus re-rolls client-side and closes the old one", function()
         cmd.focus({ _positional = { "python", "random" } })
         cmd.focus_skip()
         assert.are.equal(2, #random_calls)
         assert.are.equal(0, #skip_calls)
         assert.are.same({ slug = "random-kata", lang = "python" }, mounts[2])
+        assert.are.same({ { slug = "random-kata", lang = "python" } }, unmounts)
+        assert.are.equal(1, #_Cw_state.katas)
     end)
 
     it("skip errors are reported, nothing mounts", function()

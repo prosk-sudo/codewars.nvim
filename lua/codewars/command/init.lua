@@ -601,10 +601,13 @@ end
 
 --- Open a random kata from the cached problem list (client-side).
 ---@param lang string
+---@return table? kata the mounted cw.ui.Kata instance (nil when the list is empty)
 local function open_random_kata(lang)
     local item, err = require("codewars.cache.problemlist_utils").random_for_lang(lang)
     if err then return log.warn(err) end
-    require("codewars-ui.kata"):new(item.slug or item.id, lang):mount()
+    local kata = require("codewars-ui.kata"):new(item.slug or item.id, lang)
+    kata:mount()
+    return kata
 end
 
 function cmd.random(options)
@@ -623,9 +626,28 @@ function cmd.random(options)
     open_random_kata(lang)
 end
 
--- Last focus target, so `:CW focus skip` knows which queue to advance.
--- In-memory only: the server owns the focus pointer itself.
-local _last_focus = nil ---@type { lang: string, category: string }?
+-- Last focus target, so `:CW focus skip` knows which queue to advance and
+-- which mounted kata the skip replaces. In-memory only: the server owns the
+-- focus pointer itself.
+local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
+
+--- Close the kata window a skip abandons — its tab must not linger behind
+--- the replacement. Matches the tracked instance, the API-normalized slug,
+--- or the hex id (peek responses are id-only; mount rewrites slug from the
+--- API). Kata:unmount is validity-guarded, so an already-closed kata no-ops.
+---@param prev { lang: string, slug: string?, kata: table? }?
+local function close_skipped_kata(prev)
+    if not prev then return end
+    local katas = (_Cw_state and _Cw_state.katas) or {}
+    for _, k in ipairs(katas) do
+        if k == prev.kata
+            or (prev.slug and k.lang == prev.lang and (k.slug == prev.slug or k.kata_id == prev.slug))
+        then
+            pcall(k.unmount, k)
+            return
+        end
+    end
+end
 
 --- Resolve and open the current kata for a focus category + language.
 --- Random resolves client-side; the other categories peek the server-side
@@ -634,15 +656,22 @@ local _last_focus = nil ---@type { lang: string, category: string }?
 ---@param lang string
 ---@param category string
 local function focus_run(lang, category)
-    _last_focus = { lang = lang, category = category }
+    local lf = { lang = lang, category = category }
+    _last_focus = lf
+
     if category == "random" then
-        return open_random_kata(lang)
+        lf.kata = open_random_kata(lang)
+        lf.slug = lf.kata and lf.kata.slug or nil
+        return
     end
 
     log.info(("Fetching the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").next_kata(category, lang, function(kata, err)
         if err then return log.err(err) end
-        require("codewars-ui.kata"):new(kata.slug, lang):mount()
+        local ui = require("codewars-ui.kata"):new(kata.slug, lang)
+        lf.slug = kata.slug
+        lf.kata = ui
+        ui:mount()
     end)
 end
 
@@ -694,7 +723,9 @@ function cmd.focus(options)
     end)
 end
 
---- :CW focus skip — pop the current focus kata and open the next one.
+--- :CW focus skip — pop the current focus kata, close its window, and open
+--- the next one. The previous kata only closes after the replacement is
+--- secured, so a failed fetch never leaves the user with nothing.
 function cmd.focus_skip()
     local utils = require("codewars.utils")
     utils.auth_guard()
@@ -702,17 +733,25 @@ function cmd.focus_skip()
     if not _last_focus then
         return log.error("No focus to skip — run :CW focus first.")
     end
-    local lang, category = _last_focus.lang, _last_focus.category
+    local prev = _last_focus
+    local lang, category = prev.lang, prev.category
 
     if category == "random" then
         -- Client-side random has no server queue; a skip is just a re-roll.
-        return open_random_kata(lang)
+        focus_run(lang, category)
+        if _last_focus.kata then
+            close_skipped_kata(prev)
+        end
+        return
     end
 
     log.info(("Skipping the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").skip(category, lang, function(kata, err)
         if err then return log.err(err) end
-        require("codewars-ui.kata"):new(kata.slug, lang):mount()
+        close_skipped_kata(prev)
+        local ui = require("codewars-ui.kata"):new(kata.slug, lang)
+        _last_focus = { lang = lang, category = category, slug = kata.slug, kata = ui }
+        ui:mount()
     end)
 end
 
