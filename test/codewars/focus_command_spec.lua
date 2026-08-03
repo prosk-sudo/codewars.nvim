@@ -30,6 +30,13 @@ describe("cmd.focus", function()
             return li
         end,
         parse_slug = function(s) return s end,
+        -- Real kata_tabp answers "does this instance have a live window".
+        -- Registered in _Cw_state.katas is the stub's stand-in for on screen.
+        kata_tabp = function(k)
+            for _, x in ipairs(_Cw_state.katas) do
+                if x == k then return 1 end
+            end
+        end,
     }
 
     -- Kata UI stub mirroring the real lifecycle in lua/codewars-ui/kata.lua:

@@ -163,12 +163,21 @@ end
 local function resolve_head(category, strategy, language, finish)
     local advanced = 0
     -- Read the completed cache once per resolve, not once per iteration.
-    local completed_keys = SERVES_COMPLETED[category] and {} or trainer._completed_keys()
+    -- `or {}` keeps it a table even when the cache is unavailable, so
+    -- _is_completed never falls back to re-reading it per iteration.
+    local completed_keys = {}
+    if not SERVES_COMPLETED[category] then
+        completed_keys = trainer._completed_keys() or {}
+    end
 
     local function peek_head()
         request(category, strategy, language, false, function(kata, err)
             if err then return finish(nil, err) end
 
+            -- The SERVES_COMPLETED check is deliberately repeated here even
+            -- though those categories carry an empty key set. This guards a
+            -- DESTRUCTIVE dequeue, so the reason a category never advances
+            -- belongs at the decision, not implied by an empty table.
             local solved = not SERVES_COMPLETED[category]
                 and trainer._is_completed(kata, completed_keys)
             if not solved then

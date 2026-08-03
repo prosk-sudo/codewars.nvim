@@ -161,9 +161,10 @@ function Runner:handle(mode)
             -- Solving a kata does not move the trainer's queue pointer. If
             -- this kata came from a focus, pop it so the next :CW focus
             -- serves a new one instead of the kata just finished.
-            pcall(function()
+            local focus_ok, focus_err = pcall(function()
                 require("codewars.command").focus_kata_completed(kata)
             end)
+            if not focus_ok then log.debug("focus advance failed: " .. tostring(focus_err)) end
             if kata.console and kata.console.result then
                 kata.console.result:handle({
                     valid = true,
