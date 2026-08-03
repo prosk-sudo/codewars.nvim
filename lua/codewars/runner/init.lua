@@ -158,6 +158,12 @@ function Runner:handle(mode)
                 require("codewars-ui.renderer.menu").refresh_stats()
             end)
             if not ok then log.error("Failed to mark completed: " .. tostring(mark_err)) end
+            -- Solving a kata does not move the trainer's queue pointer. If
+            -- this kata came from a focus, pop it so the next :CW focus
+            -- serves a new one instead of the kata just finished.
+            pcall(function()
+                require("codewars.command").focus_kata_completed(kata)
+            end)
             if kata.console and kata.console.result then
                 kata.console.result:handle({
                     valid = true,

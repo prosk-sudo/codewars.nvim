@@ -9,8 +9,13 @@ local trainer = {}
 --- return HTTP 200 JSON { success, strategy, language, id, name, rank, href }.
 --- `dequeue=false` is an idempotent peek — the server keeps the current
 --- challenge per (strategy, language), so re-running returns the SAME kata.
---- `dequeue=true` pops the queue (the skip mechanism). A changed token or
---- response shape surfaces through the drift error in _parse — never silently.
+--- `dequeue=true` pops the queue. A changed token or response shape surfaces
+--- through the drift error in _parse — never silently.
+---
+--- The queue advances ONLY on dequeue=true. Solving a kata does not move it,
+--- so a solved kata sits at the head forever unless something pops it. Two
+--- things do: cmd.focus_kata_completed (after a finalize) and the completed
+--- self-heal in resolve_head below.
 trainer.STRATEGIES = {
     fundamentals = "reference_workout",
     rank_up = "default",
@@ -20,6 +25,14 @@ trainer.STRATEGIES = {
     -- via problemlist_utils.random_for_lang (eng review decision #7).
     -- (A server-side "random" token also exists if that ever changes.)
 }
+
+--- Categories whose whole point is re-serving kata you already solved.
+--- The completed self-heal must never touch these.
+local SERVES_COMPLETED = { practice_and_repeat = true }
+
+-- Bound on the self-heal loop: a queue of nothing but solved kata must not
+-- turn one :CW focus into unbounded requests.
+local MAX_AUTO_ADVANCE = 3
 
 -- Slug/id charset accepted from the trainer (also what the HTML branch
 -- extracts). The value flows into file paths and the :CW open shell
@@ -69,7 +82,30 @@ function trainer._parse(res)
     }
 end
 
--- One fetch at a time: skip advances the server-side focus queue, so a
+--- Has this kata already been completed? Reads the completed cache, which
+--- also covers kata solved on the website or another machine.
+--- Overridable in tests.
+---@param kata { slug: string, id: string? }
+---@return boolean
+function trainer._is_completed(kata)
+    if not kata then return false end
+    local ok, completed_cache = pcall(require, "codewars.cache.completed")
+    if not ok then return false end
+    local got, items = pcall(completed_cache.get)
+    if not got or type(items) ~= "table" then return false end
+
+    local keys = {}
+    if kata.slug then keys[kata.slug] = true end
+    if kata.id then keys[kata.id] = true end
+    for _, item in ipairs(items) do
+        if (item.slug and keys[item.slug]) or (item.id and keys[item.id]) then
+            return true
+        end
+    end
+    return false
+end
+
+-- One fetch at a time: dequeue advances the server-side focus queue, so a
 -- second in-flight request would double-pop and race the mounts.
 local pending = false
 
@@ -81,100 +117,144 @@ local function peek_endpoint(strategy, language, dequeue)
     return ("/trainer/peek/%s/%s?dequeue=%s"):format(language, strategy, dequeue and "true" or "false")
 end
 
---- Shared response handling: 404 language mapping, parse, drift error.
----@param category string
----@param language string
+--- One trainer request, parsed. Maps 404 to a language-support message.
 ---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
-local function handle_response(category, language, cb, res, err)
-    if err then
-        if not err.auth and err.status == 404 then
-            err = {
-                status = 404,
-                msg = ("No %s kata available for %s — the trainer may not support this language."):format(
-                    category, language
-                ),
-            }
-        end
-        return cb(nil, err)
-    end
+local function request(category, strategy, language, dequeue, cb)
+    api_utils.get(peek_endpoint(strategy, language, dequeue), {
+        -- A pop mutates server state, so the shared 5xx retry default would
+        -- silently skip kata. An idempotent peek keeps it.
+        retry = dequeue and 0 or nil,
+        callback = function(res, err)
+            if err then
+                if not err.auth and err.status == 404 then
+                    err = {
+                        status = 404,
+                        msg = ("No %s kata available for %s — the trainer may not support this language."):format(
+                            category, language
+                        ),
+                    }
+                end
+                return cb(nil, err)
+            end
 
-    local kata, perr = trainer._parse(res)
-    if perr then
-        log.debug(res)
-        return cb(nil, perr)
-    end
-    cb(kata)
+            local kata, perr = trainer._parse(res)
+            if perr then
+                log.debug(res)
+                return cb(nil, perr)
+            end
+            cb(kata)
+        end,
+    })
 end
 
---- Peek the current kata for a focus category + language.
---- Idempotent: the server owns the focus pointer, so re-running returns the
---- same kata until it is solved or skipped (trainer.skip).
+--- Peek the queue head, popping past kata that are already completed.
+--- The queue only advances on dequeue, so without this a kata solved in a
+--- previous session stays at the head forever.
+local function resolve_head(category, strategy, language, finish)
+    local advanced = 0
+
+    local function peek_head()
+        request(category, strategy, language, false, function(kata, err)
+            if err then return finish(nil, err) end
+
+            local stale = not SERVES_COMPLETED[category]
+                and advanced < MAX_AUTO_ADVANCE
+                and trainer._is_completed(kata)
+            if not stale then
+                return finish(kata)
+            end
+
+            advanced = advanced + 1
+            log.debug(("focus: '%s' is already completed, advancing the %s queue"):format(
+                tostring(kata.slug), category))
+            request(category, strategy, language, true, function(_, perr)
+                if perr then return finish(nil, perr) end
+                peek_head()
+            end)
+        end)
+    end
+
+    peek_head()
+end
+
+---@return string? strategy, cw.err? err
+local function strategy_for(category)
+    local strategy = trainer.STRATEGIES[category]
+    if not strategy then
+        return nil, { msg = ("Unknown focus category: %s"):format(tostring(category)) }
+    end
+    return strategy
+end
+
+--- Fetch the current kata for a focus category + language.
+--- Idempotent for an unsolved kata: the server owns the focus pointer, so
+--- re-running returns the same kata until it is solved or skipped.
 ---@param category string plugin-internal key (see picker.focus_categories)
 ---@param language string
 ---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
 function trainer.next_kata(category, language, cb)
-    local strategy = trainer.STRATEGIES[category]
-    if not strategy then
-        return cb(nil, { msg = ("Unknown focus category: %s"):format(tostring(category)) })
-    end
+    local strategy, serr = strategy_for(category)
+    if serr then return cb(nil, serr) end
 
     if pending then
         return cb(nil, { msg = "Already fetching a focus kata..." })
     end
     pending = true
 
-    -- Idempotent peek: the shared 5xx retry default is safe here.
-    api_utils.get(peek_endpoint(strategy, language, false), {
-        callback = function(res, err)
-            pending = false
-            handle_response(category, language, cb, res, err)
-        end,
-    })
+    resolve_head(category, strategy, language, function(kata, err)
+        pending = false
+        cb(kata, err)
+    end)
 end
 
---- Skip the current kata: pop the queue (dequeue=true), then peek the new
---- head and return it. The follow-up peek makes the result deterministic
---- regardless of whether the pop returns the old or the new head.
----@param category string plugin-internal key (see picker.focus_categories)
+--- Skip the current kata: pop the queue, then resolve the new head. The
+--- follow-up peek makes the result deterministic regardless of whether the
+--- pop returns the old or the new head.
+---@param category string
 ---@param language string
 ---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
 function trainer.skip(category, language, cb)
-    local strategy = trainer.STRATEGIES[category]
-    if not strategy then
-        return cb(nil, { msg = ("Unknown focus category: %s"):format(tostring(category)) })
-    end
+    local strategy, serr = strategy_for(category)
+    if serr then return cb(nil, serr) end
 
     if pending then
         return cb(nil, { msg = "Already fetching a focus kata..." })
     end
     pending = true
 
-    api_utils.get(peek_endpoint(strategy, language, true), {
-        -- Non-idempotent: the pop advances the queue, so no retries.
-        retry = 0,
-        callback = function(res, err)
-            if err then
-                pending = false
-                return handle_response(category, language, cb, res, err)
-            end
+    request(category, strategy, language, true, function(_, err)
+        if err then
+            pending = false
+            return cb(nil, err)
+        end
+        resolve_head(category, strategy, language, function(kata, rerr)
+            pending = false
+            cb(kata, rerr)
+        end)
+    end)
+end
 
-            -- Confirm the pop parsed (drift check) before trusting the queue
-            -- state, then fetch the new head.
-            local _, perr = trainer._parse(res)
-            if perr then
-                pending = false
-                log.debug(res)
-                return cb(nil, perr)
-            end
+--- Pop the queue without opening anything. Called after a focus kata is
+--- finalized: completing a kata does not move the server's pointer, so
+--- without this the next :CW focus re-serves the kata you just solved.
+---@param category string
+---@param language string
+---@param cb? fun(err: cw.err?)
+function trainer.advance(category, language, cb)
+    cb = cb or function() end
 
-            api_utils.get(peek_endpoint(strategy, language, false), {
-                callback = function(res2, err2)
-                    pending = false
-                    handle_response(category, language, cb, res2, err2)
-                end,
-            })
-        end,
-    })
+    local strategy, serr = strategy_for(category)
+    if serr then return cb(serr) end
+
+    if pending then
+        return cb({ msg = "Already fetching a focus kata..." })
+    end
+    pending = true
+
+    request(category, strategy, language, true, function(_, err)
+        pending = false
+        cb(err)
+    end)
 end
 
 return trainer

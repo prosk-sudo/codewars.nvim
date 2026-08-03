@@ -31,11 +31,18 @@ describe("api.trainer", function()
 
     local HEX = ("a"):rep(24)
 
+    -- Completed-kata set driving the self-heal, swapped in per test.
+    local completed = {}
+    trainer._is_completed = function(kata)
+        return kata ~= nil and completed[kata.slug] == true
+    end
+
     before_each(function()
         get_calls = {}
         get_responses = {}
         hold = false
         held = {}
+        completed = {}
     end)
 
     describe("_parse", function()
@@ -173,6 +180,110 @@ describe("api.trainer", function()
             local got_err
             trainer.next_kata("rank_up", "python", function(_, err) got_err = err end)
             assert.truthy(got_err.msg:match("unexpected shape"))
+        end)
+    end)
+
+    describe("completed self-heal", function()
+        it("pops a solved kata off the head and serves the next one", function()
+            completed["solved-one"] = true
+            get_responses = {
+                { res = { success = true, slug = "solved-one" } },  -- stale head
+                { res = { success = true, slug = "solved-one" } },  -- the pop
+                { res = { success = true, slug = "fresh-one" } },   -- new head
+            }
+            local got
+            trainer.next_kata("fundamentals", "python", function(kata) got = kata end)
+            assert.are.equal("fresh-one", got.slug)
+            assert.are.equal("/trainer/peek/python/reference_workout?dequeue=true", get_calls[2].endpoint)
+        end)
+
+        it("leaves practice_and_repeat alone (it serves solved kata by design)", function()
+            completed["solved-one"] = true
+            get_responses = { { res = { success = true, slug = "solved-one" } } }
+            local got
+            trainer.next_kata("practice_and_repeat", "python", function(kata) got = kata end)
+            assert.are.equal("solved-one", got.slug)
+            assert.are.equal(1, #get_calls) -- never popped
+        end)
+
+        it("gives up after 3 advances instead of looping forever", function()
+            completed["solved-one"] = true
+            for _ = 1, 12 do
+                table.insert(get_responses, { res = { success = true, slug = "solved-one" } })
+            end
+            local got
+            trainer.next_kata("rank_up", "python", function(kata) got = kata end)
+            assert.are.equal("solved-one", got.slug) -- returns it rather than spinning
+            assert.are.equal(7, #get_calls)          -- peek + 3x(pop, peek)
+        end)
+
+        it("does not pop an unsolved head", function()
+            get_responses = { { res = { success = true, slug = "fresh-one" } } }
+            trainer.next_kata("fundamentals", "python", function() end)
+            assert.are.equal(1, #get_calls)
+        end)
+
+        it("surfaces a pop failure during self-heal", function()
+            completed["solved-one"] = true
+            get_responses = {
+                { res = { success = true, slug = "solved-one" } },
+                { err = { status = 500, msg = "http error 500" } },
+            }
+            local got_err
+            trainer.next_kata("beta", "python", function(_, err) got_err = err end)
+            assert.is_not_nil(got_err)
+        end)
+
+        it("releases the in-flight lock after a self-heal", function()
+            completed["solved-one"] = true
+            get_responses = {
+                { res = { success = true, slug = "solved-one" } },
+                { res = { success = true, slug = "solved-one" } },
+                { res = { success = true, slug = "fresh-one" } },
+                { res = { success = true, slug = "later-one" } },
+            }
+            trainer.next_kata("fundamentals", "python", function() end)
+            local got
+            trainer.next_kata("fundamentals", "python", function(kata) got = kata end)
+            assert.are.equal("later-one", got.slug)
+        end)
+    end)
+
+    describe("advance", function()
+        it("pops the queue once, with no retries and no follow-up peek", function()
+            get_responses = { { res = { success = true, slug = "popped" } } }
+            local got_err = "unset"
+            trainer.advance("fundamentals", "python", function(err) got_err = err end)
+            assert.are.equal(1, #get_calls)
+            assert.are.equal("/trainer/peek/python/reference_workout?dequeue=true", get_calls[1].endpoint)
+            assert.are.equal(0, get_calls[1].retry)
+            assert.is_nil(got_err)
+        end)
+
+        it("reports errors to the caller and frees the lock", function()
+            get_responses = {
+                { err = { status = 401, auth = true, msg = "Session expired" } },
+                { res = { success = true, slug = "fresh-one" } },
+            }
+            local got_err
+            trainer.advance("rank_up", "python", function(err) got_err = err end)
+            assert.is_true(got_err.auth)
+
+            local got
+            trainer.next_kata("rank_up", "python", function(kata) got = kata end)
+            assert.are.equal("fresh-one", got.slug)
+        end)
+
+        it("rejects unknown categories without calling the API", function()
+            local got_err
+            trainer.advance("random", "python", function(err) got_err = err end)
+            assert.truthy(got_err.msg:match("Unknown focus category"))
+            assert.are.equal(0, #get_calls)
+        end)
+
+        it("works without a callback", function()
+            get_responses = { { res = { success = true, slug = "popped" } } }
+            assert.has_no.errors(function() trainer.advance("beta", "python") end)
         end)
     end)
 

@@ -755,6 +755,32 @@ function cmd.focus_skip()
     end)
 end
 
+--- Called by the runner after a kata is finalized. The trainer queue only
+--- moves on a dequeue, so completing a focus kata leaves it at the head and
+--- the next :CW focus would re-serve it. Pop the queue when the finalized
+--- kata is the one this focus served.
+---@param kata table the finalized cw.ui.Kata
+function cmd.focus_kata_completed(kata)
+    local lf = _last_focus
+    if not lf or not kata or lf.category == "random" then return end
+    if lf.lang ~= kata.lang then return end
+
+    local matches = (lf.kata ~= nil and lf.kata == kata)
+        or (lf.slug ~= nil and (lf.slug == kata.slug or lf.slug == kata.kata_id))
+    if not matches then return end
+
+    require("codewars.api.trainer").advance(lf.category, lf.lang, function(err)
+        if err then
+            -- Best effort: the completed self-heal in trainer.next_kata
+            -- catches this kata on the next focus anyway.
+            return log.debug(("focus: could not advance the %s queue: %s"):format(
+                lf.category, tostring(err.msg)))
+        end
+        -- Head consumed; nothing left for a later skip to close.
+        lf.slug, lf.kata = nil, nil
+    end)
+end
+
 function cmd.cache_update()
     local utils = require("codewars.utils")
     utils.auth_guard()

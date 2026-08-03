@@ -57,6 +57,7 @@ describe("cmd.focus", function()
     -- Trainer stub: serves a numbered kata per call so freshness is observable
     local trainer_calls = {}
     local skip_calls = {}
+    local advance_calls = {}
     local trainer_response = { err = nil }
     package.loaded["codewars.api.trainer"] = {
         STRATEGIES = {
@@ -78,6 +79,10 @@ describe("cmd.focus", function()
                 return cb(nil, trainer_response.err)
             end
             cb({ slug = "skipped-to-kata-" .. #skip_calls })
+        end,
+        advance = function(cat, lang, cb)
+            table.insert(advance_calls, { cat = cat, lang = lang })
+            if cb then cb(trainer_response.err) end
         end,
     }
 
@@ -106,6 +111,7 @@ describe("cmd.focus", function()
         unmounts = {}
         trainer_calls = {}
         skip_calls = {}
+        advance_calls = {}
         random_calls = {}
         trainer_response = { err = nil }
         _Cw_state.katas = {}
@@ -238,6 +244,55 @@ describe("cmd.focus", function()
         local last = logged[#logged]
         assert.are.equal("err", last[1])
         assert.are.equal("skip-boom", last[2].msg)
+    end)
+
+    it("finalizing the focus kata advances the queue (solve does not move it)", function()
+        cmd.focus({ _positional = { "python", "fundamentals" } })
+        cmd.focus_kata_completed(_Cw_state.katas[1])
+        assert.are.same({ { cat = "fundamentals", lang = "python" } }, advance_calls)
+    end)
+
+    it("finalizing a kata matched by hex id also advances (peek returns id only)", function()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        -- The mounted kata keeps the served id in kata_id and gets a readable
+        -- slug back from the API, so id matching has to work on its own.
+        cmd.focus_kata_completed({ slug = "readable-name", kata_id = "served-kata-1", lang = "python" })
+        assert.are.same({ { cat = "rank_up", lang = "python" } }, advance_calls)
+    end)
+
+    it("finalizing an unrelated kata does not advance the queue", function()
+        cmd.focus({ _positional = { "python", "fundamentals" } })
+        cmd.focus_kata_completed({ slug = "some-other-kata", lang = "python" })
+        assert.are.equal(0, #advance_calls)
+    end)
+
+    it("finalizing in a different language does not advance the queue", function()
+        cmd.focus({ _positional = { "python", "fundamentals" } })
+        cmd.focus_kata_completed({ slug = "served-kata-1", lang = "go" })
+        assert.are.equal(0, #advance_calls)
+    end)
+
+    it("a random focus has no server queue to advance", function()
+        cmd.focus({ _positional = { "python", "random" } })
+        cmd.focus_kata_completed(_Cw_state.katas[1])
+        assert.are.equal(0, #advance_calls)
+    end)
+
+    it("a failed advance is swallowed (self-heal covers it next focus)", function()
+        cmd.focus({ _positional = { "python", "beta" } })
+        trainer_response = { err = { msg = "advance-boom" } }
+        assert.has_no.errors(function()
+            cmd.focus_kata_completed(_Cw_state.katas[1])
+        end)
+        assert.are.equal(1, #advance_calls)
+    end)
+
+    it("skip after a completed advance does not close an already-consumed kata", function()
+        cmd.focus({ _positional = { "python", "fundamentals" } })
+        cmd.focus_kata_completed(_Cw_state.katas[1])
+        cmd.focus_skip()
+        assert.are.equal(0, #unmounts) -- the solved kata stays open for review
+        assert.are.same({ slug = "skipped-to-kata-1", lang = "python" }, mounts[2])
     end)
 
     it(":CW exec routes 'focus skip' to cmd.focus_skip", function()
