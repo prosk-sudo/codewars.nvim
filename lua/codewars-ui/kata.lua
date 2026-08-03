@@ -58,6 +58,14 @@ function Kata:create_buffer()
     ui_utils.win_set_buf(self.winid, self.bufnr, true)
 end
 
+--- Give up on this mount: no window will ever exist, so drop the one-shot
+--- continuation. Leaving it set matters — the callback captures the kata it
+--- was going to replace, and this instance is held by the focus layer for
+--- the rest of the session, so an unfired hook pins that whole object.
+function Kata:_abandon_mount()
+    self._on_mounted = nil
+end
+
 function Kata:mount()
     log.info(("Loading kata %s..."):format(self.slug))
 
@@ -69,6 +77,7 @@ function Kata:mount()
             else
                 log.err(err)
             end
+            self:_abandon_mount()
             return
         end
 
@@ -79,6 +88,7 @@ function Kata:mount()
         local tabp = utils.detect_duplicate_kata(self.slug, self.lang)
         if tabp then
             pcall(vim.api.nvim_set_current_tabpage, tabp)
+            self:_abandon_mount()
             return
         end
 
@@ -105,6 +115,7 @@ function Kata:mount()
             if self._lang_explicit then
                 log.error(("Language '%s' is not available for this kata. Available: %s"):format(
                     self.lang, table.concat(kata_data.languages, ", ")))
+                self:_abandon_mount()
                 return
             end
             local fallback = kata_data.languages[1]
@@ -121,6 +132,7 @@ function Kata:mount()
                 if train_err.auth then
                     session_cache.delete(self.slug, self.lang)
                 end
+                self:_abandon_mount()
                 return log.err(train_err)
             end
 
@@ -210,6 +222,20 @@ function Kata:handle_mount()
     table.insert(_Cw_state.katas, self)
 
     self:autocmds()
+
+    -- Optional one-shot callback for callers that must act only once this
+    -- kata is really on screen. mount() is async and can bail early (404,
+    -- auth failure, or a jump to an already-open duplicate tab), so
+    -- "mount() returned" is NOT the same as "a window exists". :CW focus
+    -- skip relies on this to close the kata it replaces only after the
+    -- replacement is visible.
+    if self._on_mounted then
+        local on_mounted = self._on_mounted
+        self._on_mounted = nil
+        local ok, err = pcall(on_mounted, self)
+        if not ok then log.debug("kata on_mounted hook failed: " .. tostring(err)) end
+    end
+
     utils.exec_hooks("kata_enter", self)
 end
 

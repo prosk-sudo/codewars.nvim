@@ -4,7 +4,18 @@ All notable changes to codewars.nvim are documented here.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-03
+
+### Added
+- `:CW focus skip` — skip the kata Today's Focus is currently serving and open the next one. Use it when a kata is not what you want right now; it advances the trainer queue the same way the website does, and the skipped kata's tab closes once the replacement is on screen.
+
+### Changed
+- Re-running `:CW focus` now returns the **same** kata until you solve or skip it. Previously every invocation advanced the trainer queue, so quitting a kata and re-opening Today's Focus silently burned the one you were looking at and served a different one. The queue now advances only when you finish a kata or explicitly skip it.
+
 ### Fixed
+- Finishing a focus kata now advances the trainer queue, so the next `:CW focus` serves something new. Completing a kata does not move the server's pointer by itself, so the kata you just solved was served again — even after restarting Neovim, because the state lives on Codewars' side. If a queue is already stuck on a solved kata, the next `:CW focus` clears it automatically.
+- Today's Focus no longer treats a kata solved in one language as solved in another. Completion on Codewars is per-language, so a kata finished in Python could be silently skipped out of your JavaScript queue without ever being attempted in JavaScript.
+- Opening a second kata while one is already open no longer fails with `E95: Buffer with this name already exists`. Every test-case panel was named the same thing, and the error aborted the rest of the kata's setup, leaving it without its console or keymaps.
 - Raw HTML embedded in a kata or kumite description now renders instead of showing as literal markup. Codewars descriptions are markdown with HTML mixed in — authors use `<blockquote>` for hints, `<br>` for spacing, `<b>`/`<i>` for emphasis, `<center><img>` for diagrams — and the panel renders as markdown, so those tags appeared verbatim. They are now translated to their markdown equivalents. The translation is an allowlist, never a tag stripper: descriptions are full of generic type parameters that look like tags (`List<string>`, `Dictionary<int, string>`), and anything not on the list is left exactly as written. Fenced blocks, inline code and `<pre>` blocks are held aside so a kata whose sample code contains real HTML keeps it.
 
 ## [0.3.0] - 2026-07-25

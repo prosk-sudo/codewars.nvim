@@ -92,6 +92,68 @@ describe("Runner", function()
             vim.defer_fn = real_defer
             Runner.running = false
         end)
+
+        -- The trainer queue only advances on a dequeue, so finalizing has to
+        -- tell the focus layer. Without this the next :CW focus re-serves the
+        -- kata just solved.
+        --- Stub every module the finalize path fans out to, plus the focus
+        --- hook under test. Returns a restore function.
+        local function stub_finalize_deps(focus_kata_completed)
+            package.loaded["codewars.api.utils"] = {
+                post = function(_, opts) opts.callback({}, nil) end,
+            }
+            package.loaded["codewars.api.urls"] = { finalize = "/x/%s/%s", base = "" }
+            package.loaded["codewars.cache.completed"] = { mark = function() end }
+            package.loaded["codewars.picker"] = { invalidate_completed_cache = function() end }
+            package.loaded["codewars-ui.renderer.menu"] = { refresh_stats = function() end }
+            package.loaded["codewars.api.solutions"] = { fetch = function() end }
+            local saved_command = package.loaded["codewars.command"]
+            package.loaded["codewars.command"] = { focus_kata_completed = focus_kata_completed }
+            local real_defer = vim.defer_fn
+            vim.defer_fn = function(fn) fn() end
+            Runner.running = false
+
+            return function()
+                vim.defer_fn = real_defer
+                package.loaded["codewars.command"] = saved_command
+                Runner.running = false
+            end
+        end
+
+        it("tells the focus layer the kata was finalized", function()
+            local completed_with
+            local restore = stub_finalize_deps(function(k) completed_with = k end)
+
+            local kata = submit_kata(-7)
+            Runner:init(kata):handle("submit")
+            assert.are.equal(kata, completed_with)
+
+            restore()
+        end)
+
+        it("still finalizes when the focus hook throws, and says so at debug level", function()
+            local logger = package.loaded["codewars.logger"]
+            local real_debug = logger.debug
+            local debugs = {}
+            logger.debug = function(m) table.insert(debugs, tostring(m)) end
+
+            local restore = stub_finalize_deps(function() error("focus blew up") end)
+
+            local kata = submit_kata(-7)
+            assert.has_no.errors(function()
+                Runner:init(kata):handle("submit")
+            end)
+            assert.is_true(kata.finalized)
+
+            local logged = false
+            for _, m in ipairs(debugs) do
+                if m:match("focus advance failed") then logged = true end
+            end
+            assert.is_true(logged)
+
+            logger.debug = real_debug
+            restore()
+        end)
     end)
 
     describe("attempt registration honesty", function()

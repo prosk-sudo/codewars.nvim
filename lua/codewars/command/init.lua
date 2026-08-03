@@ -36,7 +36,8 @@ function cmd.help()
         { "TRAINING",       "" },
         { "train <slug> [lang]", "Open a kata by slug or URL" },
         { "random [lang]",  "Open a random kata" },
-        { "focus [lang] [category]", "Choose Today's Focus (re-run for the next kata)" },
+        { "focus [lang] [category]", "Choose Today's Focus (re-run returns the same kata)" },
+        { "focus skip", "Skip the current focus kata and open the next" },
         { "test",           "Quick test with example fixtures" },
         { "attempt",        "Full attempt with all tests" },
         { "submit",         "Finalize solution (after passing attempt)" },
@@ -600,10 +601,15 @@ end
 
 --- Open a random kata from the cached problem list (client-side).
 ---@param lang string
-local function open_random_kata(lang)
+---@param on_mounted? fun() runs once the kata is actually on screen
+---@return table? kata the mounted cw.ui.Kata instance (nil when the list is empty)
+local function open_random_kata(lang, on_mounted)
     local item, err = require("codewars.cache.problemlist_utils").random_for_lang(lang)
     if err then return log.warn(err) end
-    require("codewars-ui.kata"):new(item.slug or item.id, lang):mount()
+    local kata = require("codewars-ui.kata"):new(item.slug or item.id, lang)
+    kata._on_mounted = on_mounted
+    kata:mount()
+    return kata
 end
 
 function cmd.random(options)
@@ -622,21 +628,92 @@ function cmd.random(options)
     open_random_kata(lang)
 end
 
---- Resolve and open a kata for a focus category + language.
---- Random resolves client-side; the other categories hit the trainer
---- endpoint. Every invocation fetches a fresh kata — same behavior as
---- clicking a focus on codewars.com repeatedly.
+-- Last focus target, so `:CW focus skip` knows which queue to advance and
+-- which mounted kata the skip replaces. In-memory only: the server owns the
+-- focus pointer itself.
+local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
+
+-- One focus fetch at a time, enforced HERE and not just in the api layer.
+-- The api mutex rejects the second request, but by then the old code had
+-- already overwritten _last_focus — so a later `:CW focus skip` would
+-- advance the queue of a focus that never actually loaded, and a dequeue
+-- cannot be undone. Serializing at the command layer means _last_focus is
+-- only ever written for a fetch that succeeded.
+local _focus_inflight = false
+
+-- Categories resolved entirely client-side, with no server queue behind
+-- them. One source of truth for every place that has to treat them
+-- differently: resolving, skipping, validating, and advancing on complete.
+local LOCAL_CATEGORIES = { random = true }
+
+--- Close the kata window a skip abandons.
+---
+--- IDENTITY ONLY, deliberately. Matching by slug would also match a window
+--- the user opened themselves (`:CW train <same-slug>`), and Kata:unmount
+--- force-closes the window, which force-deletes the buffer and discards
+--- unsaved solution code with no prompt. When that exact instance has no
+--- live window — Kata:mount early-returned to a duplicate tab, or the
+--- mount is still in flight — nothing is closed. A lingering tab is the
+--- safe failure; eating someone's unsaved solution is not.
+---@param prev { kata: table? }?
+local function close_skipped_kata(prev)
+    if not prev or not prev.kata then return end
+    -- kata_tabp is the winid-validity primitive underneath curr_kata and
+    -- detect_duplicate_kata (they reach it through kata_tabs, which filters
+    -- to registered instances first). Here the instance is already known, so
+    -- the liveness check alone is what matters.
+    if not require("codewars.utils").kata_tabp(prev.kata) then return end
+    pcall(prev.kata.unmount, prev.kata)
+end
+
+--- Mount the kata a focus served and record it on the given focus record.
+--- Callers pass the record rather than assigning `_last_focus` here: a
+--- focus_run callback must only update its OWN record, so a newer focus
+--- issued while it was in flight is not clobbered.
+---@param target table the focus record to fill in
+---@param lang string
+---@param kata { slug: string }
+---@param on_mounted? fun()
+local function mount_focus_kata(target, lang, kata, on_mounted)
+    local ui = require("codewars-ui.kata"):new(kata.slug, lang)
+    target.slug = kata.slug
+    target.kata = ui
+    ui._on_mounted = on_mounted
+    ui:mount()
+end
+
+--- Resolve and open the current kata for a focus category + language.
+--- Random resolves client-side; the other categories peek the server-side
+--- trainer queue (idempotent — re-running returns the same kata until it is
+--- solved or skipped via :CW focus skip).
 ---@param lang string
 ---@param category string
-local function focus_run(lang, category)
-    if category == "random" then
-        return open_random_kata(lang)
+---@param on_mounted? fun() runs once the served kata is actually on screen
+local function focus_run(lang, category, on_mounted)
+    if LOCAL_CATEGORIES[category] then
+        -- No server queue behind this one, so a stale record here can never
+        -- cause a dequeue; resolve it directly.
+        local kata = open_random_kata(lang, on_mounted)
+        if kata then
+            _last_focus = { lang = lang, category = category, slug = kata.slug, kata = kata }
+        end
+        return
     end
 
-    log.info(("Fetching next '%s' kata for %s..."):format(category, lang))
+    if _focus_inflight then
+        return log.warn("Already fetching a focus kata — try again in a moment.")
+    end
+    _focus_inflight = true
+
+    log.info(("Fetching the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").next_kata(category, lang, function(kata, err)
+        _focus_inflight = false
         if err then return log.err(err) end
-        require("codewars-ui.kata"):new(kata.slug, lang):mount()
+        -- Only now is this the current focus. Recording it earlier is what
+        -- let a rejected second request point a later skip at the wrong queue.
+        local lf = { lang = lang, category = category }
+        _last_focus = lf
+        mount_focus_kata(lf, lang, kata, on_mounted)
     end)
 end
 
@@ -656,7 +733,7 @@ local function focus_args(options)
     end
 
     local trainer = require("codewars.api.trainer")
-    if cat_arg ~= "random" and not trainer.STRATEGIES[cat_arg] then
+    if not LOCAL_CATEGORIES[cat_arg] and not trainer.STRATEGIES[cat_arg] then
         log.error(("Unknown focus category: %s (fundamentals|rank_up|practice_and_repeat|beta|random)"):format(cat_arg))
         return nil, nil
     end
@@ -665,7 +742,8 @@ local function focus_args(options)
 end
 
 --- :CW focus [lang] [category] — Choose Today's Focus.
---- Re-running the same focus serves the next kata, like the website.
+--- Re-running the same focus returns the same kata (server-side pointer);
+--- `:CW focus skip` advances to the next one.
 function cmd.focus(options)
     local utils = require("codewars.utils")
     utils.auth_guard()
@@ -684,6 +762,75 @@ function cmd.focus(options)
         picker.focus_category(function(picked_cat)
             focus_run(picked_lang, picked_cat)
         end)
+    end)
+end
+
+--- :CW focus skip — pop the current focus kata, open the next one, and close
+--- the one it replaces.
+---
+--- The old kata closes only once the replacement is ON SCREEN, not merely
+--- once the trainer fetch returned: Kata:mount is itself async and can fail
+--- (404 on a stale id, expired cookie), and closing on fetch-success alone
+--- would leave the user with nothing open.
+function cmd.focus_skip()
+    local utils = require("codewars.utils")
+    utils.auth_guard()
+
+    if not _last_focus then
+        return log.error("No focus to skip — run :CW focus first.")
+    end
+    local prev = _last_focus
+    local lang, category = prev.lang, prev.category
+    local function close_prev() close_skipped_kata(prev) end
+
+    if LOCAL_CATEGORIES[category] then
+        -- Client-side random has no server queue; a skip is just a re-roll.
+        -- If the re-roll lands on the same kata, mount jumps to the open tab
+        -- and never fires on_mounted, so nothing is closed. Correct.
+        return focus_run(lang, category, close_prev)
+    end
+
+    if _focus_inflight then
+        return log.warn("Already fetching a focus kata — try again in a moment.")
+    end
+    _focus_inflight = true
+
+    log.info(("Skipping the current '%s' kata for %s..."):format(category, lang))
+    require("codewars.api.trainer").skip(category, lang, function(kata, err)
+        _focus_inflight = false
+        if err then return log.err(err) end
+        local lf = { lang = lang, category = category }
+        _last_focus = lf
+        mount_focus_kata(lf, lang, kata, close_prev)
+    end)
+end
+
+--- Called by the runner after a kata is finalized. The trainer queue only
+--- moves on a dequeue, so completing a focus kata leaves it at the head and
+--- the next :CW focus would re-serve it. Pop the queue when the finalized
+--- kata is the one this focus served.
+---@param kata table the finalized cw.ui.Kata
+function cmd.focus_kata_completed(kata)
+    local lf = _last_focus
+    if not lf or not kata or LOCAL_CATEGORIES[lf.category] then return end
+    if lf.lang ~= kata.lang then return end
+
+    local matches = (lf.kata ~= nil and lf.kata == kata)
+        or (lf.slug ~= nil and (lf.slug == kata.slug or lf.slug == kata.kata_id))
+    if not matches then return end
+
+    -- Pass what we believe the head is: advance re-checks before popping, so
+    -- a queue that moved while this kata was open is left alone.
+    local expected = { slug = lf.slug, id = kata.kata_id }
+    require("codewars.api.trainer").advance(lf.category, lf.lang, expected, function(err)
+        if err then
+            -- Best effort: the completed self-heal in trainer.next_kata
+            -- catches this kata on the next focus anyway.
+            return log.debug(("focus: could not advance the %s queue: %s"):format(
+                lf.category, tostring(err.msg)))
+        end
+        -- Head consumed; nothing left for a later skip to close.
+        lf.slug, lf.kata = nil, nil
     end)
 end
 
@@ -1022,6 +1169,7 @@ cmd.commands = {
     },
     focus = {
         cmd.focus,
+        skip = { cmd.focus_skip },
         _positional_complete = { lang_slugs, focus_category_keys },
     },
     test = { cmd.test },

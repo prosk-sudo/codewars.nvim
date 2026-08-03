@@ -73,7 +73,12 @@ function TestcaseSplit:populate(fixture)
     local lines = vim.split(self.original_fixture, "\n")
     vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, false, lines)
 
-    vim.api.nvim_buf_set_name(self.bufnr, "Test Cases")
+    -- Buffer names are global to the nvim session: a fixed name raises E95 as
+    -- soon as a second kata mounts while the first is still open (e.g.
+    -- :CW focus skip), and the error aborts the rest of the mount. Name per
+    -- kata and never let the cosmetic rename break the mount (same pattern
+    -- as kumite.lua and kata_editor.lua).
+    pcall(vim.api.nvim_buf_set_name, self.bufnr, ("Test Cases · %s"):format(self.kata.slug or "kata"))
 end
 
 function TestcaseSplit:content()
