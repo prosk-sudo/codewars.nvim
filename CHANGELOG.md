@@ -2,6 +2,11 @@
 
 All notable changes to codewars.nvim are documented here.
 
+## [Unreleased]
+
+### Fixed
+- Raw HTML embedded in a kata or kumite description now renders instead of showing as literal markup. Codewars descriptions are markdown with HTML mixed in — authors use `<blockquote>` for hints, `<br>` for spacing, `<b>`/`<i>` for emphasis, `<center><img>` for diagrams — and the panel renders as markdown, so those tags appeared verbatim. They are now translated to their markdown equivalents. The translation is an allowlist, never a tag stripper: descriptions are full of generic type parameters that look like tags (`List<string>`, `Dictionary<int, string>`), and anything not on the list is left exactly as written. Fenced blocks, inline code and `<pre>` blocks are held aside so a kata whose sample code contains real HTML keeps it.
+
 ## [0.3.0] - 2026-07-25
 
 ### Added
