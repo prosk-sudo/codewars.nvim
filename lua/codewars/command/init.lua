@@ -387,7 +387,10 @@ function cmd.kumite_new(options)
                 title = title ~= "" and title or "Untitled kumite",
                 description = "",
                 language = lang,
-                code = "",
+                code = require("codewars.templates").render(lang, {
+                    lang = lang,
+                    starter = "",
+                }),
                 fixture = require("codewars.languages.fixtures").get(lang),
                 ["package"] = "",
                 test_framework = kumite_api.default_framework(lang),

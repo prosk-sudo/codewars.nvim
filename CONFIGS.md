@@ -37,6 +37,91 @@ storage = {
 | `storage.home` | `~/.local/share/nvim/codewars` | Directory for kata solution files. |
 | `storage.cache` | `~/.cache/nvim/codewars` | Directory for cookies, session cache, problem list cache, persisted language. |
 
+## Templates
+
+Starter code for solution buffers, per language. Optional — with no `templates`
+table you get exactly what Codewars seeds, unchanged.
+
+```lua
+templates = {
+    solution = {
+        -- {{starter}} is replaced with the code Codewars seeds for the kata:
+        -- the function signature it grades against.
+        python = [[
+from collections import Counter, defaultdict, deque
+from functools import cache
+import math
+
+{{starter}}
+]],
+    },
+},
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `templates.solution` | `table<string, string\|function>` | `{}` | Keyed by language slug. Each value is the template text, or a function returning it. |
+
+### Wrapping vs replacing
+
+A template containing `{{starter}}` **wraps** Codewars' starter code. A template
+without it **replaces** the buffer entirely — you are then responsible for
+writing the graded signature yourself, and the plugin warns once per language
+per session so it cannot happen silently.
+
+### Function form
+
+Use a function when the template depends on the kata:
+
+```lua
+templates = {
+    solution = {
+        rust = function(ctx)
+            return ("// %s\n\n%s"):format(ctx.name or ctx.slug, ctx.starter)
+        end,
+    },
+},
+```
+
+`ctx` carries `lang`, `ext`, `slug`, `name`, `rank`, `tags`, and `starter`.
+Fields other than `lang` and `starter` may be `nil` — a brand-new kumite has no
+kata title or rank. Return `nil` or `""` to decline and fall back to Codewars'
+starter, which makes per-kata opt-outs easy:
+
+```lua
+python = function(ctx)
+    if ctx.rank and ctx.rank > -5 then
+        return nil -- leave hard kata alone
+    end
+    return "import math\n\n{{starter}}"
+end,
+```
+
+To keep templates as real source files with working highlighting and LSP, read
+them from disk:
+
+```lua
+python = function(ctx)
+    local lines = vim.fn.readfile(vim.fn.expand("~/.config/nvim/codewars/solution.py"))
+    return (table.concat(lines, "\n"):gsub("{{starter}}", function()
+        return ctx.starter
+    end))
+end,
+```
+
+A template that errors is reported and skipped, never fatal — a broken template
+cannot stop a kata from opening.
+
+### Where templates apply
+
+`:CW train`, `:CW reset`, switching a kata's language, and new kumites
+(`:CW kumite new`, and adding a language in the kata editor). Existing solution
+files on disk are never rewritten, so adding a template does not disturb work in
+progress; use `:CW reset` to pull it into a kata you already started. When you
+open a kata whose file already exists and a template is configured for that
+language, the plugin says so, so a skipped template never looks like a broken
+one.
+
 ## Cache
 
 ```lua

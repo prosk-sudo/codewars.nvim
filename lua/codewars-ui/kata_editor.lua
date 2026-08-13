@@ -182,7 +182,10 @@ function KataEditor:switch_language(lang)
         languages[lang] = {
             id = "",
             name = lang,
-            answer = "",
+            answer = require("codewars.templates").render(lang, {
+                lang = lang,
+                starter = "",
+            }),
             setup = "",
             fixture = require("codewars.languages.fixtures").get(lang) or "",
             example_fixture = "",

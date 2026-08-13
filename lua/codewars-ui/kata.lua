@@ -30,6 +30,22 @@ local session_cache = require("codewars.cache.session")
 local Kata = {}
 Kata.__index = Kata
 
+--- Starter text for this kata's solution buffer: the user's template for the
+--- language if they configured one, else the code Codewars seeded. Every site
+--- that writes starter text goes through here, so `:CW reset` can never
+--- disagree with what the file was first created with.
+---@return string
+function Kata:_starter_code()
+    return require("codewars.templates").render(self.lang, {
+        lang = self.lang,
+        slug = self.slug,
+        name = self.name,
+        rank = self.rank,
+        tags = self.tags,
+        starter = self.setup_code or "",
+    })
+end
+
 ---@return string path, boolean existed
 function Kata:path()
     local lang = utils.get_lang(self.lang)
@@ -40,7 +56,12 @@ function Kata:path()
     local existed = self.file:exists()
 
     if not existed then
-        self.file:write(self.setup_code or "", "w")
+        self.file:write(self:_starter_code(), "w")
+    elseif require("codewars.templates").has_template(self.lang) then
+        -- Seeding is guarded so it can never overwrite work in progress, which
+        -- means a configured template silently does nothing on a kata you have
+        -- opened before. Say so, rather than letting it read as a broken feature.
+        log.info(("%s already exists — :CW reset to apply your %s template."):format(fn, self.lang))
     end
 
     return self.file:absolute(), existed
@@ -285,7 +306,7 @@ end
 
 function Kata:reset_code()
     if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
-        local lines = vim.split(self.setup_code or "", "\n")
+        local lines = vim.split(self:_starter_code(), "\n")
         vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, false, lines)
         log.info("Code reset to template")
     end
@@ -331,7 +352,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 self.file = config.storage.home:joinpath(fn)
 
                 if not self.file:exists() then
-                    self.file:write(self.setup_code, "w")
+                    self.file:write(self:_starter_code(), "w")
                 end
 
                 local path = self.file:absolute()
