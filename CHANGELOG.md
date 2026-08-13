@@ -4,6 +4,15 @@ All notable changes to codewars.nvim are documented here.
 
 ## [Unreleased]
 
+### Added
+- Custom solution templates. Set `templates.solution.<language>` to a string or
+  a function and every new solution buffer starts from it — your imports, your
+  helpers, your header. `{{starter}}` is replaced with the code Codewars seeds
+  for the kata, so you wrap its graded signature rather than losing it; a
+  template without the token replaces the buffer outright and warns once per
+  language. Applies to `:CW train`, `:CW reset`, language switching, and new
+  kumites. See CONFIGS.md.
+
 ## [0.3.1] - 2026-08-03
 
 ### Added

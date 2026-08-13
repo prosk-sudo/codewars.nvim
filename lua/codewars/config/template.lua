@@ -50,6 +50,19 @@
 
 ---@alias cw.picker { provider?: "telescope" }
 
+---@class cw.TemplateCtx
+---@field lang string language slug
+---@field ext string? file extension, nil for languages outside config.langs
+---@field slug string? kata slug
+---@field name string? kata title
+---@field rank integer? kyu as a negative integer
+---@field tags string[]?
+---@field starter string code Codewars seeds for this kata ("" when none)
+
+---@alias cw.TemplateSpec string|fun(ctx: cw.TemplateCtx): string?
+
+---@alias cw.templates { solution: table<string, cw.TemplateSpec> }
+
 ---@class cw.UserConfig
 local M = {
     ---@type string
@@ -100,6 +113,17 @@ local M = {
 
     ---@type cw.picker
     picker = {},
+
+    ---@type cw.templates
+    --- Starter code for solution buffers, keyed by language slug. Each value is
+    --- a string or a function returning one. `{{starter}}` is replaced with the
+    --- code Codewars seeds for the kata; a template without it replaces that
+    --- code entirely. Example:
+    ---   templates = { solution = { python = "import math\n\n{{starter}}" } }
+    templates = {
+        ---@type table<string, cw.TemplateSpec>
+        solution = {},
+    },
 
     hooks = {
         ---@type fun()[]

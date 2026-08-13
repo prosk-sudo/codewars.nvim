@@ -18,6 +18,10 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
   Neovim: solution, initial solution, tests, example tests, description,
   metadata, language and runtime, then publish.
 
+- **Your own starter code** — per-language templates so every kata opens with
+  the imports and scaffolding you actually use, wrapped around the signature
+  Codewars grades. See [CONFIGS.md](CONFIGS.md#templates).
+
 ## Requirements
 
 - Neovim >= 0.9.0
