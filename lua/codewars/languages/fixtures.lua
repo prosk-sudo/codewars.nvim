@@ -1,7 +1,9 @@
 --- Starter test fixtures per language, matching what codewars.com seeds when
 --- you create a new kumite. Prefilled into the fixture split by `:CW kumite
 --- new` so the panel starts from a working skeleton, not an empty buffer.
---- Keyed by the plugin's language slugs (see codewars.config.langs).
+--- Keyed by Codewars language slug. Deliberately spans every language the
+--- kata/kumite editor offers (see codewars.languages.filetypes), which is
+--- wider than the training subset in codewars.config.langs.
 local M = {}
 
 M.templates = {
@@ -338,6 +340,10 @@ test_that("example", {
 })
 ]==],
 
+    -- Intentionally empty: codewars.com seeds no example fixture for Nim.
+    -- This is data, not a gap — do not invent one. (Its runner both writes
+    -- an importable `solution` module and pre-imports it, so a hand-written
+    -- Nim fixture needs neither `import solution` nor `import unittest`.)
     nim = "",
 
     crystal = [==[
