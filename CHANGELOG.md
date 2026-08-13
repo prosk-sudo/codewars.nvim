@@ -10,8 +10,20 @@ All notable changes to codewars.nvim are documented here.
   helpers, your header. `{{starter}}` is replaced with the code Codewars seeds
   for the kata, so you wrap its graded signature rather than losing it; a
   template without the token replaces the buffer outright and warns once per
-  language. Applies to `:CW train`, `:CW reset`, language switching, and new
-  kumites. See CONFIGS.md.
+  language. An indented token indents every line of the starter to match, so
+  `{{starter}}` inside a function body produces code that compiles. Applies to
+  `:CW train`, `:CW reset`, language switching, and new kumites. See CONFIGS.md.
+- New solution buffers open with the cursor on the last line instead of the
+  first. With a template the top of the file is your own boilerplate; the code
+  you came to write is at the bottom. A restore-last-position autocmd, if you
+  have one, still wins.
+- `:CW template on|off` — a global, persisted switch for solution templates,
+  plus `:CW template` to report the current state. Turning them off also
+  unwraps the kata you have open, and turning them back on re-wraps it, so the
+  buffer never disagrees with the setting. The buffer rewrite only proceeds
+  when it matches the template exactly; once you have edited the template's own
+  lines it says so and changes nothing, rather than guessing which lines to
+  delete. Each rewrite is one undo entry.
 
 ## [0.3.1] - 2026-08-03
 

@@ -36,14 +36,62 @@ Kata.__index = Kata
 --- disagree with what the file was first created with.
 ---@return string
 function Kata:_starter_code()
-    return require("codewars.templates").render(self.lang, {
+    return require("codewars.templates").render(self.lang, self:_template_ctx())
+end
+
+--- Kata metadata a template function can branch on.
+---@return table
+function Kata:_template_ctx()
+    return {
         lang = self.lang,
         slug = self.slug,
         name = self.name,
         rank = self.rank,
         tags = self.tags,
         starter = self.setup_code or "",
-    })
+    }
+end
+
+---@return string
+function Kata:_buffer_text()
+    return table.concat(vim.api.nvim_buf_get_lines(self.bufnr, 0, -1, false), "\n")
+end
+
+--- Replace the solution buffer's contents.
+---
+--- Deliberately not ui_utils.buf_set_lines: that one leaves the buffer
+--- unmodifiable, which is right for the read-only panels it was written for and
+--- wrong for the buffer the user is about to type in.
+---@param text string
+function Kata:_set_code(text)
+    vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, false, vim.split(text, "\n"))
+end
+
+--- Rewrite the open buffer through one of the template operations.
+---
+--- A single set_lines call, so the whole rewrite is one undo entry: `u` puts
+--- the buffer back however it goes. Both operations refuse rather than guess
+--- when the buffer no longer matches the template, and the reason is worth
+--- surfacing — "nothing happened" on its own reads as a broken command.
+---@param op "wrap"|"strip"
+---@return boolean changed
+function Kata:retemplate(op)
+    if not (self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr)) then
+        return false
+    end
+
+    assert(op == "wrap" or op == "strip", "unknown template op: " .. tostring(op))
+    local templates = require("codewars.templates")
+    local apply = op == "wrap" and templates.wrap or templates.strip
+
+    local text, reason = apply(self.lang, self:_buffer_text(), self:_template_ctx())
+    if not text then
+        log.info(reason)
+        return false
+    end
+
+    self:_set_code(text)
+    return true
 end
 
 ---@return string path, boolean existed
@@ -55,9 +103,10 @@ function Kata:path()
     self.file = config.storage.home:joinpath(fn)
     local existed = self.file:exists()
 
+    local templates = require("codewars.templates")
     if not existed then
         self.file:write(self:_starter_code(), "w")
-    elseif require("codewars.templates").has_template(self.lang) then
+    elseif templates.is_enabled() and templates.is_configured(self.lang) then
         -- Seeding is guarded so it can never overwrite work in progress, which
         -- means a configured template silently does nothing on a kata you have
         -- opened before. Say so, rather than letting it read as a broken feature.
@@ -77,6 +126,36 @@ function Kata:create_buffer()
 
     ui_utils.buf_set_opts(self.bufnr, { buflisted = true })
     ui_utils.win_set_buf(self.winid, self.bufnr, true)
+
+    self:_cursor_to_end()
+end
+
+--- Put the cursor at the end of the solution buffer.
+---
+--- The top of a templated buffer is the user's own boilerplate — imports and
+--- helpers they already wrote. The code they opened the kata to write is at the
+--- bottom, so landing on line 1 means scrolling past their own preamble every
+--- time.
+---
+--- Skipped unless the cursor is still on line 1. `$tabe` fires BufReadPost, so
+--- a restore-last-position autocmd (LazyVim and friends ship one) has already
+--- run by now; line 1 means nothing claimed a position, or there was none to
+--- restore. Moving anyway would fight the user's own config.
+function Kata:_cursor_to_end()
+    if not (self.winid and vim.api.nvim_win_is_valid(self.winid)) then
+        return
+    end
+
+    -- The buffer's untouched position is {1, 0}. Testing the row alone would
+    -- override a restore to {1, 12}, which is every bit as much a claim.
+    local ok, pos = pcall(vim.api.nvim_win_get_cursor, self.winid)
+    if not ok or pos[1] ~= 1 or pos[2] ~= 0 then
+        return
+    end
+
+    local last = vim.api.nvim_buf_line_count(self.bufnr)
+    local text = vim.api.nvim_buf_get_lines(self.bufnr, last - 1, last, false)[1] or ""
+    pcall(vim.api.nvim_win_set_cursor, self.winid, { last, #text })
 end
 
 --- Give up on this mount: no window will ever exist, so drop the one-shot
@@ -306,8 +385,7 @@ end
 
 function Kata:reset_code()
     if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
-        local lines = vim.split(self:_starter_code(), "\n")
-        vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, false, lines)
+        self:_set_code(self:_starter_code())
         log.info("Code reset to template")
     end
 end
@@ -363,6 +441,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 vim.api.nvim_set_option_value("buflisted", false, { buf = prev_bufnr })
                 ui_utils.buf_set_opts(self.bufnr, { buflisted = true })
                 ui_utils.win_set_buf(self.winid, self.bufnr, true)
+                self:_cursor_to_end()
 
                 if self.testcase_split then
                     self.testcase_split:populate(self.example_fixture)

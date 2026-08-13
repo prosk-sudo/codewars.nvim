@@ -18,7 +18,13 @@ describe("templates.render", function()
     --- (utils.lua:1), so replacing package.loaded leaves it holding the old
     --- table and every extension lookup fails for a reason production never
     --- sees. `langs` is real for the same reason.
-    local cfg = { user = {}, langs = require("codewars.config.langs") }
+    local tmp = vim.fn.tempname()
+    vim.fn.mkdir(tmp, "p")
+    local cfg = {
+        user = {},
+        langs = require("codewars.config.langs"),
+        storage = { cache = require("plenary.path"):new(tmp) },
+    }
     package.loaded["codewars.config"] = cfg
 
     --- Swap the module out entirely — for the shapes render() must survive.
@@ -36,6 +42,7 @@ describe("templates.render", function()
     before_each(function()
         warnings = {}
         templates._reset_warned()
+        templates.set_enabled(true)
         cfg.user = {}
         package.loaded["codewars.config"] = cfg
     end)
@@ -153,31 +160,31 @@ describe("templates.render", function()
         end)
     end)
 
-    describe("has_template", function()
+    describe("is_configured", function()
         it("is false when nothing is configured", function()
-            assert.is_false(templates.has_template("python"))
+            assert.is_false(templates.is_configured("python"))
         end)
 
         it("is false for a language with no entry", function()
             solution({ python = "import os" })
-            assert.is_false(templates.has_template("ruby"))
+            assert.is_false(templates.is_configured("ruby"))
         end)
 
         it("is true for a configured string spec", function()
             solution({ python = "import os" })
-            assert.is_true(templates.has_template("python"))
+            assert.is_true(templates.is_configured("python"))
         end)
 
         it("is true for a configured function spec without running it", function()
             local ran = false
             solution({ python = function() ran = true; return "x" end })
-            assert.is_true(templates.has_template("python"))
+            assert.is_true(templates.is_configured("python"))
             assert.is_false(ran)
         end)
 
         it("tolerates a config with no templates key", function()
             with_config({ user = {} })
-            assert.is_false(templates.has_template("python"))
+            assert.is_false(templates.is_configured("python"))
         end)
     end)
 
@@ -209,10 +216,160 @@ describe("templates.render", function()
             assert.are.same({}, warnings)
         end)
 
+        it("does not warn when a function template splices the starter itself", function()
+            solution({ python = function(ctx) return "# header\n" .. ctx.starter end })
+            local out = templates.render("python", { starter = "def f(): pass" })
+            assert.are.equal("# header\ndef f(): pass", out)
+            assert.are.same({}, warnings)
+        end)
+
+        it("still warns when the starter is genuinely absent from the result", function()
+            solution({ python = function() return "# header only" end })
+            templates.render("python", { starter = "def f(): pass" })
+            assert.are.equal(1, #warnings)
+        end)
+
         it("does not warn when there was no starter to drop", function()
             solution({ python = "import os" })
             templates.render("python", { starter = "" })
             assert.are.same({}, warnings)
+        end)
+    end)
+
+    describe("indented tokens", function()
+        it("carries the token's indentation onto the starter's later lines", function()
+            solution({ python = "def main():\n    " .. TOKEN .. "\n" })
+            local out = templates.render("python", { starter = "def spacey(array):\n    return []" })
+            assert.are.equal("def main():\n    def spacey(array):\n        return []\n", out)
+        end)
+
+        it("leaves a token at column zero alone", function()
+            solution({ python = TOKEN })
+            assert.are.equal("a\n  b", templates.render("python", { starter = "a\n  b" }))
+        end)
+
+        it("indents an occurrence on the first line of the template", function()
+            solution({ python = "  " .. TOKEN })
+            assert.are.equal("  a\n  b", templates.render("python", { starter = "a\nb" }))
+        end)
+
+        it("indents each occurrence by its own prefix", function()
+            solution({ python = "  " .. TOKEN .. "\n\t\t" .. TOKEN })
+            assert.are.equal("  a\n  b\n\t\ta\n\t\tb", templates.render("python", { starter = "a\nb" }))
+        end)
+
+        it("does not add indentation to blank lines", function()
+            solution({ python = "    " .. TOKEN })
+            assert.are.equal("    a\n\n    b", templates.render("python", { starter = "a\n\nb" }))
+        end)
+
+        it("leaves whitespace-only lines untouched", function()
+            solution({ python = "    " .. TOKEN })
+            assert.are.equal("    a\n  \n    b", templates.render("python", { starter = "a\n  \nb" }))
+        end)
+
+        it("ignores a token that is not alone on its line", function()
+            solution({ python = "x = " .. TOKEN })
+            assert.are.equal("x = a\nb", templates.render("python", { starter = "a\nb" }))
+        end)
+
+        it("does not rescan indented injected text for the token", function()
+            solution({ python = "    " .. TOKEN })
+            assert.are.equal("    literal " .. TOKEN, templates.render("python", { starter = "literal " .. TOKEN }))
+        end)
+    end)
+
+    describe("the enable switch", function()
+        it("is on by default", function()
+            assert.is_true(templates.is_enabled())
+        end)
+
+        it("returns the starter untouched while off", function()
+            solution({ python = "import os\n" .. TOKEN })
+            templates.set_enabled(false)
+            assert.are.equal("S", templates.render("python", { starter = "S" }))
+        end)
+
+        it("does not change what is configured, only whether it is applied", function()
+            solution({ python = "import os" })
+            templates.set_enabled(false)
+            assert.is_true(templates.is_configured("python"))
+        end)
+
+        it("persists to disk rather than to memory, so it survives a restart", function()
+            templates.set_enabled(false)
+            assert.is_false(templates.is_enabled())
+            assert.is_true(cfg.storage.cache:joinpath("templates_off"):exists())
+
+            templates.set_enabled(true)
+            assert.is_true(templates.is_enabled())
+            assert.is_false(cfg.storage.cache:joinpath("templates_off"):exists())
+        end)
+    end)
+
+    describe("wrap and strip", function()
+        local WRAPPED = "import os\ndef f():\n    return 1\n# end"
+
+        it("wraps buffer text the way render wraps a starter", function()
+            solution({ python = "import os\n" .. TOKEN .. "\n# end" })
+            assert.are.equal(WRAPPED, templates.wrap("python", "def f():\n    return 1"))
+        end)
+
+        it("strip is the inverse of wrap", function()
+            solution({ python = "import os\n" .. TOKEN .. "\n# end" })
+            assert.are.equal("def f():\n    return 1", templates.strip("python", WRAPPED))
+        end)
+
+        it("works while the switch is off, which is when strip is needed", function()
+            solution({ python = "import os\n" .. TOKEN .. "\n# end" })
+            templates.set_enabled(false)
+            assert.are.equal("def f():\n    return 1", templates.strip("python", WRAPPED))
+        end)
+
+        it("undoes the indentation the token added", function()
+            solution({ python = "def main():\n    " .. TOKEN })
+            local wrapped = templates.wrap("python", "a\n  b")
+            assert.are.equal("def main():\n    a\n      b", wrapped)
+            assert.are.equal("a\n  b", templates.strip("python", wrapped))
+        end)
+
+        it("strip refuses when the buffer no longer matches the template", function()
+            solution({ python = "import os\n" .. TOKEN })
+            local out, reason = templates.strip("python", "import sys\ndef f(): pass")
+            assert.is_nil(out)
+            assert.truthy(reason)
+        end)
+
+        it("strip refuses a template with no token, having nothing to strip around", function()
+            solution({ python = "import os" })
+            local out, reason = templates.strip("python", "import os")
+            assert.is_nil(out)
+            assert.truthy(reason:find(TOKEN, 1, true))
+        end)
+
+        it("refuses a template with more than one token", function()
+            solution({ python = TOKEN .. "\n" .. TOKEN })
+            local out, reason = templates.strip("python", "a\na")
+            assert.is_nil(out)
+            assert.truthy(reason)
+        end)
+
+        it("refuses when no template is configured", function()
+            local out, reason = templates.wrap("python", "code")
+            assert.is_nil(out)
+            assert.truthy(reason)
+        end)
+
+        it("wrap reports text that is already wrapped rather than nesting it", function()
+            solution({ python = "import os\n" .. TOKEN .. "\n# end" })
+            local out, reason = templates.wrap("python", WRAPPED)
+            assert.is_nil(out)
+            assert.truthy(reason)
+        end)
+
+        it("passes kata metadata to a function template", function()
+            solution({ python = function(ctx) return "# " .. tostring(ctx.name) .. "\n" .. TOKEN end })
+            assert.are.equal("# Multiply\ncode", templates.wrap("python", "code", { name = "Multiply" }))
         end)
     end)
 end)
