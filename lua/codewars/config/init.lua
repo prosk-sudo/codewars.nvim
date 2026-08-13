@@ -70,15 +70,21 @@ end
 function config.validate()
     assert(vim.fn.has("nvim-0.9.0") == 1, "Neovim >= 0.9.0 required")
 
+    -- Validate what the USER asked for, not config.lang. setup() calls
+    -- validate() before it assigns config.lang from config.user.lang, so
+    -- reading config.lang here only ever re-checked the module default
+    -- ("python") and let a typo'd `lang` through silently.
+    local lang = config.user.lang or config.lang
+
     local utils = require("codewars.utils")
-    if not utils.get_lang(config.lang) then
-        local lang_slugs = vim.tbl_map(function(lang)
-            return lang.slug
+    if not utils.get_lang(lang) then
+        local lang_slugs = vim.tbl_map(function(l)
+            return l.slug
         end, config.langs)
 
         local matches = {}
         for _, slug in ipairs(lang_slugs) do
-            if slug:find(config.lang, 1, true) or config.lang:find(slug, 1, true) then
+            if slug:find(lang, 1, true) or lang:find(slug, 1, true) then
                 table.insert(matches, slug)
             end
         end
@@ -88,7 +94,7 @@ function config.validate()
             log.warn("Did you mean: { " .. table.concat(matches, ", ") .. " }?")
         end
 
-        error("Unsupported Language: " .. config.lang)
+        error("Unsupported Language: " .. lang)
     end
 end
 
