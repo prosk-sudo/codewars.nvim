@@ -20,7 +20,8 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
 
 - **Your own starter code** — per-language templates so every kata opens with
   the imports and scaffolding you actually use, wrapped around the signature
-  Codewars grades. See [CONFIGS.md](CONFIGS.md#templates).
+  Codewars grades. `:CW template off` turns them off again, buffer and all.
+  See [CONFIGS.md](CONFIGS.md#templates).
 
 ## Requirements
 

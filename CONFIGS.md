@@ -112,6 +112,23 @@ end,
 A template that errors is reported and skipped, never fatal — a broken template
 cannot stop a kata from opening.
 
+### Turning templates off
+
+```
+:CW template          -- current state, and whether this language has one
+:CW template off      -- stop applying templates, and unwrap the open kata
+:CW template on       -- resume, and wrap the open kata's code
+```
+
+The switch is global and persisted, so it survives a restart. Alongside it, the
+kata you have open is rewritten to match — flipping the switch and then looking
+at a buffer that still has the old shape is the confusing half.
+
+That rewrite is byte-exact or it refuses. Once you have edited the template's
+own lines, nothing in the buffer reliably says which came from the template, so
+rather than guess and delete your code it tells you it could not, and leaves the
+buffer alone. Either rewrite is a single undo entry, so `u` puts it back.
+
 ### Where templates apply
 
 `:CW train`, `:CW reset`, switching a kata's language, and new kumites

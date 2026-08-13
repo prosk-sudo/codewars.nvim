@@ -42,6 +42,7 @@ function cmd.help()
         { "attempt",        "Full attempt with all tests" },
         { "submit",         "Finalize solution (after passing attempt)" },
         { "reset",          "Reset code to template" },
+        { "template on|off", "Apply or remove your solution template" },
         { "",               "" },
         { "BROWSING",       "" },
         { "list",           "Browse all kata (with filters)" },
@@ -917,6 +918,51 @@ function cmd.reset()
     end
 end
 
+--- Turn solution templates on or off, and bring the open kata along.
+---
+--- The switch is global and persisted; the buffer rewrite is a courtesy on top
+--- of it, since flipping the switch and then staring at a buffer that still has
+--- the old shape is the confusing half. It refuses rather than guesses when the
+--- buffer has drifted from the template, and says why.
+---@param on boolean
+local function set_templates(on)
+    local templates = require("codewars.templates")
+    local was = templates.is_enabled()
+    templates.set_enabled(on)
+
+    -- kata_in_tab, not curr_kata: this is a global setting, and running it from
+    -- the dashboard is ordinary, not an error worth logging.
+    local k = require("codewars.utils").kata_in_tab()
+    local changed = k and k:retemplate(on and "wrap" or "strip")
+
+    if was == on and not changed then
+        return log.info(("Templates are already %s."):format(on and "on" or "off"))
+    end
+    log.info(("Templates %s%s."):format(on and "on" or "off", changed and " — this buffer updated" or ""))
+end
+
+function cmd.template_on()
+    set_templates(true)
+end
+
+function cmd.template_off()
+    set_templates(false)
+end
+
+function cmd.template_status()
+    local templates = require("codewars.templates")
+    local parts = { ("Templates are %s."):format(templates.is_enabled() and "on" or "off") }
+
+    local k = require("codewars.utils").kata_in_tab()
+    if k then
+        parts[#parts + 1] = templates.is_configured(k.lang)
+            and ("A %s template is configured."):format(k.lang)
+            or ("No %s template is configured."):format(k.lang)
+    end
+
+    log.info(table.concat(parts, " "))
+end
+
 function cmd.open()
     local utils = require("codewars.utils")
     local k = utils.curr_kata()
@@ -1235,6 +1281,11 @@ cmd.commands = {
         },
     },
     reset = { cmd.reset },
+    template = {
+        cmd.template_status,
+        on = { cmd.template_on },
+        off = { cmd.template_off },
+    },
     open = { cmd.open },
     cookie = {
         cmd.cookie_prompt,

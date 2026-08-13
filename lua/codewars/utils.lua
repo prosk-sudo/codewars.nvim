@@ -24,19 +24,27 @@ function utils.resolve_lang_arg(lang_arg)
 end
 
 ---@return cw.ui.Kata?
-function utils.curr_kata()
+--- The kata whose tab is focused, or nil. Silent: for callers where "no kata
+--- here" is an ordinary state rather than a mistake.
+---@return cw.ui.Kata?, integer?
+function utils.kata_in_tab()
     local tabp = vim.api.nvim_get_current_tabpage()
-    local tabs = utils.kata_tabs()
 
     local tab = vim.tbl_filter(function(t)
         return t.tabpage == tabp
-    end, tabs)[1] or {}
+    end, utils.kata_tabs())[1] or {}
 
     if tab.kata then
         return tab.kata, tabp
-    else
-        log.error("No current kata found")
     end
+end
+
+function utils.curr_kata()
+    local kata, tabp = utils.kata_in_tab()
+    if kata then
+        return kata, tabp
+    end
+    log.error("No current kata found")
 end
 
 --- The kumite workspace in the current tab, if any (no error when absent —
