@@ -117,7 +117,10 @@ cannot stop a kata from opening.
 `:CW train`, `:CW reset`, switching a kata's language, and new kumites
 (`:CW kumite new`, and adding a language in the kata editor). Existing solution
 files on disk are never rewritten, so adding a template does not disturb work in
-progress; use `:CW reset` to pull it into a kata you already started.
+progress; use `:CW reset` to pull it into a kata you already started. When you
+open a kata whose file already exists and a template is configured for that
+language, the plugin says so, so a skipped template never looks like a broken
+one.
 
 ## Cache
 

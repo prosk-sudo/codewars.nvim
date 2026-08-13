@@ -120,6 +120,17 @@ local function warn_dropped_signature(lang, ctx)
     )
 end
 
+--- Whether the user configured a template for this language.
+---
+--- A predicate rather than a render: callers use this to decide whether to
+--- mention a template they are NOT applying, so evaluating a function spec
+--- here would run user code for a buffer that is never written.
+---@param lang string
+---@return boolean
+function M.has_template(lang)
+    return configured_spec(lang) ~= nil
+end
+
 --- Starter text for a solution buffer.
 ---@param lang string language slug
 ---@param ctx table `{ starter = string, lang?, ext?, slug?, name?, rank?, tags? }`

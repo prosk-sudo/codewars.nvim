@@ -153,6 +153,34 @@ describe("templates.render", function()
         end)
     end)
 
+    describe("has_template", function()
+        it("is false when nothing is configured", function()
+            assert.is_false(templates.has_template("python"))
+        end)
+
+        it("is false for a language with no entry", function()
+            solution({ python = "import os" })
+            assert.is_false(templates.has_template("ruby"))
+        end)
+
+        it("is true for a configured string spec", function()
+            solution({ python = "import os" })
+            assert.is_true(templates.has_template("python"))
+        end)
+
+        it("is true for a configured function spec without running it", function()
+            local ran = false
+            solution({ python = function() ran = true; return "x" end })
+            assert.is_true(templates.has_template("python"))
+            assert.is_false(ran)
+        end)
+
+        it("tolerates a config with no templates key", function()
+            with_config({ user = {} })
+            assert.is_false(templates.has_template("python"))
+        end)
+    end)
+
     describe("dropped-signature warning", function()
         it("warns when a template discards a non-empty starter", function()
             solution({ python = "import os" })

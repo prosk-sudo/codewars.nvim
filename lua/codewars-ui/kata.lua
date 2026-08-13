@@ -57,6 +57,11 @@ function Kata:path()
 
     if not existed then
         self.file:write(self:_starter_code(), "w")
+    elseif require("codewars.templates").has_template(self.lang) then
+        -- Seeding is guarded so it can never overwrite work in progress, which
+        -- means a configured template silently does nothing on a kata you have
+        -- opened before. Say so, rather than letting it read as a broken feature.
+        log.info(("%s already exists — :CW reset to apply your %s template."):format(fn, self.lang))
     end
 
     return self.file:absolute(), existed
