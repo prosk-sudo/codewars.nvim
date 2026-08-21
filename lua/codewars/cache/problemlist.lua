@@ -115,7 +115,10 @@ function problemlist.update(opts, cb)
                         local log = require("codewars.logger")
                         log.error(err.msg)
                         spinner:error("Fetch aborted: authentication error")
-                        return finish()
+                        -- Partial, same as the rate-limit abort: writing here
+                        -- would stamp a truncated list as fresh and hide every
+                        -- kata the aborted run never reached.
+                        return finish(true)
                     end
 
                     if err and err.rate_limited then

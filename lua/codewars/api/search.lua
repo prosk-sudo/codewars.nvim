@@ -57,7 +57,7 @@ function search.fetch_page(opts, page, cb)
                         local err = {
                             retry_after = tonumber(api_utils.header_value(out.headers, "retry-after")),
                         }
-                        local wait = api_utils.retry_delay_ms(err, MAX_ATTEMPTS - n, MAX_ATTEMPTS)
+                        local wait = api_utils.retry_delay_ms(err, n - 1)
                         return vim.defer_fn(function() attempt(n + 1) end, wait)
                     end
                     return cb({}, false, {

@@ -547,10 +547,15 @@ function Menu:autocmds()
         group = group_id,
         buffer = self.bufnr,
         callback = function()
-            local w = self.winid and api.nvim_win_is_valid(self.winid)
-                and api.nvim_win_get_width(self.winid) or 0
-            if w == self._last_width then return end
+            local valid = self.winid and api.nvim_win_is_valid(self.winid)
+            local w = valid and api.nvim_win_get_width(self.winid) or 0
+            -- Height matters now that the block is centred vertically: a
+            -- height-only resize used to skip the redraw and leave the menu
+            -- centred for the OLD height.
+            local h = valid and api.nvim_win_get_height(self.winid) or 0
+            if w == self._last_width and h == self._last_height then return end
             self._last_width = w
+            self._last_height = h
             self._redraw_only = true
             self:draw()
         end,

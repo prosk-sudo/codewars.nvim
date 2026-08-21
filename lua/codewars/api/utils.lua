@@ -58,9 +58,6 @@ function utils.delete(endpoint, opts)
     return utils.curl("delete", options)
 end
 
----@private
----@param method string
----@param params table
 --- Pull a header out of plenary's raw header list ("Key: value" strings).
 ---@param hdrs string[]?
 ---@param name string
@@ -80,21 +77,32 @@ function utils.header_value(hdrs, name)
 end
 
 utils.MAX_BACKOFF_MS = 60000
+utils.BASE_BACKOFF_MS = 500
+utils.MAX_EXP_BACKOFF_MS = 8000
+-- A synchronous retry blocks the editor outright, so it never honors a long
+-- Retry-After in full. Async retries are free to wait the whole thing.
+utils.MAX_SYNC_WAIT_MS = 5000
 
 --- How long to wait before retrying. A 429 usually carries Retry-After and
 --- the server knows its own limit better than we do; otherwise back off
 --- exponentially rather than charging straight back into the same wall.
+---
+--- `attempt` is how many retries have ALREADY happened (0 on the first).
+--- It is passed explicitly rather than derived from the remaining-tries
+--- counter: that counter shrinks on every recursion, so deriving from it
+--- made every wait the same 500ms and the backoff never actually grew.
 ---@param err table?
----@param tries_left integer?
----@param max_tries integer?
+---@param attempt integer? retries already performed, 0-based
 ---@return integer milliseconds
-function utils.retry_delay_ms(err, tries_left, max_tries)
+function utils.retry_delay_ms(err, attempt)
     local after = tonumber(err and err.retry_after)
     if after and after > 0 then
         return math.min(math.floor(after * 1000), utils.MAX_BACKOFF_MS)
     end
-    local attempt = math.max(0, (max_tries or 3) - (tries_left or 0))
-    return math.min(500 * (2 ^ attempt), 8000)
+    return math.min(
+        utils.BASE_BACKOFF_MS * (2 ^ math.max(0, attempt or 0)),
+        utils.MAX_EXP_BACKOFF_MS
+    )
 end
 
 function utils.curl(method, params)
@@ -114,7 +122,9 @@ function utils.curl(method, params)
     end
 
     local tries = params.retry
-    local max_tries = params.retry
+    -- Carried across recursions so the backoff can actually grow. plenary
+    -- ignores opt keys it does not know, same as the `endpoint` key above.
+    local attempt = params.retry_attempt or 0
     -- 429 is retryable: the request was refused, not performed. Callers that
     -- must never repeat themselves (the destructive trainer dequeue) pass
     -- retry = 0 and are unaffected by this.
@@ -130,9 +140,10 @@ function utils.curl(method, params)
             local res, err = utils.handle_res(out)
 
             if should_retry(err) then
-                local wait = utils.retry_delay_ms(err, tries, max_tries)
+                local wait = utils.retry_delay_ms(err, attempt)
                 log.debug(("retry %d in %dms"):format(tries, wait))
                 params_cpy.retry = tries - 1
+                params_cpy.retry_attempt = attempt + 1
                 vim.schedule(function()
                     vim.defer_fn(function() utils.curl(method, params_cpy) end, wait)
                 end)
@@ -147,10 +158,14 @@ function utils.curl(method, params)
         local res, err = utils.handle_res(out)
 
         if should_retry(err) then
-            local wait = utils.retry_delay_ms(err, tries, max_tries)
-            log.debug(("retry %d in %dms"):format(tries, wait))
+            -- Clamped: this blocks the UI thread, and Retry-After is
+            -- server-controlled, so an unclamped wait would let the remote
+            -- freeze the editor for a minute at a time.
+            local wait = math.min(utils.retry_delay_ms(err, attempt), utils.MAX_SYNC_WAIT_MS)
+            log.debug(("retry %d in %dms (sync)"):format(tries, wait))
             vim.wait(wait)
             params_cpy.retry = tries - 1
+            params_cpy.retry_attempt = attempt + 1
             return utils.curl(method, params_cpy)
         else
             return res, err
@@ -192,17 +207,6 @@ function utils.handle_res(out)
         -- Rate limited. Codewars publishes no limit, so the only reliable
         -- signal is this response; carry Retry-After through so the retry
         -- waits the amount the server asked for.
-        err = {
-            code = 0,
-            status = 429,
-            rate_limited = true,
-            retry_after = tonumber(utils.header_value(out.headers, "retry-after")),
-            msg = "Codewars is rate limiting requests. Waiting before retrying.",
-        }
-    elseif out.status == 429 then
-        -- Rate limited. Codewars publishes no limit, so this response is the
-        -- only reliable signal; carry Retry-After through so the retry waits
-        -- the amount the server actually asked for.
         err = {
             code = 0,
             status = 429,
