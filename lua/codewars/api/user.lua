@@ -1,6 +1,5 @@
 local utils = require("codewars.api.utils")
 local urls = require("codewars.api.urls")
-local curl = require("plenary.curl")
 local headers_mod = require("codewars.api.headers")
 
 ---@class cw.Api.User
@@ -22,24 +21,33 @@ end
 --- Fetch the current logged-in user's profile from the dashboard page.
 --- Parses currentUser JSON from the App.setup() JavaScript.
 ---@param cb function callback(profile?, err?)
+--- Routed through api.utils rather than calling curl directly: this is the
+--- ONLY place the username is ever discovered, so a single 429 here used to
+--- leave the whole session without an identity. Going through the shared
+--- layer means a rate-limited dashboard is retried instead of abandoned.
 function user.get_current(cb)
-    local url = urls.base .. "/dashboard"
     local hdrs = headers_mod.get()
+    hdrs["Accept"] = "text/html"
 
-    curl.get(url, {
+    utils.get("/dashboard", {
         headers = hdrs,
-        compressed = false,
-        callback = vim.schedule_wrap(function(out)
-            if out.exit ~= 0 or out.status >= 300 then
-                return cb(nil, { msg = "Failed to fetch dashboard" })
+        callback = function(res, err)
+            if err then
+                return cb(nil, err)
             end
 
-            local body = out.body or ""
+            -- The dashboard is HTML, so handle_res hands back the raw body.
+            local body = type(res) == "string" and res or ""
 
             -- Extract currentUser JSON from: currentUser = JSON.parse("{...}")
             local json_str = body:match('currentUser%s*=%s*JSON%.parse%("(.-)"%)')
             if not json_str then
-                return cb(nil, { msg = "Could not find currentUser in dashboard" })
+                -- Either the markup drifted, or this is the login page
+                -- because the cookie expired. Both leave us anonymous.
+                return cb(nil, {
+                    msg = "Could not read your profile from the Codewars dashboard. "
+                        .. "Run :CW cookie if your session expired.",
+                })
             end
 
             -- Unescape the JSON (it's double-escaped in the HTML)
@@ -54,7 +62,7 @@ function user.get_current(cb)
             else
                 cb(nil, { msg = "Failed to parse currentUser JSON" })
             end
-        end),
+        end,
     })
 end
 

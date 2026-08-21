@@ -56,6 +56,13 @@ local function fetch_user_data(menu, cb)
                 end
                 fetch_by_username(profile.username)
             else
+                -- Swallowing this left a menu that looks signed in, has no
+                -- username, and explains nothing -- while every feature
+                -- needing an identity failed separately.
+                if err then
+                    log.warn(("Signed in, but could not detect your username: %s")
+                        :format(err.msg or "unknown error"))
+                end
                 if cb then vim.schedule(cb) end
             end
         end)
