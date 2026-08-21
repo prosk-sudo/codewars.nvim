@@ -99,10 +99,23 @@ function utils.retry_delay_ms(err, attempt)
     if after and after > 0 then
         return math.min(math.floor(after * 1000), utils.MAX_BACKOFF_MS)
     end
-    return math.min(
+
+    local base = math.min(
         utils.BASE_BACKOFF_MS * (2 ^ math.max(0, attempt or 0)),
         utils.MAX_EXP_BACKOFF_MS
     )
+
+    -- The server sent Retry-After in a form we could not read (RFC allows an
+    -- HTTP-date, not just seconds). It asked for a wait, so start from the
+    -- longest backoff rather than the shortest.
+    if err and err.retry_after_raw and not after then
+        base = utils.MAX_EXP_BACKOFF_MS
+    end
+
+    -- Jitter. The cache build fires a batch of requests together, so without
+    -- it every worker in a 429'd batch wakes at the identical moment and
+    -- replays the same burst into the same limiter window.
+    return math.floor(base * (0.75 + math.random() * 0.5))
 end
 
 function utils.curl(method, params)
@@ -125,12 +138,22 @@ function utils.curl(method, params)
     -- Carried across recursions so the backoff can actually grow. plenary
     -- ignores opt keys it does not know, same as the `endpoint` key above.
     local attempt = params.retry_attempt or 0
-    -- 429 is retryable: the request was refused, not performed. Callers that
-    -- must never repeat themselves (the destructive trainer dequeue) pass
-    -- retry = 0 and are unaffected by this.
+    -- A 429 means the request was REFUSED, so repeating it is normally safe.
+    -- "Normally" is not good enough for a POST that registers a solve,
+    -- publishes a kata or saves a draft: we cannot prove the server did no
+    -- work before refusing, and a duplicate there is user-visible. Before
+    -- this change nothing retried a 429 at all, so auto-retrying every
+    -- mutating call would be new exposure introduced by a rate-limit fix.
+    -- GET retries automatically; anything else must opt in explicitly with
+    -- retry_rate_limited = true.
+    local retry_rate_limited = params.retry_rate_limited
+    if retry_rate_limited == nil then
+        retry_rate_limited = (method == "get")
+    end
+
     local function should_retry(err)
         if not err or tries <= 0 then return false end
-        if err.rate_limited then return true end
+        if err.rate_limited then return retry_rate_limited end
         return err.status ~= nil and err.status >= 500
     end
 
@@ -212,6 +235,10 @@ function utils.handle_res(out)
             status = 429,
             rate_limited = true,
             retry_after = tonumber(utils.header_value(out.headers, "retry-after")),
+            -- Kept even when unparseable (HTTP-date form) so the backoff can
+            -- tell "server asked for a wait we could not read" apart from
+            -- "server said nothing".
+            retry_after_raw = utils.header_value(out.headers, "retry-after"),
             msg = "Codewars is rate limiting requests. Waiting before retrying.",
         }
     elseif out.status == 401 or out.status == 403 then
