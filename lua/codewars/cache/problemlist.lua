@@ -63,8 +63,9 @@ function problemlist.update(opts, cb)
             -- Deliberately not written: a short list stamped with `now` would
             -- look fresh for the whole cache interval, quietly hiding the
             -- kata we never fetched. Leaving it unwritten means the next run
-            -- retries instead.
-            cb(unique)
+            -- retries instead. The flag tells the caller not to report
+            -- success on top of the failure the spinner already showed.
+            cb(unique, true)
             return
         end
 

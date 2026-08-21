@@ -105,7 +105,15 @@ function search.kata(opts, cb)
             return cb(all_results)
         end
 
-        search.fetch_page(opts, current_page, function(results, has_more)
+        search.fetch_page(opts, current_page, function(results, has_more, err)
+            -- Callers already destructure (results, err); dropping it here
+            -- turned a rate-limited or expired-session search into a bare
+            -- "No kata found", which is the same lie the cache build used
+            -- to tell.
+            if err then
+                return cb(all_results, err)
+            end
+
             vim.list_extend(all_results, results)
 
             if has_more and current_page < max_pages - 1 then
