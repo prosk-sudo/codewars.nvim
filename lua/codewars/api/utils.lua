@@ -61,6 +61,42 @@ end
 ---@private
 ---@param method string
 ---@param params table
+--- Pull a header out of plenary's raw header list ("Key: value" strings).
+---@param hdrs string[]?
+---@param name string
+---@return string?
+function utils.header_value(hdrs, name)
+    if type(hdrs) ~= "table" then return nil end
+    local want = name:lower()
+    for _, line in ipairs(hdrs) do
+        local k, v = tostring(line):match("^([^:]+):%s*(.*)$")
+        if k and k:lower() == want then
+            return (v:gsub("%s+$", ""))
+        end
+    end
+    -- Explicit: falling off the end returns ZERO values, and callers wrap
+    -- this in tonumber(), which throws on no argument at all.
+    return nil
+end
+
+utils.MAX_BACKOFF_MS = 60000
+
+--- How long to wait before retrying. A 429 usually carries Retry-After and
+--- the server knows its own limit better than we do; otherwise back off
+--- exponentially rather than charging straight back into the same wall.
+---@param err table?
+---@param tries_left integer?
+---@param max_tries integer?
+---@return integer milliseconds
+function utils.retry_delay_ms(err, tries_left, max_tries)
+    local after = tonumber(err and err.retry_after)
+    if after and after > 0 then
+        return math.min(math.floor(after * 1000), utils.MAX_BACKOFF_MS)
+    end
+    local attempt = math.max(0, (max_tries or 3) - (tries_left or 0))
+    return math.min(500 * (2 ^ attempt), 8000)
+end
+
 function utils.curl(method, params)
     local params_cpy = vim.deepcopy(params)
 
@@ -78,8 +114,14 @@ function utils.curl(method, params)
     end
 
     local tries = params.retry
+    local max_tries = params.retry
+    -- 429 is retryable: the request was refused, not performed. Callers that
+    -- must never repeat themselves (the destructive trainer dequeue) pass
+    -- retry = 0 and are unaffected by this.
     local function should_retry(err)
-        return err and err.status and err.status >= 500 and tries > 0
+        if not err or tries <= 0 then return false end
+        if err.rate_limited then return true end
+        return err.status ~= nil and err.status >= 500
     end
 
     if params.callback then
