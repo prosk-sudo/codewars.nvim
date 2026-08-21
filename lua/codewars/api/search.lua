@@ -39,24 +39,51 @@ function search.fetch_page(opts, page, cb)
     local hdrs = headers_mod.get()
     hdrs["Accept"] = "text/html"
 
-    curl.get(url, {
-        headers = hdrs,
-        compressed = false,
-        callback = vim.schedule_wrap(function(out)
-            if out.exit ~= 0 or out.status >= 300 then
-                local err = { msg = "Failed to search kata" }
-                if out.status == 401 or out.status == 403 then
-                    err = { msg = "Session expired or invalid. Run :CW cookie to re-authenticate.", auth = true }
+    -- This path talks to curl directly rather than through api.utils, so it
+    -- has to handle rate limiting itself. It matters more here than
+    -- anywhere else: the cache build issues these by the hundred, and a
+    -- refused page used to come back as an EMPTY page, which reads as "end
+    -- of this rank" and silently truncates the cached kata list.
+    local api_utils = require("codewars.api.utils")
+    local MAX_ATTEMPTS = 4
+
+    local function attempt(n)
+        curl.get(url, {
+            headers = hdrs,
+            compressed = false,
+            callback = vim.schedule_wrap(function(out)
+                if out.status == 429 then
+                    if n < MAX_ATTEMPTS then
+                        local err = {
+                            retry_after = tonumber(api_utils.header_value(out.headers, "retry-after")),
+                        }
+                        local wait = api_utils.retry_delay_ms(err, MAX_ATTEMPTS - n, MAX_ATTEMPTS)
+                        return vim.defer_fn(function() attempt(n + 1) end, wait)
+                    end
+                    return cb({}, false, {
+                        status = 429,
+                        rate_limited = true,
+                        msg = "Codewars is rate limiting requests. Wait a minute and run :CW cache update again.",
+                    })
                 end
-                return cb({}, false, err)
-            end
 
-            local body = out.body or ""
-            local results = search.parse_html(body)
+                if out.exit ~= 0 or out.status >= 300 then
+                    local err = { msg = "Failed to search kata", status = out.status }
+                    if out.status == 401 or out.status == 403 then
+                        err = { msg = "Session expired or invalid. Run :CW cookie to re-authenticate.", auth = true }
+                    end
+                    return cb({}, false, err)
+                end
 
-            cb(results, #results > 0)
-        end),
-    })
+                local body = out.body or ""
+                local results = search.parse_html(body)
+
+                cb(results, #results > 0)
+            end),
+        })
+    end
+
+    attempt(1)
 end
 
 --- Search/browse kata by scraping multiple pages.

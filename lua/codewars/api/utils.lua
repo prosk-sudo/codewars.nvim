@@ -88,9 +88,12 @@ function utils.curl(method, params)
             local res, err = utils.handle_res(out)
 
             if should_retry(err) then
-                log.debug("retry " .. tries)
+                local wait = utils.retry_delay_ms(err, tries, max_tries)
+                log.debug(("retry %d in %dms"):format(tries, wait))
                 params_cpy.retry = tries - 1
-                utils.curl(method, params_cpy)
+                vim.schedule(function()
+                    vim.defer_fn(function() utils.curl(method, params_cpy) end, wait)
+                end)
             else
                 cb(res, err)
             end
@@ -102,7 +105,9 @@ function utils.curl(method, params)
         local res, err = utils.handle_res(out)
 
         if should_retry(err) then
-            log.debug("retry " .. tries)
+            local wait = utils.retry_delay_ms(err, tries, max_tries)
+            log.debug(("retry %d in %dms"):format(tries, wait))
+            vim.wait(wait)
             params_cpy.retry = tries - 1
             return utils.curl(method, params_cpy)
         else
@@ -140,6 +145,28 @@ function utils.handle_res(out)
         err = {
             code = out.exit,
             msg = "curl failed",
+        }
+    elseif out.status == 429 then
+        -- Rate limited. Codewars publishes no limit, so the only reliable
+        -- signal is this response; carry Retry-After through so the retry
+        -- waits the amount the server asked for.
+        err = {
+            code = 0,
+            status = 429,
+            rate_limited = true,
+            retry_after = tonumber(utils.header_value(out.headers, "retry-after")),
+            msg = "Codewars is rate limiting requests. Waiting before retrying.",
+        }
+    elseif out.status == 429 then
+        -- Rate limited. Codewars publishes no limit, so this response is the
+        -- only reliable signal; carry Retry-After through so the retry waits
+        -- the amount the server actually asked for.
+        err = {
+            code = 0,
+            status = 429,
+            rate_limited = true,
+            retry_after = tonumber(utils.header_value(out.headers, "retry-after")),
+            msg = "Codewars is rate limiting requests. Waiting before retrying.",
         }
     elseif out.status == 401 or out.status == 403 then
         err = {
