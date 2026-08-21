@@ -115,7 +115,12 @@ function utils.retry_delay_ms(err, attempt)
     -- Jitter. The cache build fires a batch of requests together, so without
     -- it every worker in a 429'd batch wakes at the identical moment and
     -- replays the same burst into the same limiter window.
-    return math.floor(base * (0.75 + math.random() * 0.5))
+    --
+    -- Clamped AFTER jittering: applying the spread to an already-capped base
+    -- let the result exceed the cap by 25%, which makes MAX_EXP_BACKOFF_MS
+    -- not actually a maximum.
+    local jittered = base * (0.75 + math.random() * 0.5)
+    return math.floor(math.min(jittered, utils.MAX_EXP_BACKOFF_MS))
 end
 
 function utils.curl(method, params)
