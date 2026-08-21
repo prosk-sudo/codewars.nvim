@@ -1,6 +1,133 @@
 describe("api.utils", function()
     local api_utils = require("codewars.api.utils")
 
+    describe("header_value", function()
+        it("finds a header regardless of case", function()
+            local hdrs = { "HTTP/2 429", "Retry-After: 12", "Content-Type: text/html" }
+            assert.are.equal("12", api_utils.header_value(hdrs, "retry-after"))
+            assert.are.equal("12", api_utils.header_value(hdrs, "Retry-After"))
+            assert.are.equal("12", api_utils.header_value(hdrs, "RETRY-AFTER"))
+        end)
+
+        it("trims trailing whitespace", function()
+            assert.are.equal("12", api_utils.header_value({ "Retry-After: 12   " }, "retry-after"))
+        end)
+
+        -- Returning zero values (rather than nil) made tonumber() throw,
+        -- because tonumber() with no argument at all is an error.
+        it("returns nil, not nothing, when the header is absent", function()
+            local v = api_utils.header_value({ "X: y" }, "retry-after")
+            assert.is_nil(v)
+            assert.has_no.errors(function() return tonumber(api_utils.header_value({ "X: y" }, "retry-after")) end)
+        end)
+
+        it("tolerates a nil or non-table header list", function()
+            assert.is_nil(api_utils.header_value(nil, "retry-after"))
+            assert.is_nil(api_utils.header_value("not a table", "retry-after"))
+            assert.is_nil(api_utils.header_value({}, "retry-after"))
+        end)
+
+        it("ignores a line with no colon", function()
+            assert.is_nil(api_utils.header_value({ "garbage" }, "retry-after"))
+        end)
+    end)
+
+    describe("retry_delay_ms", function()
+        it("honors Retry-After exactly, without jitter", function()
+            assert.are.equal(3000, api_utils.retry_delay_ms({ retry_after = 3 }, 0))
+            assert.are.equal(1000, api_utils.retry_delay_ms({ retry_after = 1 }, 5))
+        end)
+
+        it("clamps an absurd Retry-After to MAX_BACKOFF_MS", function()
+            assert.are.equal(api_utils.MAX_BACKOFF_MS, api_utils.retry_delay_ms({ retry_after = 99999 }, 0))
+        end)
+
+        it("ignores a zero or negative Retry-After and backs off instead", function()
+            assert.is_true(api_utils.retry_delay_ms({ retry_after = 0 }, 0) > 0)
+            assert.is_true(api_utils.retry_delay_ms({ retry_after = -5 }, 0) > 0)
+        end)
+
+        -- The backoff used to be derived from a counter that shrank on every
+        -- recursion, so attempt was always 0 and every wait was the same
+        -- 500ms. Assert it actually grows.
+        it("grows with the attempt count", function()
+            local function span(attempt)
+                local lo, hi = math.huge, 0
+                for _ = 1, 60 do
+                    local d = api_utils.retry_delay_ms({}, attempt)
+                    lo, hi = math.min(lo, d), math.max(hi, d)
+                end
+                return lo, hi
+            end
+            local lo0, hi0 = span(0)
+            local lo1, hi1 = span(1)
+            local lo2 = span(2)
+            assert.is_true(hi0 < lo1, ("attempt 0 max %d should be below attempt 1 min %d"):format(hi0, lo1))
+            assert.is_true(hi1 < lo2, ("attempt 1 max %d should be below attempt 2 min %d"):format(hi1, lo2))
+            assert.is_true(lo0 > 0)
+        end)
+
+        it("clamps the exponential branch and stays jittered around the cap", function()
+            for _ = 1, 40 do
+                local d = api_utils.retry_delay_ms({}, 20)
+                assert.is_true(d <= api_utils.MAX_EXP_BACKOFF_MS)
+                assert.is_true(d >= math.floor(api_utils.MAX_EXP_BACKOFF_MS * 0.75))
+            end
+        end)
+
+        -- Retry-After may be an HTTP-date, which tonumber cannot read. The
+        -- server still asked for a wait, so start long rather than short.
+        it("starts at the longest backoff when Retry-After was unparseable", function()
+            local unparseable = { retry_after_raw = "Wed, 21 Oct 2026 07:28:00 GMT" }
+            for _ = 1, 20 do
+                local d = api_utils.retry_delay_ms(unparseable, 0)
+                assert.is_true(d >= math.floor(api_utils.MAX_EXP_BACKOFF_MS * 0.75))
+            end
+        end)
+
+        it("handles a nil err and a nil attempt", function()
+            assert.is_true(api_utils.retry_delay_ms(nil, nil) > 0)
+        end)
+    end)
+
+    describe("handle_res 429", function()
+        it("classifies 429 as rate limited and parses Retry-After", function()
+            local _, err = api_utils.handle_res({
+                exit = 0, status = 429, body = "", headers = { "Retry-After: 7" },
+            })
+            assert.are.equal(429, err.status)
+            assert.is_true(err.rate_limited)
+            assert.are.equal(7, err.retry_after)
+        end)
+
+        it("still flags rate limiting when no Retry-After is sent", function()
+            local _, err = api_utils.handle_res({ exit = 0, status = 429, body = "", headers = {} })
+            assert.is_true(err.rate_limited)
+            assert.is_nil(err.retry_after)
+        end)
+
+        it("keeps an unparseable Retry-After as raw", function()
+            local _, err = api_utils.handle_res({
+                exit = 0, status = 429, body = "", headers = { "Retry-After: Wed, 21 Oct 2026 07:28:00 GMT" },
+            })
+            assert.is_nil(err.retry_after)
+            assert.is_not_nil(err.retry_after_raw)
+        end)
+
+        it("does not throw when headers are missing entirely", function()
+            assert.has_no.errors(function()
+                api_utils.handle_res({ exit = 0, status = 429, body = "" })
+            end)
+        end)
+
+        it("does not mark other statuses as rate limited", function()
+            local _, e404 = api_utils.handle_res({ exit = 0, status = 404, body = '{"reason":"x"}' })
+            local _, e500 = api_utils.handle_res({ exit = 0, status = 500, body = "" })
+            assert.is_nil(e404.rate_limited)
+            assert.is_nil(e500.rate_limited)
+        end)
+    end)
+
     describe("handle_res auth detection", function()
         it("detects 401 as auth error", function()
             local _, err = api_utils.handle_res({ exit = 0, status = 401, body = '{"error":"Unauthorized"}' })

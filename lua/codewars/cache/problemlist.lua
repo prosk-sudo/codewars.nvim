@@ -36,11 +36,18 @@ function problemlist.update(opts, cb)
     local all_results = {}
     local ranks = { -8, -7, -6, -5, -4, -3, -2, -1 }
     local rank_labels = { [-8]="8 kyu", [-7]="7 kyu", [-6]="6 kyu", [-5]="5 kyu", [-4]="4 kyu", [-3]="3 kyu", [-2]="2 kyu", [-1]="1 kyu" }
-    local max_concurrent = 10
+    -- Codewars publishes no rate limit, and a full build is ~8 ranks x up to
+    -- 100 pages. Ten-wide with no pause between batches reliably earned a
+    -- 429 partway through. Fewer in flight, with a gap between batches, is
+    -- slower but actually finishes.
+    local max_concurrent = 4
+    local batch_gap_ms = 200
     local rank_idx = 0
     local aborted = false
 
-    local function finish()
+    ---@param partial boolean? true when we stopped early and must not
+    --- pretend the cache is complete
+    local function finish(partial)
         -- Deduplicate
         local seen = {}
         local unique = {}
@@ -50,6 +57,16 @@ function problemlist.update(opts, cb)
                 seen[slug] = true
                 table.insert(unique, item)
             end
+        end
+
+        if partial then
+            -- Deliberately not written: a short list stamped with `now` would
+            -- look fresh for the whole cache interval, quietly hiding the
+            -- kata we never fetched. Leaving it unwritten means the next run
+            -- retries instead. The flag tells the caller not to report
+            -- success on top of the failure the spinner already showed.
+            cb(unique, true)
+            return
         end
 
         cache_utils.write_json(cache_file(), {
@@ -99,7 +116,19 @@ function problemlist.update(opts, cb)
                         local log = require("codewars.logger")
                         log.error(err.msg)
                         spinner:error("Fetch aborted: authentication error")
-                        return finish()
+                        -- Partial, same as the rate-limit abort: writing here
+                        -- would stamp a truncated list as fresh and hide every
+                        -- kata the aborted run never reached.
+                        return finish(true)
+                    end
+
+                    if err and err.rate_limited then
+                        -- fetch_page already backed off and retried; if it is
+                        -- still refusing, stop rather than grinding through
+                        -- the remaining ranks earning more 429s.
+                        aborted = true
+                        spinner:error(("Rate limited by Codewars after %d kata — wait a minute and run :CW cache update again"):format(#all_results))
+                        return finish(true)
                     end
 
                     batch_done = batch_done + 1
@@ -123,7 +152,9 @@ function problemlist.update(opts, cb)
                             rank_done = true
                             fetch_rank()
                         else
-                            fetch_batch()
+                            -- Breathe between batches instead of firing the
+                            -- next four the instant these land.
+                            vim.defer_fn(fetch_batch, batch_gap_ms)
                         end
                     end
                 end)

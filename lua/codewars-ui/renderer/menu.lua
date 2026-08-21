@@ -56,6 +56,13 @@ local function fetch_user_data(menu, cb)
                 end
                 fetch_by_username(profile.username)
             else
+                -- Swallowing this left a menu that looks signed in, has no
+                -- username, and explains nothing -- while every feature
+                -- needing an identity failed separately.
+                if err then
+                    log.warn(("Signed in, but could not detect your username: %s")
+                        :format(err.msg or "unknown error"))
+                end
                 if cb then vim.schedule(cb) end
             end
         end)
@@ -266,8 +273,10 @@ function Menu:draw()
     end
 
     local win_width = 80
+    local win_height = 0
     if self.winid and api.nvim_win_is_valid(self.winid) then
         win_width = api.nvim_win_get_width(self.winid)
+        win_height = api.nvim_win_get_height(self.winid)
     end
 
     local lines = {}
@@ -290,10 +299,8 @@ function Menu:draw()
         if w > header_width then header_width = w end
     end
 
-    for _ = 1, 4 do
-        table.insert(lines, "")
-    end
-
+    -- Top padding is applied AFTER the block is built, once its real height
+    -- is known — see the centering step before buf_set_lines.
     local header_start = #lines
     for _, line in ipairs(ascii) do
         table.insert(lines, center(line, header_width))
@@ -396,6 +403,45 @@ function Menu:draw()
         table.insert(lines, center("codewars.com"))
     end
 
+    -- Vertically centre the block.
+    --
+    -- This used to be a fixed 4-line pad plus a `zz` at the end. `zz` only
+    -- repositions by scrolling, so on a window TALLER than the block there
+    -- is nothing to scroll and it does nothing: the menu sat at the top with
+    -- all the slack dumped below it, and the gap grew on pages with fewer
+    -- buttons. Pad from the real window height instead, and leave `zz` to
+    -- handle the opposite case, where the block overflows a short window.
+    local TOP_PAD_MIN = 4
+    local top_pad = TOP_PAD_MIN
+    if win_height > 0 and #lines + TOP_PAD_MIN < win_height then
+        top_pad = math.floor((win_height - #lines) / 2)
+    end
+
+    if top_pad > 0 then
+        local padded = {}
+        for _ = 1, top_pad do
+            table.insert(padded, "")
+        end
+        vim.list_extend(padded, lines)
+        lines = padded
+
+        -- Every recorded row index was captured against the unpadded block,
+        -- so shift them all or the highlights and keymaps land on the wrong
+        -- lines.
+        local function shift(t)
+            local out = {}
+            for row, v in pairs(t) do out[row + top_pad] = v end
+            return out
+        end
+        self._line_hls = shift(self._line_hls)
+        self.buttons = shift(self.buttons)
+        header_start = header_start + top_pad
+        signin_row = signin_row + top_pad
+        if honor_row then honor_row = honor_row + top_pad end
+    end
+
+    local content_height = #lines
+
     ui_utils.buf_set_lines(self.bufnr, lines)
 
     local ns = self._ns
@@ -436,8 +482,12 @@ function Menu:draw()
         self.cursor_idx = math.min(self.cursor_idx, #rows)
         self:_jump_to_row(rows[self.cursor_idx])
 
-        -- Force viewport to center on cursor so footer stays visible on small terminals
-        if self.winid and api.nvim_win_is_valid(self.winid) then
+        -- Only when the block overflows a short window: there `zz` genuinely
+        -- keeps the footer on screen. When it fits, the padding above has
+        -- already placed it and scrolling would undo that.
+        if self.winid and api.nvim_win_is_valid(self.winid)
+            and win_height > 0 and content_height > win_height
+        then
             api.nvim_win_call(self.winid, function()
                 vim.cmd("normal! zz")
             end)
@@ -504,10 +554,15 @@ function Menu:autocmds()
         group = group_id,
         buffer = self.bufnr,
         callback = function()
-            local w = self.winid and api.nvim_win_is_valid(self.winid)
-                and api.nvim_win_get_width(self.winid) or 0
-            if w == self._last_width then return end
+            local valid = self.winid and api.nvim_win_is_valid(self.winid)
+            local w = valid and api.nvim_win_get_width(self.winid) or 0
+            -- Height matters now that the block is centred vertically: a
+            -- height-only resize used to skip the redraw and leave the menu
+            -- centred for the OLD height.
+            local h = valid and api.nvim_win_get_height(self.winid) or 0
+            if w == self._last_width and h == self._last_height then return end
             self._last_width = w
+            self._last_height = h
             self._redraw_only = true
             self:draw()
         end,

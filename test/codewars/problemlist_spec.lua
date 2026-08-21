@@ -1,0 +1,103 @@
+-- The partial-cache guard is the crux of the rate-limit work: a truncated
+-- list stamped with the current time looks fresh for the whole cache
+-- interval and hides every kata the aborted run never fetched. Nothing
+-- exercised problemlist.update before this file.
+describe("cache.problemlist update", function()
+    package.loaded["codewars.logger"] = {
+        info = function() end, warn = function() end, error = function() end,
+        err = function() end, debug = function() end,
+    }
+    package.loaded["codewars.logger.spinner"] = {
+        start = function()
+            return {
+                update = function() end,
+                success = function() end,
+                error = function() end,
+            }
+        end,
+    }
+    package.loaded["codewars.config"] = { user = { cache = {} }, lang = "python" }
+
+    local writes = {}
+    package.loaded["codewars.cache.utils"] = {
+        cache_file = function(name) return "/tmp/cw-test-" .. tostring(name) end,
+        read_json = function() return nil end,
+        write_json = function(path, data) table.insert(writes, { path = path, data = data }) end,
+    }
+
+    -- One scripted response per page request, consumed in order.
+    local page_calls = 0
+    local page_script = nil
+    package.loaded["codewars.api.search"] = {
+        fetch_page = function(_, _, cb)
+            page_calls = page_calls + 1
+            return cb(page_script(page_calls))
+        end,
+    }
+
+    package.loaded["codewars.cache.problemlist"] = nil
+    local problemlist = require("codewars.cache.problemlist")
+
+    local function run()
+        local done, items, partial = false, nil, nil
+        problemlist.update({ max_pages = 2 }, function(i, p)
+            items, partial, done = i, p, true
+        end)
+        vim.wait(8000, function() return done end)
+        assert.is_true(done, "update never called back")
+        return items, partial
+    end
+
+    before_each(function()
+        writes = {}
+        page_calls = 0
+    end)
+
+    it("writes the cache and reports success on a clean run", function()
+        page_script = function(n)
+            if n % 2 == 1 then
+                return { { slug = "kata-" .. n } }, false, nil
+            end
+            return {}, false, nil
+        end
+        local items, partial = run()
+        assert.is_nil(partial)
+        assert.are.equal(1, #writes)
+        assert.is_true(#items > 0)
+        assert.is_not_nil(writes[1].data.timestamp)
+    end)
+
+    -- Refusing the write is the whole point: the next run must retry rather
+    -- than trust a short list.
+    it("does NOT write the cache when rate limiting aborts the run", function()
+        page_script = function(n)
+            if n == 1 then return { { slug = "kata-1" } }, true, nil end
+            return {}, false, { status = 429, rate_limited = true, msg = "limited" }
+        end
+        local items, partial = run()
+        assert.are.equal(0, #writes, "a partial cache was written")
+        assert.is_true(partial)
+        assert.is_not_nil(items) -- caller still receives what was collected
+    end)
+
+    it("does NOT write the cache when auth aborts the run", function()
+        page_script = function(n)
+            if n == 1 then return { { slug = "kata-1" } }, true, nil end
+            return {}, false, { auth = true, msg = "session expired" }
+        end
+        local _, partial = run()
+        assert.are.equal(0, #writes, "a partial cache was written")
+        assert.is_true(partial)
+    end)
+
+    it("deduplicates by slug before writing", function()
+        page_script = function(n)
+            if n % 2 == 1 then
+                return { { slug = "same" }, { slug = "same" } }, false, nil
+            end
+            return {}, false, nil
+        end
+        local items = run()
+        assert.are.equal(1, #items)
+    end)
+end)

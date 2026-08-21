@@ -842,7 +842,10 @@ function cmd.cache_update()
     local utils = require("codewars.utils")
     utils.auth_guard()
     local problemlist = require("codewars.cache.problemlist")
-    problemlist.update({}, function(items)
+    problemlist.update({}, function(items, partial)
+        -- An aborted run already surfaced its own error; claiming the list
+        -- was updated right underneath that is just contradictory.
+        if partial then return end
         log.info(("Problem list updated: %d kata"):format(#items))
     end)
 end
