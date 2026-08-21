@@ -4,7 +4,11 @@
 local plenary_dir = os.getenv("PLENARY_DIR") or "/tmp/plenary.nvim"
 local nui_dir = os.getenv("NUI_DIR") or "/tmp/nui.nvim"
 
-if vim.fn.isdirectory(plenary_dir) == 0 then
+-- Same trap as the Makefile: test for the file we require, not the directory.
+-- A stale /tmp entry can be an empty tree, which passes isdirectory() and
+-- leaves plenary unresolvable.
+if vim.fn.filereadable(plenary_dir .. "/lua/plenary/curl.lua") == 0 then
+    vim.fn.delete(plenary_dir, "rf")
     vim.fn.system({ "git", "clone", "https://github.com/nvim-lua/plenary.nvim", plenary_dir })
 end
 

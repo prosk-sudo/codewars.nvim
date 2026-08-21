@@ -3,8 +3,12 @@ NUI_DIR ?= /tmp/nui.nvim
 
 .PHONY: test test-file plenary nui deps
 
+# Probe for a FILE we actually require, never a directory. macOS deletes
+# the CONTENTS of stale /tmp entries but leaves the directory tree
+# standing, so a directory test passes against an empty husk and the clone
+# is skipped forever - tests then hang on an unresolvable require.
 plenary:
-	@if [ ! -d "$(PLENARY_DIR)/lua" ]; then \
+	@if [ ! -f "$(PLENARY_DIR)/lua/plenary/curl.lua" ]; then \
 		rm -rf "$(PLENARY_DIR)"; \
 		git clone https://github.com/nvim-lua/plenary.nvim "$(PLENARY_DIR)"; \
 	fi
@@ -12,7 +16,7 @@ plenary:
 # nui backs every split and popup. Without it the whole mounted-UI layer is
 # unloadable in tests, which is how two lifecycle regressions shipped.
 nui:
-	@if [ ! -d "$(NUI_DIR)/lua" ]; then \
+	@if [ ! -f "$(NUI_DIR)/lua/nui/popup/init.lua" ]; then \
 		rm -rf "$(NUI_DIR)"; \
 		git clone https://github.com/MunifTanjim/nui.nvim "$(NUI_DIR)"; \
 	fi
