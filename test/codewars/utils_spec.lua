@@ -38,6 +38,46 @@ describe("utils", function()
             local slug = utils.parse_slug("https://www.codewars.com/kata/50654ddff44f800200000004")
             assert.are.equal("50654ddff44f800200000004", slug)
         end)
+
+        -- Users type the title as the site shows it; the server wants the
+        -- slug. Build it the way Codewars does instead of failing with a
+        -- bare "curl failed".
+        -- Real kata titles, as the site displays them.
+        it("turns a kata title into its slug", function()
+            assert.are.equal("unique-in-order", utils.parse_slug("unique in order"))
+            assert.are.equal("unique-in-order", utils.parse_slug("Unique In Order"))
+            assert.are.equal("is-this-a-triangle", utils.parse_slug("Is this a triangle?"))
+            assert.are.equal("who-likes-it", utils.parse_slug("Who likes it?"))
+            assert.are.equal("persistent-bugger", utils.parse_slug("Persistent Bugger."))
+            assert.are.equal("square-n-sum", utils.parse_slug("Square(n) Sum"))
+            assert.are.equal("sum-of-digits-digital-root", utils.parse_slug("Sum of Digits / Digital Root"))
+            assert.are.equal("multiples-of-3-or-5", utils.parse_slug("Multiples of 3 or 5"))
+            assert.are.equal("tic-tac-toe-checker", utils.parse_slug("Tic-Tac-Toe Checker"))
+            assert.are.equal("rail-fence-cipher-encoding-and-decoding",
+                utils.parse_slug("Rail Fence Cipher: Encoding and Decoding"))
+        end)
+
+        it("drops a rank copied along with the title", function()
+            assert.are.equal("unique-in-order", utils.parse_slug("Unique In Order (6 kyu)"))
+            assert.are.equal("unique-in-order", utils.parse_slug("Unique in Order (6 Kyu)"))
+            assert.are.equal("title-case", utils.parse_slug("Title Case (4 kyu)"))
+            assert.are.equal("tiny-three-pass-compiler", utils.parse_slug("Tiny Three-Pass Compiler (1 kyu)"))
+        end)
+
+        it("collapses stray whitespace and punctuation runs", function()
+            assert.are.equal("unique-in-order", utils.parse_slug("  unique   in  order  "))
+            assert.are.equal("unique-in-order", utils.parse_slug("unique--in_order"))
+        end)
+
+        it("leaves a correct slug and a hex id untouched", function()
+            assert.are.equal("two-to-one", utils.parse_slug("two-to-one"))
+            assert.are.equal("valid-braces", utils.parse_slug("valid-braces"))
+            assert.are.equal("50654ddff44f800200000004", utils.parse_slug("50654ddff44f800200000004"))
+        end)
+
+        it("still normalises a title-cased slug pasted from a URL", function()
+            assert.are.equal("unique-in-order", utils.parse_slug("https://www.codewars.com/kata/Unique-In-Order?x=1"))
+        end)
     end)
 
     describe("handle_res", function()

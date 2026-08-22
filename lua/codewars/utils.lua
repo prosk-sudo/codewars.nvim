@@ -108,15 +108,27 @@ function utils.detect_duplicate_kata(title_slug, lang)
     end
 end
 
---- Parse a codewars URL or slug into a slug
+--- Parse a codewars URL, slug, id, or kata TITLE into a slug.
+---
+--- Codewars slugs are the title lowercased with every run of non
+--- alphanumerics collapsed to a single dash ("Unique In Order" →
+--- unique-in-order, "Is this a triangle?" → is-this-a-triangle). Users
+--- naturally type the title as they see it, which used to reach the
+--- server verbatim and fail with a bare "curl failed". Normalise the
+--- same way the site does so either form works; a slug that is already
+--- correct passes through unchanged, as does a 24-hex id.
 ---@param input string
 ---@return string
 function utils.parse_slug(input)
-    local slug = input:match("codewars%.com/kata/([^/]+)")
-    if slug then
-        return slug
+    local slug = input:match("codewars%.com/kata/([^/?#]+)")
+    if not slug then
+        slug = vim.trim(input)
+        -- A rank copied along with the title: "Unique In Order (6 kyu)"
+        slug = slug:gsub("%s*%(%s*%d+%s*[kK][yY][uU]%s*%)%s*$", "")
+        slug = slug:gsub("%s*%(%s*%d+%s*[dD][aA][nN]%s*%)%s*$", "")
     end
-    return input
+    slug = slug:lower():gsub("[^a-z0-9]+", "-"):gsub("^%-+", ""):gsub("%-+$", "")
+    return slug
 end
 
 function utils.auth_guard()
