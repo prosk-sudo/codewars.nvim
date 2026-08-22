@@ -59,9 +59,14 @@ function completed.update(cb)
         api_utils.get(endpoint, {
             callback = function(res, err)
                 if err then
+                    -- Not saved: writing the pages fetched so far would
+                    -- stamp a partial list as fresh and overwrite a valid
+                    -- older cache, so kata completed on later pages would
+                    -- show as unsolved until the cache interval expired.
+                    -- Hand back whatever is on disk and let the next open
+                    -- retry.
                     log.err(err)
-                    completed.save(all)
-                    if cb then cb(all) end
+                    if cb then cb((completed.get())) end
                     return
                 end
 

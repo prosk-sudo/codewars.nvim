@@ -492,9 +492,16 @@ function picker.problems(opts)
             picker._show_kata_list(items, "Select a Question", completed_set)
         end)
     else
-        problemlist.update(opts, function(items)
+        problemlist.update(opts, function(items, partial)
             if not items or #items == 0 then
+                -- An aborted run already reported its own error.
+                if partial then return end
                 return log.warn("No kata found")
+            end
+            if partial then
+                -- Nothing was cached, so the next picker open retries; but
+                -- do not pass off the fragment as the whole catalogue.
+                log.warn(("Showing %d kata fetched before the build was aborted — run :CW cache update to retry"):format(#items))
             end
             ensure_completed_set(function(completed_set)
                 picker._show_kata_list(items, "Select a Question", completed_set)

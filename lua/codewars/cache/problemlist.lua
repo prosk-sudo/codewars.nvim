@@ -93,6 +93,9 @@ function problemlist.update(opts, cb)
             language = "", -- no language filter, fetch all kata
             rank = { rank },
             order = "popularity+desc",
+            -- Once one page has given up, the rest of the batch must not
+            -- keep retrying into the same limiter.
+            cancelled = function() return aborted end,
         }
 
         local function fetch_batch()
@@ -128,6 +131,17 @@ function problemlist.update(opts, cb)
                         -- the remaining ranks earning more 429s.
                         aborted = true
                         spinner:error(("Rate limited by Codewars after %d kata — wait a minute and run :CW cache update again"):format(#all_results))
+                        return finish(true)
+                    end
+
+                    if err then
+                        -- Any other failure (5xx after retries, curl could
+                        -- not connect, unexpected status). Treating it as an
+                        -- empty page would end the rank early and write the
+                        -- truncated list as fresh — the same silent hole the
+                        -- 429 path above exists to prevent.
+                        aborted = true
+                        spinner:error(("Fetch failed after %d kata: %s"):format(#all_results, err.msg or "unknown error"))
                         return finish(true)
                     end
 

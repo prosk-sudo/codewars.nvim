@@ -90,6 +90,37 @@ describe("cache.problemlist update", function()
         assert.is_true(partial)
     end)
 
+    -- A 5xx or a dead connection used to fall through both abort checks and
+    -- count as an EMPTY page: the rank ended early and the truncated list
+    -- was written as fresh — the same hole the 429 path exists to close.
+    it("does NOT write the cache when any other fetch error aborts the run", function()
+        page_script = function(n)
+            if n == 1 then return { { slug = "kata-1" } }, true, nil end
+            return {}, false, { status = 502, msg = "http error 502" }
+        end
+        local items, partial = run()
+        assert.are.equal(0, #writes, "a partial cache was written")
+        assert.is_true(partial)
+        assert.are.equal(1, #items)
+    end)
+
+    it("tells fetch_page to stop retrying once the run is aborted", function()
+        local cancelled
+        package.loaded["codewars.api.search"].fetch_page = function(opts, _, cb)
+            cancelled = cancelled or opts.cancelled
+            page_calls = page_calls + 1
+            return cb(page_script(page_calls))
+        end
+        page_script = function(n)
+            if n == 1 then return { { slug = "kata-1" } }, true, nil end
+            return {}, false, { status = 429, rate_limited = true, msg = "limited" }
+        end
+        assert.is_false(cancelled and cancelled() or false)
+        run()
+        assert.is_function(cancelled)
+        assert.is_true(cancelled())
+    end)
+
     it("deduplicates by slug before writing", function()
         page_script = function(n)
             if n % 2 == 1 then
