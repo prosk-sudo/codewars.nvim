@@ -472,7 +472,6 @@ function Menu:draw()
         if honor_row then honor_row = honor_row + top_pad end
     end
 
-    local content_height = #lines
 
     ui_utils.buf_set_lines(self.bufnr, lines)
 
@@ -518,7 +517,7 @@ function Menu:draw()
         -- keeps the footer on screen. When it fits, the padding above has
         -- already placed it and scrolling would undo that.
         if self.winid and api.nvim_win_is_valid(self.winid)
-            and win_height > 0 and content_height > win_height
+            and win_height > 0 and #lines > win_height
         then
             api.nvim_win_call(self.winid, function()
                 vim.cmd("normal! zz")
