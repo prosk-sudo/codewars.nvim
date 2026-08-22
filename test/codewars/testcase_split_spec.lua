@@ -43,3 +43,27 @@ describe("TestcaseSplit:populate", function()
         assert.are.same({ "z" }, vim.api.nvim_buf_get_lines(a.bufnr, 0, -1, false))
     end)
 end)
+
+describe("TestcaseSplit:mount filetype", function()
+    local TestcaseSplit = require("codewars-ui.split.testcase")
+
+    local function mounted(lang)
+        local split = TestcaseSplit:new({ slug = "ft-" .. lang, lang = lang })
+        split:mount()
+        local ft = vim.bo[split.bufnr].filetype
+        split:unmount()
+        return ft
+    end
+
+    it("uses the filetype NAME, not config.langs' file extension", function()
+        -- config.langs stores ft = "py"; a buffer with filetype=py gets no
+        -- highlighting. The split must end up as 'python'.
+        assert.are.equal("python", mounted("python"))
+        assert.are.equal("javascript", mounted("javascript"))
+        assert.are.equal("ruby", mounted("ruby"))
+    end)
+
+    it("follows the fixture's language when it differs from the solution's", function()
+        assert.are.equal("ruby", mounted("sql")) -- SQL kata tests are written in Ruby
+    end)
+end)

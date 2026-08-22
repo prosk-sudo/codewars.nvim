@@ -411,10 +411,16 @@ function Menu:draw()
     -- all the slack dumped below it, and the gap grew on pages with fewer
     -- buttons. Pad from the real window height instead, and leave `zz` to
     -- handle the opposite case, where the block overflows a short window.
+    --
+    -- TOP_PAD_MIN is a FLOOR: the centred pad is never allowed below it, so
+    -- the block moves monotonically as the window grows. Taking the centred
+    -- value whenever the block merely fit let a window a few rows taller
+    -- than the block pad 2 where the one-row-shorter window padded 4, and
+    -- the menu jumped upward on resize.
     local TOP_PAD_MIN = 4
     local top_pad = TOP_PAD_MIN
-    if win_height > 0 and #lines + TOP_PAD_MIN < win_height then
-        top_pad = math.floor((win_height - #lines) / 2)
+    if win_height > 0 then
+        top_pad = math.max(TOP_PAD_MIN, math.floor((win_height - #lines) / 2))
     end
 
     if top_pad > 0 then
@@ -550,11 +556,16 @@ end
 function Menu:autocmds()
     local group_id = api.nvim_create_augroup("codewars_menu", { clear = true })
 
+    -- Deliberately NOT buffer-local. WinResized fires once per tab with
+    -- <abuf> bound to the current buffer, so a buffer-local autocmd never
+    -- fires when the menu's window is resized from a neighbouring split
+    -- (dragging the separator from the other side). Listen globally and let
+    -- the dimension comparison below discard events that did not touch us.
     api.nvim_create_autocmd("WinResized", {
         group = group_id,
-        buffer = self.bufnr,
         callback = function()
             local valid = self.winid and api.nvim_win_is_valid(self.winid)
+            if not valid then return end
             local w = valid and api.nvim_win_get_width(self.winid) or 0
             -- Height matters now that the block is centred vertically: a
             -- height-only resize used to skip the redraw and leave the menu

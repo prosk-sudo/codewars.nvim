@@ -74,21 +74,32 @@ function M.check()
         -- Try to validate session
         local user_api = require("codewars.api.user")
         local done = false
+        local reported = false
 
+        -- No retries here: the request normally auto-retries a 429 with
+        -- waits of up to a minute, which is right for the menu but would
+        -- make this 3 s wait expire and report "unreachable" while the retry
+        -- was still working as designed.
         user_api.get_current(function(profile, err)
+            done = true
+            -- The report has already been rendered by the time a late
+            -- reply lands; ok()/warn() after that point go nowhere useful.
+            if reported then return end
             if not err and profile and profile.username then
                 ok(("Session valid (username: %s)"):format(profile.username))
+            elseif err and err.rate_limited then
+                warn("Codewars is rate limiting requests right now; could not validate the session. Try again in a minute.")
             else
                 warn("Session may be expired. Run :CW cookie to re-authenticate.")
             end
-            done = true
-        end)
+        end, { retry = 0 })
 
         -- Wait briefly for async response
         vim.wait(3000, function() return done end, 100)
         if not done then
             warn("Could not validate session (timeout). Codewars may be unreachable.")
         end
+        reported = true
     else
         local cache_path = config.storage.cache
             and config.storage.cache:joinpath("cookie"):absolute()
