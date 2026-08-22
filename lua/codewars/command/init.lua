@@ -34,7 +34,7 @@ function cmd.help()
 
     local help = {
         { "TRAINING",       "" },
-        { "train <slug> [lang]", "Open a kata by slug or URL" },
+        { "train <slug> [lang]", "Open a kata by title, slug or URL" },
         { "random [lang]",  "Open a random kata" },
         { "focus [lang] [category]", "Choose Today's Focus (re-run returns the same kata)" },
         { "focus skip", "Skip the current focus kata and open the next" },

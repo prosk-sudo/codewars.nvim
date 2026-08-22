@@ -122,7 +122,7 @@ local function build_pages(menu)
 
         katas = {
             { icon = I.search,  label = "Train",       sc = "t", fn = function()
-                vim.ui.input({ prompt = "Kata slug or URL: " }, function(input)
+                vim.ui.input({ prompt = "Kata title, slug or URL: " }, function(input)
                     if input and input ~= "" then
                         local utils = require("codewars.utils")
                         local slug = utils.parse_slug(input)
