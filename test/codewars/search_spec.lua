@@ -26,10 +26,14 @@ describe("api.search", function()
     local search = require("codewars.api.search")
     api_utils.retry_delay_ms = function() return 1 end
 
-    -- One result row in the shape parse_html expects, so a "success" page is
-    -- distinguishable from an empty one.
+    -- One result row in the shape parse_html ACTUALLY expects: it splits on
+    -- the literal "list-item-kata" and requires a hex id in the href. The
+    -- previous fixture had neither, parsed to {}, and let the happy-path
+    -- tests pass while asserting nothing about results.
+    local SLUG = "5277c8a221e209d3f6000b56"
     local function page_html()
-        return [[<div class="item-title"><a href="/kata/valid-braces">Valid Braces</a></div>]]
+        return ([[<div class="list-item-kata" id="%s"><span>7 kyu</span>
+            <div class="item-title"><a href="/kata/%s">Valid Braces</a></div></div>]]):format(SLUG, SLUG)
     end
 
     local function limited(n)
@@ -61,6 +65,18 @@ describe("api.search", function()
             end)
             assert.are.equal(3, #calls)
             assert.is_nil(got[3]) -- no error
+            assert.are.equal(1, #got[1])
+            assert.are.equal(SLUG, got[1][1].slug)
+            assert.are.equal("Valid Braces", got[1][1].name)
+            assert.is_true(got[2]) -- has_more
+        end)
+
+        it("requests the page with an HTML Accept header through api.utils", function()
+            table.insert(responses, { exit = 0, status = 200, body = page_html() })
+            drive(function(cb) search.fetch_page({ language = "python", query = "braces" }, 2, cb) end)
+            assert.are.equal(1, #calls)
+            assert.truthy(calls[1]:find("/kata/search/python?", 1, true))
+            assert.truthy(calls[1]:find("page=2", 1, true))
         end)
 
         -- The whole point: exhausted rate limiting must NOT look like an
@@ -92,14 +108,61 @@ describe("api.search", function()
             assert.is_true(got[3].auth)
         end)
 
-        it("passes other failures through without retrying", function()
-            table.insert(responses, { exit = 0, status = 500, body = "" })
+        it("passes non-retryable failures through without retrying", function()
+            table.insert(responses, { exit = 0, status = 404, body = "" })
             local got = drive(function(cb)
                 search.fetch_page({ language = "python" }, 0, cb)
             end)
             assert.are.equal(1, #calls)
             assert.is_not_nil(got[3])
             assert.is_nil(got[3].rate_limited)
+        end)
+
+        -- A transient 5xx is retried like every other GET; if it persists
+        -- it MUST surface as an error, never as an empty page, or the cache
+        -- build ends the rank early and writes the truncated list as fresh.
+        it("retries a 5xx and reports it as an error when it persists", function()
+            for _ = 1, 10 do
+                table.insert(responses, { exit = 0, status = 502, body = "" })
+            end
+            local got = drive(function(cb)
+                search.fetch_page({ language = "python" }, 0, cb)
+            end)
+            assert.are.equal(4, #calls)
+            assert.are.same({}, got[1])
+            assert.is_not_nil(got[3])
+            assert.are.equal(502, got[3].status)
+        end)
+
+        it("reports a curl failure (no connection) instead of never calling back", function()
+            package.loaded["plenary.curl"].get = function(url, opts)
+                table.insert(calls, url)
+                -- plenary invokes on_error instead of callback when curl exits non-zero
+                opts.on_error({ message = "curl error", stderr = "", exit = 6 })
+            end
+            local got = drive(function(cb)
+                search.fetch_page({ language = "python" }, 0, cb)
+            end)
+            assert.are.equal(1, #calls)
+            assert.are.equal(6, got[3].code)
+            package.loaded["plenary.curl"].get = function(url, opts)
+                table.insert(calls, url)
+                local r = table.remove(responses, 1) or { exit = 0, status = 200, body = "" }
+                opts.callback(r)
+            end
+        end)
+
+        it("stops retrying once the caller reports it has given up", function()
+            limited(10)
+            local gave_up = false
+            local got = drive(function(cb)
+                search.fetch_page({ language = "python", cancelled = function() return gave_up end }, 0, function(...)
+                    cb(...)
+                end)
+                gave_up = true
+            end)
+            assert.are.equal(1, #calls)
+            assert.is_true(got[3].rate_limited)
         end)
     end)
 
@@ -133,6 +196,11 @@ describe("api.search", function()
                 search.kata({ language = "python", max_pages = 2 }, cb)
             end)
             assert.is_nil(got[2])
+            -- Both pages were requested (the first said has_more) and the
+            -- result actually made it through, not just "no error".
+            assert.are.equal(2, #calls)
+            assert.are.equal(1, #got[1])
+            assert.are.equal(SLUG, got[1][1].slug)
         end)
     end)
 end)

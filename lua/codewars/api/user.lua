@@ -25,12 +25,15 @@ end
 --- ONLY place the username is ever discovered, so a single 429 here used to
 --- leave the whole session without an identity. Going through the shared
 --- layer means a rate-limited dashboard is retried instead of abandoned.
-function user.get_current(cb)
+function user.get_current(cb, opts)
     local hdrs = headers_mod.get()
     hdrs["Accept"] = "text/html"
 
     utils.get("/dashboard", {
         headers = hdrs,
+        -- Caller override for the request budget (e.g. :checkhealth wants
+        -- a single attempt so its short wait is not eaten by retries).
+        retry = opts and opts.retry,
         callback = function(res, err)
             if err then
                 return cb(nil, err)

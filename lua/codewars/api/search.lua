@@ -1,14 +1,12 @@
-local curl = require("plenary.curl")
-local urls = require("codewars.api.urls")
-local headers_mod = require("codewars.api.headers")
+local api_utils = require("codewars.api.utils")
 
 ---@class cw.Api.Search
 local search = {}
 
 --- Fetch a single page of kata search results.
----@param opts table
+---@param opts table { language?, query?, rank?, order?, cancelled?: fun(): boolean }
 ---@param page integer
----@param cb function callback(results[], has_more)
+---@param cb function callback(results[], has_more, err?)
 function search.fetch_page(opts, page, cb)
     local lang = opts.language or require("codewars.config").lang
     local query = opts.query or ""
@@ -30,60 +28,34 @@ function search.fetch_page(opts, page, cb)
         table.insert(params, ("page=%d"):format(page))
     end
 
-    local url
+    local endpoint
     if lang and lang ~= "" then
-        url = ("%s/kata/search/%s?%s"):format(urls.base, lang, table.concat(params, "&"))
+        endpoint = ("/kata/search/%s?%s"):format(lang, table.concat(params, "&"))
     else
-        url = ("%s/kata/search?%s"):format(urls.base, table.concat(params, "&"))
-    end
-    local hdrs = headers_mod.get()
-    hdrs["Accept"] = "text/html"
-
-    -- This path talks to curl directly rather than through api.utils, so it
-    -- has to handle rate limiting itself. It matters more here than
-    -- anywhere else: the cache build issues these by the hundred, and a
-    -- refused page used to come back as an EMPTY page, which reads as "end
-    -- of this rank" and silently truncates the cached kata list.
-    local api_utils = require("codewars.api.utils")
-    local MAX_ATTEMPTS = 4
-
-    local function attempt(n)
-        curl.get(url, {
-            headers = hdrs,
-            compressed = false,
-            callback = vim.schedule_wrap(function(out)
-                if out.status == 429 then
-                    if n < MAX_ATTEMPTS then
-                        local err = {
-                            retry_after = tonumber(api_utils.header_value(out.headers, "retry-after")),
-                        }
-                        local wait = api_utils.retry_delay_ms(err, n - 1)
-                        return vim.defer_fn(function() attempt(n + 1) end, wait)
-                    end
-                    return cb({}, false, {
-                        status = 429,
-                        rate_limited = true,
-                        msg = "Codewars is rate limiting requests. Wait a minute and run :CW cache update again.",
-                    })
-                end
-
-                if out.exit ~= 0 or out.status >= 300 then
-                    local err = { msg = "Failed to search kata", status = out.status }
-                    if out.status == 401 or out.status == 403 then
-                        err = { msg = "Session expired or invalid. Run :CW cookie to re-authenticate.", auth = true }
-                    end
-                    return cb({}, false, err)
-                end
-
-                local body = out.body or ""
-                local results = search.parse_html(body)
-
-                cb(results, #results > 0)
-            end),
-        })
+        endpoint = ("/kata/search?%s"):format(table.concat(params, "&"))
     end
 
-    attempt(1)
+    -- Goes through api.utils like every other request, so it gets the same
+    -- 429/5xx retry, Retry-After handling and curl-failure reporting. This
+    -- used to carry its own copy of the retry loop, which drifted: it
+    -- dropped the unparseable-Retry-After signal, could not be cancelled
+    -- once the cache build gave up, and reported a refused page as EMPTY,
+    -- which reads as "end of this rank" and silently truncated the cache.
+    api_utils.get(endpoint, {
+        headers = { ["Accept"] = "text/html" },
+        cancelled = opts.cancelled,
+        callback = function(res, err)
+            if err then
+                return cb({}, false, err)
+            end
+
+            -- The page is HTML, so handle_res hands back the raw body.
+            local body = type(res) == "string" and res or ""
+            local results = search.parse_html(body)
+
+            cb(results, #results > 0)
+        end,
+    })
 end
 
 --- Search/browse kata by scraping multiple pages.

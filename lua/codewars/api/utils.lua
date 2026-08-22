@@ -156,10 +156,25 @@ function utils.curl(method, params)
         retry_rate_limited = (method == "get")
     end
 
+    -- Optional cancellation hook: a caller that fires requests in batches
+    -- (the cache build) sets this so that once it has given up, the other
+    -- in-flight requests stop retrying instead of waiting out their backoffs
+    -- and hammering a server that is already refusing us.
+    local cancelled = params.cancelled
+
     local function should_retry(err)
         if not err or tries <= 0 then return false end
+        if cancelled and cancelled() then return false end
         if err.rate_limited then return retry_rate_limited end
         return err.status ~= nil and err.status >= 500
+    end
+
+    -- plenary calls error() from the job's exit handler when curl itself
+    -- fails (DNS, refused connection, timeout) unless on_error is given.
+    -- Without it the `out.exit ~= 0` branch in handle_res was unreachable
+    -- and async callers simply never heard back: spinners spun forever.
+    local function failed_out(e)
+        return { exit = e.exit or 1, status = 0, headers = {}, body = "", stderr = e.stderr }
     end
 
     if params.callback then
@@ -172,17 +187,26 @@ function utils.curl(method, params)
                 log.debug(("retry %d in %dms"):format(tries, wait))
                 params_cpy.retry = tries - 1
                 params_cpy.retry_attempt = attempt + 1
-                vim.schedule(function()
-                    vim.defer_fn(function() utils.curl(method, params_cpy) end, wait)
-                end)
+                vim.defer_fn(function()
+                    -- Re-checked after the wait: the caller may have given
+                    -- up while we were backing off.
+                    if cancelled and cancelled() then return cb(res, err) end
+                    utils.curl(method, params_cpy)
+                end, wait)
             else
                 cb(res, err)
             end
         end
+        params.on_error = function(e)
+            params.callback(failed_out(e))
+        end
 
         curl[method](url, params)
     else
+        local failure
+        params.on_error = function(e) failure = e end
         local out = curl[method](url, params)
+        if failure then out = failed_out(failure) end
         local res, err = utils.handle_res(out)
 
         if should_retry(err) then
@@ -244,7 +268,10 @@ function utils.handle_res(out)
             -- tell "server asked for a wait we could not read" apart from
             -- "server said nothing".
             retry_after_raw = utils.header_value(out.headers, "retry-after"),
-            msg = "Codewars is rate limiting requests. Waiting before retrying.",
+            -- This text is only ever SEEN once retrying is over (budget
+            -- exhausted, or a mutating request that does not retry), so it
+            -- must not promise a retry that is not coming.
+            msg = "Codewars is rate limiting requests. Wait a minute and try again.",
         }
     elseif out.status == 401 or out.status == 403 then
         err = {
