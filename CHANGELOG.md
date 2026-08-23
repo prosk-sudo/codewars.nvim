@@ -8,7 +8,9 @@ All notable changes to codewars.nvim are documented here.
 - Community solutions now show their votes and comments. A one-line box under
   the code carries each solution's **Best Practices** and **Clever** counts and
   how many comments it has; press `c` to open the comment thread in its place
-  (replies indented, author, rank, date and score on each, spoilers marked),
+  — rendered, not raw markdown: bold, italics, code spans and links shown as
+  such, fenced code kept as a block, author in bold, rank in its kyu colour,
+  score green or red, replies indented, spoilers marked —
   `<Tab>` to move between the panes, `]`/`[` or `1`–`0` to page through
   solutions. Everything comes from the solutions page itself — no extra
   requests. `:CW doctor` gains a drift check for this parser.

@@ -21,6 +21,14 @@ local highlights = {
     codewars_rank_purple = { fg = "#866cc7" },
     codewars_completed = { fg = "#2cbe4e" },
 
+    -- Solution comment thread (rendered from the site's markdown-lite)
+    codewars_comment_author = { fg = "#e6e6e6", bold = true },
+    codewars_comment_guide = { fg = "#5c6370" },
+    codewars_comment_bold = { bold = true },
+    codewars_comment_italic = { italic = true },
+    codewars_comment_code = { fg = "#98c379" },
+    codewars_comment_link = { fg = "#61afef", underline = true },
+
     -- Success rate colors
     codewars_rate_white = { fg = "#e6e6e6" },
     codewars_rate_yellow = { fg = "#ecb613" },

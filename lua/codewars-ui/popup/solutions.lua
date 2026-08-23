@@ -113,32 +113,12 @@ function Solutions:info_segments(sol)
     return table.concat(parts), spans
 end
 
---- Buffer lines for a flattened comment list. Replies indent by depth;
---- each header carries author, rank, date and score so a thread reads top
---- to bottom like the site.
+--- Buffer lines for a flattened comment list (text only; see
+--- codewars-ui.popup.comments for the renderer that also paints it).
 ---@param comments cw.SolutionComment[]
 ---@return string[]
 function Solutions.comment_lines(comments)
-    if #comments == 0 then
-        return { "No comments yet." }
-    end
-    local lines = {}
-    for _, c in ipairs(comments) do
-        local depth = c.depth or 0
-        local indent = string.rep("  ", depth)
-        local meta = {}
-        if c.rank and c.rank ~= "" then meta[#meta + 1] = c.rank end
-        if c.created then meta[#meta + 1] = c.created end
-        if (c.score or 0) ~= 0 then meta[#meta + 1] = ("▲ %d"):format(c.score) end
-        local header = indent .. (depth > 0 and "↳ " or "● ") .. "**" .. (c.author or "?") .. "**"
-        if #meta > 0 then header = header .. "  _" .. table.concat(meta, " · ") .. "_" end
-        if c.masked then header = header .. "  [spoiler]" end
-        lines[#lines + 1] = header
-        for _, l in ipairs(vim.split(c.body or "", "\n", { plain = true })) do
-            lines[#lines + 1] = indent .. "  " .. l
-        end
-        lines[#lines + 1] = ""
-    end
+    local lines, _ = require("codewars-ui.popup.comments").render(comments)
     return lines
 end
 
@@ -259,8 +239,10 @@ function Solutions:render()
             true
         )
         self.comments_popup:mount()
-        ui_utils.buf_set_lines(self.comments_popup.bufnr, Solutions.comment_lines(sol.comments or {}))
-        Solutions.highlight(self.comments_popup.bufnr, "markdown")
+        -- Rendered and painted directly (no markdown filetype): every user
+        -- sees the same thing regardless of grammars/conceal setup.
+        local comments = require("codewars-ui.popup.comments")
+        comments.paint(self.comments_popup.bufnr, comments.render(sol.comments or {}))
         self:_bind(self.comments_popup.bufnr)
     end
 
