@@ -327,7 +327,17 @@ function M.wrap(lang, text, ctx)
     end
     -- Chomped so wrap and strip are exact inverses in buffer space: a template
     -- ending in a newline would otherwise add a blank last line each round.
-    return chomp(w.prefix .. reindent(text, w.indent) .. w.suffix)
+    local wrapped = chomp(w.prefix .. reindent(text, w.indent) .. w.suffix)
+
+    -- Where the starter ENDS in the wrapped text, as a {row, col} cursor
+    -- position: with content after {{starter}} the end of the buffer is the
+    -- template's suffix, not the user's code, so callers placing the cursor
+    -- need this, not EOF. reindent(chomp(text)) is a prefix of the wrapped
+    -- text by construction (reindent leaves trailing blank lines alone).
+    local upto = chomp(w.prefix .. reindent(chomp(text), w.indent))
+    local row = select(2, upto:gsub("\n", "")) + 1
+    local last_line = upto:match("[^\n]*$") or ""
+    return wrapped, { row, #last_line }
 end
 
 --- Take `text` back out of the language's template.

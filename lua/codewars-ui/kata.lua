@@ -84,13 +84,27 @@ function Kata:retemplate(op)
     local templates = require("codewars.templates")
     local apply = op == "wrap" and templates.wrap or templates.strip
 
-    local text, reason = apply(self.lang, self:_buffer_text(), self:_template_ctx())
+    local text, reason_or_pos = apply(self.lang, self:_buffer_text(), self:_template_ctx())
     if not text then
-        log.info(reason)
+        log.info(reason_or_pos)
         return false
     end
 
     self:_set_code(text)
+    -- Wrapping moved the user's code and left the cursor pointing into the
+    -- template's preamble; put it at the END OF THE STARTER (wrap returns
+    -- that position) — not EOF, which is the template's suffix when there
+    -- is content after {{starter}}. Unconditional: the rewrite invalidated
+    -- the old position, so the open-path guard against overriding a
+    -- restored position does not apply here.
+    if op == "wrap" then
+        local pos = type(reason_or_pos) == "table" and reason_or_pos or nil
+        if pos and self.winid and vim.api.nvim_win_is_valid(self.winid) then
+            pcall(vim.api.nvim_win_set_cursor, self.winid, pos)
+        else
+            self:_cursor_to_end(true)
+        end
+    end
     return true
 end
 
@@ -141,7 +155,12 @@ end
 --- a restore-last-position autocmd (LazyVim and friends ship one) has already
 --- run by now; line 1 means nothing claimed a position, or there was none to
 --- restore. Moving anyway would fight the user's own config.
-function Kata:_cursor_to_end()
+---
+--- `force` skips that guard, for callers that just REWROTE the buffer
+--- (`:CW template on`): the old position points into the template's
+--- preamble, so there is nothing worth preserving.
+---@param force boolean?
+function Kata:_cursor_to_end(force)
     if not (self.winid and vim.api.nvim_win_is_valid(self.winid)) then
         return
     end
@@ -149,7 +168,7 @@ function Kata:_cursor_to_end()
     -- The buffer's untouched position is {1, 0}. Testing the row alone would
     -- override a restore to {1, 12}, which is every bit as much a claim.
     local ok, pos = pcall(vim.api.nvim_win_get_cursor, self.winid)
-    if not ok or pos[1] ~= 1 or pos[2] ~= 0 then
+    if not ok or (not force and (pos[1] ~= 1 or pos[2] ~= 0)) then
         return
     end
 

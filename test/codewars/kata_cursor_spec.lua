@@ -67,6 +67,33 @@ describe("Kata:create_buffer cursor", function()
         assert.are.equal(4, (cursor(kata))[1])
     end)
 
+    -- :CW template on re-wraps the open buffer. The rewrite moves the
+    -- user's code and invalidates wherever the cursor was, so the open
+    -- path's "don't override a claimed position" guard must NOT apply. And
+    -- the target is the END OF THE STARTER, not EOF: with content after
+    -- {{starter}} the buffer's last lines are the template's suffix.
+    it(":CW template on moves to the starter's end, not EOF", function()
+        local kata = open("def f(a, b):\n    return None")
+        vim.api.nvim_win_set_cursor(kata.winid, { 1, 2 }) -- a claimed position
+        cfg.user = { templates = { solution = {
+            python = "import math\n\n{{starter}}\n\n# helpers\ndef helper(): pass",
+        } } }
+        assert.is_true(kata:retemplate("wrap"))
+        local row, col = unpack(cursor(kata))
+        -- Lines: 1 import, 2 blank, 3-4 starter, 5 blank, 6-7 suffix.
+        assert.are.equal(4, row)
+        assert.are.equal(#"    return None" - 1, col) -- normal mode clamps to #line - 1
+        assert.are.equal(7, vim.api.nvim_buf_line_count(kata.bufnr))
+    end)
+
+    it(":CW template off leaves the cursor alone", function()
+        cfg.user = { templates = { solution = { python = "import math\n\n{{starter}}" } } }
+        local kata = open("def f(a, b):\n    return None")
+        vim.api.nvim_win_set_cursor(kata.winid, { 1, 2 })
+        assert.is_true(kata:retemplate("strip"))
+        assert.are.same({ 1, 2 }, cursor(kata))
+    end)
+
     it("leaves a restored column alone, not just a restored line", function()
         local group = vim.api.nvim_create_augroup("cw_cursor_col_spec", { clear = true })
         vim.api.nvim_create_autocmd("BufReadPost", {
