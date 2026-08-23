@@ -2,6 +2,14 @@
 
 All notable changes to codewars.nvim are documented here.
 
+## [Unreleased]
+
+### Fixed
+- `:CW template on` now puts the cursor at the end of your starter code after
+  re-wrapping the buffer — not wherever it happened to be (usually inside the
+  template's preamble), and not the end of the file, which is the template's
+  suffix when there is content after `{{starter}}`.
+
 ## [0.3.2] - 2026-08-23
 
 ### Added

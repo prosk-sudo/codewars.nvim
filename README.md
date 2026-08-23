@@ -6,10 +6,13 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
 
 ## What it does
 
-- **Train** — open any kata by slug or URL, write your solution with the
-  description and test cases beside it, then `test` / `attempt` / `submit`.
+- **Train** — open any kata by title, slug or URL, write your solution with
+  the description and test cases beside it, then `test` / `attempt` / `submit`.
 - **Find work** — browse and filter all kata, see your completed ones, or let
   Codewars' trainer pick with Choose Today's Focus.
+- **Community solutions** — after solving, browse other people's solutions
+  with their Best Practices / Clever counts and rendered comment threads, and
+  vote from the popup.
 - **Leaderboards** — top-500 boards for Overall, Completed Kata, Authored Kata
   & Translations, and Ranks.
 - **Freestyle Sparring** — browse kumite, fork one into an editable copy, run
@@ -39,6 +42,7 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
 ```lua
 {
   "prosk-sudo/codewars.nvim",
+  version = "*",  -- pin to tagged releases; remove to track main
   lazy = false,
   dependencies = {
     "nvim-lua/plenary.nvim",
