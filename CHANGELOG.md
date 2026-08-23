@@ -5,6 +5,22 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Added
+- Community solutions now show their votes and comments. A one-line box under
+  the code carries each solution's **Best Practices** and **Clever** counts and
+  how many comments it has; press `c` to open the comment thread in its place
+  (replies indented, author, rank, date and score on each, spoilers marked),
+  `<Tab>` to move between the panes, `]`/`[` or `1`–`0` to page through
+  solutions. Everything comes from the solutions page itself — no extra
+  requests. `:CW doctor` gains a drift check for this parser.
+- The solutions popup highlights its code without setting a filetype, so your
+  language servers and ftplugins no longer attach to a throwaway buffer every
+  time it opens.
+- Fetching solutions shows a spinner, and the parsed page is kept for ten
+  minutes so reopening `:CW solutions` on the same kata is instant. Codewars
+  ranks the solutions server-side before answering, which takes 1–3 s for most
+  kata and up to ~7 s for the most-solved ones; that wait is the server's, not
+  the plugin's. Pages are requested compressed (~440 KB → ~57 KB for such a
+  kata).
 - Custom solution templates. Set `templates.solution.<language>` to a string or
   a function and every new solution buffer starts from it — your imports, your
   helpers, your header. `{{starter}}` is replaced with the code Codewars seeds

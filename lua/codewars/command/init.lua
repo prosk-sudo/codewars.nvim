@@ -250,16 +250,19 @@ function cmd.solutions()
     if not k then return end
 
     local solutions_api = require("codewars.api.solutions")
-    log.info("Fetching solutions...")
+    -- Codewars renders every comment server-side; a popular kata takes
+    -- 5-7 s to answer. A spinner says the wait is expected.
+    local spinner = require("codewars.logger.spinner"):start("Fetching solutions…")
     solutions_api.fetch(k.kata_id, k.lang, function(sols, err)
         if err then
-            return log.error("Failed to fetch solutions: " .. err.msg)
+            return spinner:error("Failed to fetch solutions: " .. err.msg)
         end
         if not sols or #sols == 0 then
             -- solutions.fetch already logged the accurate empty-case message
             -- (beta pending approval / none yet / parse drift)
-            return
+            return spinner:stop()
         end
+        spinner:success(("%d solutions"):format(#sols))
         local Solutions = require("codewars-ui.popup.solutions")
         Solutions:new(sols, k.lang):show()
     end, { unranked = require("codewars.theme").is_unranked(k.rank) })
