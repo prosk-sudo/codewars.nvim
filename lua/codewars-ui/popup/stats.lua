@@ -14,7 +14,8 @@ function Stats:show(username)
     username = username or config.user.username
 
     if username == "" then
-        return log.warn("Username not configured")
+        return log.warn("Codewars username not detected yet. Open :CW menu to retry, "
+            .. "or run :CW cookie if your session expired.")
     end
 
     local user_api = require("codewars.api.user")

@@ -42,7 +42,11 @@ function completed.update(cb)
     local username = config.user.username
 
     if username == "" then
-        log.warn("Username not configured")
+        -- The username is never configured by hand: it is detected from the
+        -- dashboard when the menu opens. Empty here means that detection
+        -- failed, so say that instead of implying a missing setting.
+        log.warn("Codewars username not detected yet. Open :CW menu to retry, "
+            .. "or run :CW cookie if your session expired.")
         if cb then cb({}) end
         return
     end
@@ -55,9 +59,14 @@ function completed.update(cb)
         api_utils.get(endpoint, {
             callback = function(res, err)
                 if err then
+                    -- Not saved: writing the pages fetched so far would
+                    -- stamp a partial list as fresh and overwrite a valid
+                    -- older cache, so kata completed on later pages would
+                    -- show as unsolved until the cache interval expired.
+                    -- Hand back whatever is on disk and let the next open
+                    -- retry.
                     log.err(err)
-                    completed.save(all)
-                    if cb then cb(all) end
+                    if cb then cb((completed.get())) end
                     return
                 end
 

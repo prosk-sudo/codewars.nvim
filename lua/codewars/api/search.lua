@@ -1,14 +1,12 @@
-local curl = require("plenary.curl")
-local urls = require("codewars.api.urls")
-local headers_mod = require("codewars.api.headers")
+local api_utils = require("codewars.api.utils")
 
 ---@class cw.Api.Search
 local search = {}
 
 --- Fetch a single page of kata search results.
----@param opts table
+---@param opts table { language?, query?, rank?, order?, cancelled?: fun(): boolean }
 ---@param page integer
----@param cb function callback(results[], has_more)
+---@param cb function callback(results[], has_more, err?)
 function search.fetch_page(opts, page, cb)
     local lang = opts.language or require("codewars.config").lang
     local query = opts.query or ""
@@ -30,32 +28,33 @@ function search.fetch_page(opts, page, cb)
         table.insert(params, ("page=%d"):format(page))
     end
 
-    local url
+    local endpoint
     if lang and lang ~= "" then
-        url = ("%s/kata/search/%s?%s"):format(urls.base, lang, table.concat(params, "&"))
+        endpoint = ("/kata/search/%s?%s"):format(lang, table.concat(params, "&"))
     else
-        url = ("%s/kata/search?%s"):format(urls.base, table.concat(params, "&"))
+        endpoint = ("/kata/search?%s"):format(table.concat(params, "&"))
     end
-    local hdrs = headers_mod.get()
-    hdrs["Accept"] = "text/html"
 
-    curl.get(url, {
-        headers = hdrs,
-        compressed = false,
-        callback = vim.schedule_wrap(function(out)
-            if out.exit ~= 0 or out.status >= 300 then
-                local err = { msg = "Failed to search kata" }
-                if out.status == 401 or out.status == 403 then
-                    err = { msg = "Session expired or invalid. Run :CW cookie to re-authenticate.", auth = true }
-                end
+    -- Goes through api.utils like every other request, so it gets the same
+    -- 429/5xx retry, Retry-After handling and curl-failure reporting. This
+    -- used to carry its own copy of the retry loop, which drifted: it
+    -- dropped the unparseable-Retry-After signal, could not be cancelled
+    -- once the cache build gave up, and reported a refused page as EMPTY,
+    -- which reads as "end of this rank" and silently truncated the cache.
+    api_utils.get(endpoint, {
+        headers = { ["Accept"] = "text/html" },
+        cancelled = opts.cancelled,
+        callback = function(res, err)
+            if err then
                 return cb({}, false, err)
             end
 
-            local body = out.body or ""
+            -- The page is HTML, so handle_res hands back the raw body.
+            local body = type(res) == "string" and res or ""
             local results = search.parse_html(body)
 
             cb(results, #results > 0)
-        end),
+        end,
     })
 end
 
@@ -78,7 +77,15 @@ function search.kata(opts, cb)
             return cb(all_results)
         end
 
-        search.fetch_page(opts, current_page, function(results, has_more)
+        search.fetch_page(opts, current_page, function(results, has_more, err)
+            -- Callers already destructure (results, err); dropping it here
+            -- turned a rate-limited or expired-session search into a bare
+            -- "No kata found", which is the same lie the cache build used
+            -- to tell.
+            if err then
+                return cb(all_results, err)
+            end
+
             vim.list_extend(all_results, results)
 
             if has_more and current_page < max_pages - 1 then

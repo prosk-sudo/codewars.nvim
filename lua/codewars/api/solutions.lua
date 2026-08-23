@@ -15,6 +15,12 @@ function solutions.fetch(kata_id, language, cb, opts)
 
     page.fetch(url, function(body, perr)
         if perr then
+            -- An HTTP-status error (429 / 403 / 5xx) already says what
+            -- happened and carries the auth / rate_limited flags; only the
+            -- transport and empty-body cases need solution-specific words.
+            if perr.status then
+                return cb(nil, perr)
+            end
             return cb(nil, { msg = perr.curl and "Failed to fetch solutions (curl error)"
                 or "Empty response when fetching solutions. Your session may have expired." })
         end

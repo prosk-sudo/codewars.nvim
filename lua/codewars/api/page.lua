@@ -23,22 +23,76 @@ function page.unescape(s)
 end
 
 --- Standard error wording for a failed page.fetch. Callers with bespoke
---- messages (e.g. solutions' session-expiry hint) build their own.
+--- messages (e.g. solutions' session-expiry hint) build their own; an
+--- HTTP-status error already carries the right wording and is passed on.
 ---@param what string e.g. "the leaderboard"
 ---@param perr cw.err the error page.fetch passed to the callback
 ---@return cw.err
 function page.fetch_err(what, perr)
+    if perr.status then
+        return perr
+    end
     return { msg = perr.curl and ("Failed to fetch %s (curl error)"):format(what)
         or ("Empty response when fetching %s."):format(what) }
 end
 
+--- Read the final response's status and Retry-After out of a curl `-D`
+--- header dump. With -L the dump holds one block per hop; the last block
+--- is the response whose body we have.
+---@param dump string
+---@return integer? status, string? retry_after
+function page.parse_header_dump(dump)
+    local status, retry_after
+    for line in (dump or ""):gmatch("[^\r\n]+") do
+        local code = line:match("^HTTP/[%d.]+%s+(%d%d%d)")
+        if code then
+            status, retry_after = tonumber(code), nil
+        else
+            local v = line:match("^[Rr]etry%-[Aa]fter:%s*(.-)%s*$")
+            if v then retry_after = v end
+        end
+    end
+    return status, retry_after
+end
+
+--- Turn an HTTP status into the error shape api.utils produces, so callers
+--- can branch on `auth` / `rate_limited` / `status` regardless of which
+--- transport fetched the page. nil for a success.
+---@param status integer?
+---@param retry_after string?
+---@return cw.err?
+function page.status_err(status, retry_after)
+    if not status or status < 300 then return nil end
+    if status == 429 then
+        return {
+            status = 429, rate_limited = true,
+            retry_after = tonumber(retry_after), retry_after_raw = retry_after,
+            msg = "Codewars is rate limiting requests. Wait a minute and try again.",
+        }
+    end
+    if status == 401 or status == 403 then
+        return { status = status, auth = true, msg = "Session expired or invalid. Run :CW cookie to re-authenticate." }
+    end
+    return { status = status, msg = ("Codewars answered HTTP %d."):format(status) }
+end
+
+-- A rate-limited page is retried a few times with the API layer's backoff
+-- (Retry-After honoured); anything else is reported once.
+page.MAX_429_RETRIES = 2
+
 --- Fetch a server-rendered HTML page into a temp file (preserves newlines
 --- exactly, unlike jobstart stdout chunking) and return its body.
---- Errors carry a flag so callers can word their own messages:
---- `curl = true` (transport failure) or `empty = true` (blank body).
+--- Errors carry flags so callers can word their own messages: `curl =
+--- true` (transport failure), `empty = true` (blank body), or an HTTP
+--- `status` with `auth` / `rate_limited` set. curl exits 0 on a 429 or a
+--- 403, so without the status check the error page was handed to the HTML
+--- parsers as if it were content and reported as "session expired" or
+--- "markup changed".
 ---@param url string absolute URL
 ---@param cb fun(body: string?, err: cw.err?)
-function page.fetch(url, cb)
+---@param attempt integer? 429 retries already made (internal)
+function page.fetch(url, cb, attempt)
+    attempt = attempt or 0
     local header_args = {}
     for k, v in pairs(headers_mod.get()) do
         table.insert(header_args, "-H")
@@ -46,26 +100,44 @@ function page.fetch(url, cb)
     end
 
     local tmp = vim.fn.tempname()
+    local hdr = vim.fn.tempname()
 
     local cmd = vim.list_extend({
         "curl", "-s", "-L",
+        -- Accept gzip: Codewars HTML compresses ~8x (a popular kata's
+        -- solutions page is ~440 KB raw, ~57 KB compressed).
+        "--compressed",
         "-o", tmp,
+        "-D", hdr,
         url,
-        "--max-time", "15",
+        "--max-time", "30",
     }, header_args)
+
+    local function slurp(path)
+        local f = io.open(path, "r")
+        if not f then return "" end
+        local s = f:read("*a")
+        f:close()
+        return s
+    end
 
     vim.fn.jobstart(cmd, {
         on_exit = vim.schedule_wrap(function(_, exit_code)
-            local body = ""
-            local f = io.open(tmp, "r")
-            if f then
-                body = f:read("*a")
-                f:close()
-            end
+            local body, dump = slurp(tmp), slurp(hdr)
             pcall(os.remove, tmp)
+            pcall(os.remove, hdr)
 
             if exit_code ~= 0 then
                 return cb(nil, { msg = "Failed to fetch " .. url .. " (curl error)", curl = true })
+            end
+
+            local err = page.status_err(page.parse_header_dump(dump))
+            if err then
+                if err.rate_limited and attempt < page.MAX_429_RETRIES then
+                    local wait = require("codewars.api.utils").retry_delay_ms(err, attempt)
+                    return vim.defer_fn(function() page.fetch(url, cb, attempt + 1) end, wait)
+                end
+                return cb(nil, err)
             end
             if body == "" then
                 return cb(nil, { msg = "Empty response from " .. url, empty = true })

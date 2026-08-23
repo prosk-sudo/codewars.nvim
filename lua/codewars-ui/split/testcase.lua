@@ -45,11 +45,14 @@ function TestcaseSplit:mount()
         signcolumn = "no",
     })
 
-    -- Set filetype for syntax highlighting
-    local utils = require("codewars.utils")
-    local lang = utils.get_lang(self.kata.lang)
-    if lang then
-        vim.api.nvim_set_option_value("filetype", lang.ft, { buf = self.bufnr })
+    -- Set filetype for syntax highlighting. config.langs' `ft` is the file
+    -- *extension* ("py"), not the filetype name ("python") — using it here
+    -- left most languages unhighlighted. Go through the slug→filetype table,
+    -- which also knows when a fixture is written in a different language than
+    -- the solution (SQL tests are Ruby, NASM tests are C, …).
+    local ft = require("codewars.languages.filetypes").test(self.kata.lang, self.kata.test_language)
+    if ft then
+        vim.api.nvim_set_option_value("filetype", ft, { buf = self.bufnr })
     end
 
     self.visible = true

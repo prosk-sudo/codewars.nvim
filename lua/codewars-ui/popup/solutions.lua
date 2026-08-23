@@ -1,7 +1,6 @@
 local NuiPopup = require("nui.popup")
 local log = require("codewars.logger")
 local ui_utils = require("codewars-ui.utils")
-local utils = require("codewars.utils")
 
 ---@class cw.ui.Solutions
 ---@field solutions string[]
@@ -51,9 +50,12 @@ function Solutions:render()
 
     self.popup:mount()
 
-    local lang = utils.get_lang(self.language)
-    if lang then
-        vim.api.nvim_set_option_value("filetype", lang.ft, { buf = self.popup.bufnr })
+    -- Scratch buffer, so the filetype must be set by name. config.langs'
+    -- `ft` is the file EXTENSION ("py"), which matches no syntax file and
+    -- left the popup unhighlighted for most languages.
+    local ft = require("codewars.languages.filetypes").code(self.language)
+    if ft then
+        vim.api.nvim_set_option_value("filetype", ft, { buf = self.popup.bufnr })
     end
 
     local code = self.solutions[self.index] or ""

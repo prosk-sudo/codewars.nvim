@@ -479,22 +479,34 @@ function picker.problems(opts)
     local problemlist = require("codewars.cache.problemlist")
     local cached = problemlist.get()
 
+    -- problemlist.update fetches every rank regardless of opts.rank, so the
+    -- filter must apply to BOTH branches; it used to apply only to the
+    -- cached one, and a fresh build showed all eight ranks.
+    local function by_rank(items)
+        if not opts.rank then return items end
+        local rank_set = {}
+        for _, r in ipairs(opts.rank) do rank_set[r] = true end
+        return vim.tbl_filter(function(item)
+            return item.rank_id and rank_set[item.rank_id]
+        end, items)
+    end
+
     if cached then
-        local items = cached
-        if opts.rank then
-            local rank_set = {}
-            for _, r in ipairs(opts.rank) do rank_set[r] = true end
-            items = vim.tbl_filter(function(item)
-                return item.rank_id and rank_set[item.rank_id]
-            end, items)
-        end
         ensure_completed_set(function(completed_set)
-            picker._show_kata_list(items, "Select a Question", completed_set)
+            picker._show_kata_list(by_rank(cached), "Select a Question", completed_set)
         end)
     else
-        problemlist.update(opts, function(items)
-            if not items or #items == 0 then
+        problemlist.update(opts, function(items, partial)
+            items = by_rank(items or {})
+            if #items == 0 then
+                -- An aborted run already reported its own error.
+                if partial then return end
                 return log.warn("No kata found")
+            end
+            if partial then
+                -- Nothing was cached, so the next picker open retries; but
+                -- do not pass off the fragment as the whole catalogue.
+                log.warn(("Showing %d kata fetched before the build was aborted — run :CW cache update to retry"):format(#items))
             end
             ensure_completed_set(function(completed_set)
                 picker._show_kata_list(items, "Select a Question", completed_set)
