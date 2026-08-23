@@ -52,7 +52,8 @@ function M.inline(src, row, col)
                 handled = true
             end
         elseif c == "[" then
-            local text, url, e = src:match("^%[([^%]]+)%]%(([^%)]+)%)()", pos)
+            -- The url is matched but not captured: only the text is shown.
+            local text, e = src:match("^%[([^%]]+)%]%([^%)]+%)()", pos)
             if text then
                 emit(text, "codewars_comment_link")
                 pos = e
