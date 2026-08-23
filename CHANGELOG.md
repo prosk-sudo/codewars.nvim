@@ -2,9 +2,13 @@
 
 All notable changes to codewars.nvim are documented here.
 
-## [Unreleased]
+## [0.3.2] - 2026-08-23
 
 ### Added
+- Open a kata by its title, not just its slug. `:CW train` and the menu accept
+  the name the way the site shows it — "Unique In Order", or "Unique in Order
+  (6 kyu)" copied straight from a list — and build the slug the way Codewars
+  does.
 - Community solutions now show their votes and comments. A one-line box under
   the code carries each solution's **Best Practices** and **Clever** counts and
   how many comments it has; press `c` to open the comment thread in its place
@@ -55,6 +59,30 @@ All notable changes to codewars.nvim are documented here.
   when it matches the template exactly; once you have edited the template's own
   lines it says so and changes nothing, rather than guessing which lines to
   delete. Each rewrite is one undo entry.
+
+### Fixed
+- Rate limiting is handled instead of corrupting state. A 429 used to surface
+  as a bare "http error 429" — or worse, as silently wrong data: the cache
+  build read a refused page as "end of this rank" and wrote a truncated
+  problem list stamped as fresh, an interactive search reported "No kata
+  found", and a rate-limited dashboard left the whole session without an
+  identity. GETs now retry with exponential backoff and jitter, honouring
+  `Retry-After`; mutating requests never auto-retry a 429 (a duplicate solve
+  or publish is worse than a failed one); an aborted cache build refuses to
+  write a partial list, and so do the completed-kata and picker paths.
+- The same honesty for every other failure: a 5xx or dead connection aborts
+  the cache build as partial instead of counting as empty pages; a curl
+  failure reaches the caller instead of spinning forever; scraped pages check
+  the HTTP status (curl exits 0 on a 429/403, so error pages used to be
+  parsed as content and reported as "session expired" or "markup changed").
+- The dashboard menu centres vertically from the real window height and
+  redraws on any resize, including height-only changes and resizes made from
+  a neighbouring split; the pad no longer jumps as the window grows.
+- Scratch buffers (solutions popup, kata test-case split) set a real filetype
+  name instead of a file extension, so they are actually syntax-highlighted.
+- `:checkhealth` no longer reports "unreachable" while a rate-limit retry is
+  still in flight, and a late reply cannot write into an already-rendered
+  report.
 
 ## [0.3.1] - 2026-08-03
 
