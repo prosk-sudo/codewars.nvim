@@ -321,8 +321,10 @@ end
 --- popup and the session cache, which hold the same table, stay current.
 ---@param sol cw.Solution
 ---@param label "best_practice"|"clever"
----@param cb fun(votes: table?, err: cw.err?)
-function solutions.vote(sol, label, cb)
+---@param cb fun(votes: table?, err: cw.err?, note: string?)
+---@param opts? { progress: fun(msg: string) } called when the vote takes a
+--- slow path (the page re-read), so the UI can say what it is waiting for
+function solutions.vote(sol, label, cb, opts)
     if not vim.tbl_contains(solutions.VOTE_LABELS, label) then
         return cb(nil, { msg = "Unknown vote label: " .. tostring(label) })
     end
@@ -339,6 +341,9 @@ function solutions.vote(sol, label, cb)
                 return cb(nil, err)
             end
             if type(res) ~= "table" or not res.success or type(res.votes) ~= "table" then
+                if opts and opts.progress then
+                    opts.progress("Codewars did not confirm the vote; re-reading the page…")
+                end
                 return solutions.reconcile_vote(sol, res, cb)
             end
             solutions.apply_votes(sol, res.votes)

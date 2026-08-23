@@ -188,6 +188,46 @@ describe("Solutions popup", function()
             assert.are.same({ 50, 0 }, vim.api.nvim_win_get_cursor(code_win))
         end)
 
+        -- A vote on a big kata can sit for 15 s; without feedback from the
+        -- keypress there is no telling a slow request from a key that did
+        -- not register.
+        it("shows a spinner from the keypress until the reply, and reports the outcome on it", function()
+            local Spinner = require("codewars.logger.spinner")
+            local real_start = Spinner.start
+            local spinners = {}
+            Spinner.start = function(_, msg)
+                local s = { msgs = { msg } }
+                function s:update(m) self.msgs[#self.msgs + 1] = m end
+                function s:success(m) self.done = "success"; self.msgs[#self.msgs + 1] = m end
+                function s:error(m) self.done = "error"; self.msgs[#self.msgs + 1] = m end
+                spinners[#spinners + 1] = s
+                return s
+            end
+            ui = Solutions:new({ sol({ voted = { best_practice = false, clever = true } }) }, "python")
+            ui:show()
+
+            ui:vote("best_practice")
+            assert.are.equal(1, #spinners)
+            assert.are.equal("Voting Best Practices…", spinners[1].msgs[1])
+            assert.is_nil(spinners[1].done, "spinner must stay up until the reply")
+            -- The API reports a slow path through the progress hook.
+            local api_call = calls[1]
+            calls[1].cb({ best_practice = { count = 488, voted = true }, clever = { count = 168, voted = false } }, nil,
+                "Codewars timed out answering; re-read the page instead")
+            assert.are.equal("success", spinners[1].done)
+            assert.truthy(spinners[1].msgs[#spinners[1].msgs]:find("Voted Best Practices (488) — Codewars timed out", 1, true))
+            assert.is_not_nil(api_call)
+
+            -- Retracting says so from the start; a failure ends on the spinner too.
+            ui:vote("clever")
+            assert.are.equal("Removing your Clever vote…", spinners[2].msgs[1])
+            calls[2].cb(nil, { msg = "Session expired" })
+            assert.are.equal("error", spinners[2].done)
+            assert.truthy(spinners[2].msgs[#spinners[2].msgs]:find("Vote failed: Session expired", 1, true))
+
+            Spinner.start = real_start
+        end)
+
         it("binds the votes to two-key chords, never to bare b / v", function()
             ui = Solutions:new({ sol() }, "python")
             ui:show()

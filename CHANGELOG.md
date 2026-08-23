@@ -20,7 +20,11 @@ All notable changes to codewars.nvim are documented here.
   other label is shown, not assumed), and a green check marks the label you
   voted. On the most-solved kata Codewars records the vote but its worker
   times out recounting and answers with an error; the plugin then re-reads
-  the page instead of voting again and tells you the vote is recorded.
+  the page instead of voting again and tells you the vote is recorded. A
+  spinner runs from the keypress until the reply, so a slow vote is never
+  mistaken for a key that did not register. Note that Codewars keeps one
+  vote per solution per user: voting the other label moves it (verified on
+  the page, not just the reply), and the site's own buttons do the same.
 - The solutions popup highlights its code without setting a filetype, so your
   language servers and ftplugins no longer attach to a throwaway buffer every
   time it opens.

@@ -325,24 +325,30 @@ function Solutions:vote(label)
     if self._voting then return end
     local sol = self.solutions[self.index]
     local idx = self.index
+    local name = label == "best_practice" and "Best Practices" or "Clever"
+    local retracting = sol.voted and sol.voted[label]
     self._voting = true
+    -- Feedback from the keypress itself: a vote on a big kata can sit for
+    -- 15 s or more, and without this there is no telling a slow request
+    -- from a keystroke that did not register.
+    local spinner = require("codewars.logger.spinner"):start(
+        (retracting and "Removing your %s vote…" or "Voting %s…"):format(name))
     require("codewars.api.solutions").vote(sol, label, function(votes, err, note)
         self._voting = false
         if err then
-            return log.error("Vote failed: " .. (err.msg or "unknown error"))
+            return spinner:error("Vote failed: " .. (err.msg or "unknown error"))
         end
-        local name = label == "best_practice" and "Best Practices" or "Clever"
         local v = votes[label] or {}
         local what = v.voted and ("Voted %s (%d)"):format(name, v.count or 0)
             or ("Removed your %s vote (%d)"):format(name, v.count or 0)
         -- The server's reply was unusable and the state was re-read from
         -- the page: say so, the wait was noticeable.
-        log.info(note and (what .. " — " .. note) or what)
+        spinner:success(note and (what .. " — " .. note) or what)
         -- Only refresh if the popup is still open on the same solution.
         if self.popup and self.index == idx then
             self:draw_info(sol)
         end
-    end)
+    end, { progress = function(msg) spinner:update(msg) end })
 end
 
 function Solutions:toggle_comments()
