@@ -249,20 +249,7 @@ function cmd.solutions()
     local k = utils.curr_kata()
     if not k then return end
 
-    local solutions_api = require("codewars.api.solutions")
-    log.info("Fetching solutions...")
-    solutions_api.fetch(k.kata_id, k.lang, function(sols, err)
-        if err then
-            return log.error("Failed to fetch solutions: " .. err.msg)
-        end
-        if not sols or #sols == 0 then
-            -- solutions.fetch already logged the accurate empty-case message
-            -- (beta pending approval / none yet / parse drift)
-            return
-        end
-        local Solutions = require("codewars-ui.popup.solutions")
-        Solutions:new(sols, k.lang):show()
-    end, { unranked = require("codewars.theme").is_unranked(k.rank) })
+    require("codewars-ui.popup.solutions").fetch_and_show(k)
 end
 
 --- Fetch and show one leaderboard category.

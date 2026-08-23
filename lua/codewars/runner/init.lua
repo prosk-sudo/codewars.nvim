@@ -179,15 +179,7 @@ function Runner:handle(mode)
                     kata.console:hide()
                 end
 
-                local solutions_api = require("codewars.api.solutions")
-                solutions_api.fetch(kata.kata_id, kata.lang, function(solutions)
-                    -- Empty case: fetch already logged the accurate reason
-                    -- (locked / none yet / beta pending / drift).
-                    if solutions and #solutions > 0 then
-                        local Solutions = require("codewars-ui.popup.solutions")
-                        Solutions:new(solutions, kata.lang):show()
-                    end
-                end, { unranked = require("codewars.theme").is_unranked(kata.rank) })
+                require("codewars-ui.popup.solutions").fetch_and_show(kata)
             end, 1500)
         end })
     else

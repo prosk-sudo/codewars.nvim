@@ -5,6 +5,37 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Added
+- Community solutions now show their votes and comments. A one-line box under
+  the code carries each solution's **Best Practices** and **Clever** counts and
+  how many comments it has; press `c` to open the comment thread in its place
+  — rendered, not raw markdown: bold, italics, code spans and links shown as
+  such, fenced code kept as a block, author in bold, rank in its kyu colour,
+  score green or red, replies indented, spoilers marked —
+  `<Tab>` to move between the panes, `]`/`[` or `1`–`0` to page through
+  solutions. Everything comes from the solutions page itself — no extra
+  requests. `:CW doctor` gains a drift check for this parser.
+- Vote on solutions from the popup: `gb` for **Best Practices**, `gv` for
+  **Clever** (two-key on purpose — a vote is public, and bare `b`/`v` are
+  what you press by reflex in a code buffer); the same chord on a label you
+  already voted retracts it. Both
+  counts update from the server's reply (whatever Codewars decides about the
+  other label is shown, not assumed), and a green check marks the label you
+  voted. On the most-solved kata Codewars records the vote but its worker
+  times out recounting and answers with an error; the plugin then re-reads
+  the page instead of voting again and tells you the vote is recorded. A
+  spinner runs from the keypress until the reply, so a slow vote is never
+  mistaken for a key that did not register. Note that Codewars keeps one
+  vote per solution per user: voting the other label moves it (verified on
+  the page, not just the reply), and the site's own buttons do the same.
+- The solutions popup highlights its code without setting a filetype, so your
+  language servers and ftplugins no longer attach to a throwaway buffer every
+  time it opens.
+- Fetching solutions shows a spinner, and the parsed page is kept for ten
+  minutes so reopening `:CW solutions` on the same kata is instant. Codewars
+  ranks the solutions server-side before answering, which takes 1–3 s for most
+  kata and up to ~7 s for the most-solved ones; that wait is the server's, not
+  the plugin's. Pages are requested compressed (~440 KB → ~57 KB for such a
+  kata).
 - Custom solution templates. Set `templates.solution.<language>` to a string or
   a function and every new solution buffer starts from it — your imports, your
   helpers, your header. `{{starter}}` is replaced with the code Codewars seeds

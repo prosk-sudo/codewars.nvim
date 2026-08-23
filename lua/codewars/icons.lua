@@ -11,6 +11,9 @@ local defaults = {
     completed = "\u{f058}",
     rank = "●",
 
+    -- Solutions popup: the label the user voted for
+    voted = "\u{f058}", -- check-circle
+
     -- Menu
     katas = "\u{f452}",
     stats = "\u{f012a}",
