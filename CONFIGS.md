@@ -12,6 +12,29 @@ require("codewars").setup({})
 
 That's it. Everything below is optional.
 
+## Plugin manager options (lazy.nvim)
+
+These go in the **plugin spec**, next to `"prosk-sudo/codewars.nvim"` — not
+inside `setup({})`, which silently ignores them.
+
+```lua
+{
+  "prosk-sudo/codewars.nvim",
+  version = "*",                    -- pin to tagged releases
+  -- dir = "~/repos/codewars.nvim", -- or: run a local checkout
+  ...
+}
+```
+
+| Option | Description |
+|---|---|
+| `version = "*"` | Follow tagged releases: `:Lazy update` moves to the newest tag (e.g. `v0.3.2`) instead of the tip of `main`. Recommended — you get exactly what the [CHANGELOG](CHANGELOG.md) describes. |
+| *(neither)* | Track `main`: `:Lazy update` fetches the latest commit. Newest fixes first, occasionally ahead of the docs. |
+| `dir = "<path>"` | Load a local checkout instead of a clone. Whatever is on disk runs — nothing to update, ideal when developing the plugin. Overrides `version`. |
+
+Either way the plugin only changes when you run `:Lazy update` (or edit the
+local checkout); an install never goes stale *and* silently changes on its own.
+
 ## General
 
 | Option | Type | Default | Description |

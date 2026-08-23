@@ -55,6 +55,9 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
 }
 ```
 
+`version`, `dir` and the trade-offs between them are covered in
+[CONFIGS.md](CONFIGS.md#plugin-manager-options-lazynvim).
+
 ## Authentication
 
 ### Getting Your Cookies
