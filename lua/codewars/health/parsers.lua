@@ -49,13 +49,14 @@ local KUMITE_LIST = table.concat({
 local SOLUTIONS = table.concat({
     [[<div id="solutions_list">]],
     [[<div class="js-result-group" data-controller="solution-group" ]],
-    [[data-solution-group-group-id-value="dddddddddddddddddddddddd" id="dddddddddddddddddddddddd">]],
+    [[data-solution-group-group-id-value="dddddddddddddddddddddddd" ]],
+    [[data-solution-group-review-id-value="eeeeeeeeeeeeeeeeeeeeeeee" id="dddddddddddddddddddddddd">]],
     [[<h6 class="solution-group-users-list my-4"><i class="icon-moon-users "></i>]],
     [[<a class="font-semibold" href="/users/someone">someone</a><span> (+ 3)</span></h6>]],
     [[<pre class="p-2"><code data-language="python">def f(x): return x</code></pre>]],
     [[<ul class="vote-labels" data-vote-name="solution-solution_group" data-vote-ref-id="dddddddddddddddddddddddd">]],
     [[<li><a class="vote-label" data-label="best_practice"><i class="icon-moon-up "></i>Best Practices<span>487</span></a></li>]],
-    [[<li><a class="vote-label" data-label="clever"><i class="icon-moon-up "></i>Clever<span>168</span></a></li></ul>]],
+    [[<li><a class="vote-label is-voted" data-label="clever"><i class="icon-moon-up "></i>Clever<span>168</span></a></li></ul>]],
     [[<div class="comments-list-component" v-scope data-view-data="{&quot;comments&quot;:[{&quot;id&quot;:&quot;c1&quot;,]],
     [[&quot;markdown&quot;:&quot;hi&quot;,&quot;nest_level&quot;:0,&quot;votes_score&quot;:1,]],
     [[&quot;created_at_datetime&quot;:&quot;2026-08-01T00:00:00.000+0000&quot;,]],
@@ -122,6 +123,15 @@ M.checks = {
             end
             if s.votes.best_practice ~= 487 or s.votes.clever ~= 168 then
                 return false, "vote counts not read — the vote-labels markup changed"
+            end
+            -- Voting needs the group and review ids and the user's own vote;
+            -- without asserting them the check stayed green while voting
+            -- was broken.
+            if s.id ~= "dddddddddddddddddddddddd" or s.review_id ~= "eeeeeeeeeeeeeeeeeeeeeeee" then
+                return false, "group/review ids not read — the data-solution-group-*-id-value attributes changed (voting breaks)"
+            end
+            if s.voted.clever ~= true or s.voted.best_practice ~= false then
+                return false, "own vote not read — the is-voted class changed"
             end
             if s.authors[1] ~= "someone" or s.extra_authors ~= 3 then
                 return false, "author list not read — the solution-group-users-list markup changed"

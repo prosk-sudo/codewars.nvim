@@ -12,6 +12,13 @@ All notable changes to codewars.nvim are documented here.
   `<Tab>` to move between the panes, `]`/`[` or `1`–`0` to page through
   solutions. Everything comes from the solutions page itself — no extra
   requests. `:CW doctor` gains a drift check for this parser.
+- Vote on solutions from the popup: `gb` for **Best Practices**, `gv` for
+  **Clever** (two-key on purpose — a vote is public, and bare `b`/`v` are
+  what you press by reflex in a code buffer); the same chord on a label you
+  already voted retracts it. Both
+  counts update from the server's reply (whatever Codewars decides about the
+  other label is shown, not assumed), and a green check marks the label you
+  voted.
 - The solutions popup highlights its code without setting a filetype, so your
   language servers and ftplugins no longer attach to a throwaway buffer every
   time it opens.

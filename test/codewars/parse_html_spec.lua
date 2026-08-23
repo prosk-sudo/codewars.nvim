@@ -122,16 +122,18 @@ describe("solutions.parse", function()
         "&quot;comments&quot;:[]}]}],&quot;totalComments&quot;:2,&quot;spoilerFlag&quot;:true}",
     })
 
-    local function group(id, code, bp, clever, comments_json, authors)
+    local REVIEW = "56473f00617b6354650000d4"
+
+    local function group(id, code, bp, clever, comments_json, authors, voted)
         return table.concat({
-            ('<div class="js-result-group px-4" data-controller="solution-group" data-solution-group-group-id-value="%s" id="%s">'):format(id, id),
+            ('<div class="js-result-group px-4" data-controller="solution-group" data-solution-group-group-id-value="%s" data-solution-group-review-id-value="%s" id="%s">'):format(id, REVIEW, id),
             '<h6 class="solution-group-users-list my-4"><i class="icon-moon-users "></i>',
             authors or '<a class="font-semibold" href="/users/JustyFY">JustyFY</a><span>, </span><a href="/users/Mr.%20Meeseeks">Mr. Meeseeks</a><span> (+ 4592)</span>',
             '<div class="clearfix"></div></h6>',
             ('<pre class="p-2"><code data-language="python">%s</code></pre>'):format(code),
             '<ul class="piped-text mt-4"><li><ul class="vote-labels" data-vote-name="solution-solution_group" data-vote-ref-id="' .. id .. '">',
-            ('<li><a class="vote-label" data-label="best_practice"><i class="icon-moon-up "></i>Best Practices<span>%d</span></a></li>'):format(bp),
-            ('<li><a class="vote-label" data-label="clever"><i class="icon-moon-up "></i>Clever<span>%d</span></a></li></ul></li>'):format(clever),
+            ('<li><a class="vote-label%s" data-label="best_practice"><i class="icon-moon-up "></i>Best Practices<span>%d</span></a></li>'):format(voted == "best_practice" and " is-voted" or "", bp),
+            ('<li><a class="vote-label%s" data-label="clever"><i class="icon-moon-up "></i>Clever<span>%d</span></a></li></ul></li>'):format(voted == "clever" and " is-voted" or "", clever),
             '<li><a class="js-show-comments"><span v-text="totalComments">0</span></a></li></ul>',
             '<div class="comments-list-component" v-scope data-view-data="' .. (comments_json or "{&quot;comments&quot;:[],&quot;totalComments&quot;:0}") .. '">',
             '<div class="comments"></div></div></div>',
@@ -144,9 +146,131 @@ describe("solutions.parse", function()
         '<div id="solutions_list">',
         group("56475c08593a1941660000b2", "def get_average(marks):\n    return sum(marks) // len(marks)", 487, 168, COMMENTS_JSON),
         group("5647b97c8d4acb805100004c", "def get_average(marks):\n    return int(sum(marks) / len(marks))", 12, 3, nil,
-            '<a href="/users/solo">solo</a>'),
+            '<a href="/users/solo">solo</a>', "clever"),
         "</div></body></html>",
     })
+
+    -- Each group's code is its FIRST block. parse_html's whole-page rule
+    -- (drop block 1 when there are several) was being applied per slice,
+    -- and the last slice ran to the end of the page, so a trailing template
+    -- block replaced the last real solution.
+    it("a trailing code block after the list never replaces the last solution", function()
+        local html = PAGE:gsub("</body></html>$",
+            '<pre><code>console.log("footer template code")</code></pre></body></html>')
+        local result = solutions.parse(html, "python")
+        assert.are.equal(2, #result)
+        assert.truthy(result[2].code:find("int(sum", 1, true))
+        assert.is_nil(result[2].code:find("footer", 1, true))
+    end)
+
+    it("a second code block inside a group does not displace its solution", function()
+        local html = PAGE:gsub('<ul class="piped%-text',
+            '<pre><code>print("decorative second block")</code></pre><ul class="piped-text', 1)
+        local result = solutions.parse(html, "python")
+        assert.truthy(result[1].code:find("// len", 1, true))
+    end)
+
+    -- Counts are read from inside each label's own <a>; an unbounded scan
+    -- for "the next <span>" returned the OTHER label's number when this
+    -- one's markup drifted — a plausible wrong count, not a detected failure.
+    it("a drifted count on one label never borrows the other label's number", function()
+        local html = PAGE:gsub("Best Practices<span>487</span>", 'Best Practices<span class="count">n/a</span>', 1)
+        local result = solutions.parse(html, "python")
+        assert.are.same({ best_practice = 0, clever = 168 }, result[1].votes)
+    end)
+
+    it("accepts a thousands separator and attributes on the count span", function()
+        local html = PAGE:gsub("Best Practices<span>487</span>", 'Best Practices<span class="count">3,052</span>', 1)
+        local result = solutions.parse(html, "python")
+        assert.are.equal(3052, result[1].votes.best_practice)
+    end)
+
+    it("reads the review id and which label the user already voted", function()
+        local result = solutions.parse(PAGE, "python")
+        assert.are.equal(REVIEW, result[1].review_id)
+        assert.are.same({ best_practice = false, clever = false }, result[1].voted)
+        assert.are.same({ best_practice = false, clever = true }, result[2].voted)
+    end)
+
+    -- Mirrors the site's click handler (application.js, read 2026-08-23):
+    -- POST /kata/reviews/{review}/groups/{group}/label_vote/{label} to vote,
+    -- DELETE the same URL when the label is already voted. POST is
+    -- idempotent, not a toggle (probed live). The reply carries both labels'
+    -- fresh counts and voted flags and is applied wholesale.
+    describe("vote", function()
+        local api_utils = require("codewars.api.utils")
+        local real_post, real_delete = api_utils.post, api_utils.delete
+        local posted
+        before_each(function()
+            posted = nil
+            api_utils.post = function(endpoint, opts)
+                posted = { method = "post", endpoint = endpoint, opts = opts }
+            end
+            api_utils.delete = function(endpoint, opts)
+                posted = { method = "delete", endpoint = endpoint, opts = opts }
+            end
+        end)
+        after_each(function()
+            api_utils.post, api_utils.delete = real_post, real_delete
+        end)
+
+        local function fresh(i)
+            return solutions.parse(PAGE, "python")[i or 1]
+        end
+
+        it("POSTs the label_vote endpoint for the solution's review and group", function()
+            solutions.vote(fresh(), "clever", function() end)
+            assert.are.equal("post", posted.method)
+            assert.are.equal("/kata/reviews/" .. REVIEW .. "/groups/56475c08593a1941660000b2/label_vote/clever", posted.endpoint)
+        end)
+
+        it("DELETEs instead when the label is already voted (retract), never a second POST", function()
+            local sol = fresh(2) -- clever is voted on this one
+            solutions.vote(sol, "clever", function() end)
+            assert.are.equal("delete", posted.method)
+            assert.are.equal("/kata/reviews/" .. REVIEW .. "/groups/5647b97c8d4acb805100004c/label_vote/clever", posted.endpoint)
+            solutions.vote(sol, "best_practice", function() end)
+            assert.are.equal("post", posted.method)
+        end)
+
+        it("applies the reply's counts and voted flags to the solution in place", function()
+            local sol = fresh()
+            local got
+            solutions.vote(sol, "best_practice", function(votes, err) got = { votes = votes, err = err } end)
+            posted.opts.callback({
+                success = true, groupId = sol.id,
+                votes = { best_practice = { count = 488, voted = true }, clever = { count = 168, voted = false } },
+            }, nil)
+            assert.is_nil(got.err)
+            assert.are.same({ best_practice = 488, clever = 168 }, sol.votes)
+            assert.are.same({ best_practice = true, clever = false }, sol.voted)
+            assert.is_true(got.votes.best_practice.voted)
+        end)
+
+        it("passes transport/auth errors through and leaves the counts alone", function()
+            local sol = fresh()
+            local got
+            solutions.vote(sol, "clever", function(_, err) got = err end)
+            posted.opts.callback(nil, { auth = true, msg = "Session expired" })
+            assert.is_true(got.auth)
+            assert.are.same({ best_practice = 487, clever = 168 }, sol.votes)
+        end)
+
+        it("treats a reply without success/votes as a failure", function()
+            local got
+            solutions.vote(fresh(), "clever", function(_, err) got = err end)
+            posted.opts.callback({ success = false }, nil)
+            assert.truthy(got.msg:find("did not accept", 1, true))
+        end)
+
+        it("refuses an unknown label and a solution without ids without calling the API", function()
+            local errs = {}
+            solutions.vote(fresh(), "funny", function(_, err) errs[#errs + 1] = err end)
+            solutions.vote({ id = "", votes = {}, voted = {} }, "clever", function(_, err) errs[#errs + 1] = err end)
+            assert.are.equal(2, #errs)
+            assert.is_nil(posted)
+        end)
+    end)
 
     it("returns one entry per solution group, never the fixture block", function()
         local result = solutions.parse(PAGE, "python")

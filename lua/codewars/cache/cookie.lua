@@ -26,13 +26,24 @@ function Cookie.set(str)
 
     file():write(str, "w")
     cached_cookie = nil
+    Cookie.identity_changed()
     log.info("Cookie saved successfully")
     return nil
+end
+
+--- Drop every cache that belongs to the signed-in identity. Called when
+--- the cookie is set or deleted: the solutions cache carries the user's
+--- own votes, and a stale `voted` flag would turn the next vote into a
+--- DELETE of a vote the new account never cast.
+function Cookie.identity_changed()
+    local ok, solutions = pcall(require, "codewars.api.solutions")
+    if ok and solutions.invalidate then solutions.invalidate() end
 end
 
 ---@return boolean
 function Cookie.delete()
     cached_cookie = nil
+    Cookie.identity_changed()
     local f = file()
     if not f:exists() then
         return false

@@ -21,7 +21,7 @@ Run `:CW help` inside Neovim for a quick reference.
 |---|---|
 | `:CW list` | Browse kata with filters (telescope) |
 | `:CW completed` | Browse completed kata (telescope) |
-| `:CW solutions` | View community solutions for current kata, with Best Practices / Clever counts and comments. In the popup: `1`–`0`, `]`/`[` page through solutions, `c` toggles the comment pane, `<Tab>` switches pane, `q` closes |
+| `:CW solutions` | View community solutions for current kata, with Best Practices / Clever counts and comments. In the popup: `1`–`0`, `]`/`[` page through solutions, `gb` / `gv` vote Best Practices / Clever (again to retract), `c` toggles the comment pane, `<Tab>` switches pane, `q` closes |
 | `:CW leaderboard [category]` | Top 500 leaderboard: `overall`, `kata` (completed), `authored`, `ranks`. No args opens the category picker; also in the menu under `l` |
 | `:CW kumite` | Browse Freestyle Sparring (kumite): server-paged picker (`Ctrl-n`/`Ctrl-p` page, `Ctrl-g` go to page, `Ctrl-l` language). Menu `m`; works signed out |
 | `:CW kumite open <id\|url>` | Open a kumite read-only from a `/kumite/…` link or 24-hex id |

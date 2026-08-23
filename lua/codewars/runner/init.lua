@@ -179,21 +179,7 @@ function Runner:handle(mode)
                     kata.console:hide()
                 end
 
-                local solutions_api = require("codewars.api.solutions")
-                local spinner = require("codewars.logger.spinner"):start("Fetching solutions…")
-                solutions_api.fetch(kata.kata_id, kata.lang, function(solutions, err)
-                    if err then
-                        return spinner:error("Failed to fetch solutions: " .. err.msg)
-                    end
-                    -- Empty case: fetch already logged the accurate reason
-                    -- (locked / none yet / beta pending / drift).
-                    if not solutions or #solutions == 0 then
-                        return spinner:stop()
-                    end
-                    spinner:success(("%d solutions"):format(#solutions))
-                    local Solutions = require("codewars-ui.popup.solutions")
-                    Solutions:new(solutions, kata.lang):show()
-                end, { unranked = require("codewars.theme").is_unranked(kata.rank) })
+                require("codewars-ui.popup.solutions").fetch_and_show(kata)
             end, 1500)
         end })
     else
