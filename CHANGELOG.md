@@ -18,7 +18,9 @@ All notable changes to codewars.nvim are documented here.
   already voted retracts it. Both
   counts update from the server's reply (whatever Codewars decides about the
   other label is shown, not assumed), and a green check marks the label you
-  voted.
+  voted. On the most-solved kata Codewars records the vote but its worker
+  times out recounting and answers with an error; the plugin then re-reads
+  the page instead of voting again and tells you the vote is recorded.
 - The solutions popup highlights its code without setting a filetype, so your
   language servers and ftplugins no longer attach to a throwaway buffer every
   time it opens.

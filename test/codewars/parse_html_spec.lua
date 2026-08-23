@@ -256,11 +256,66 @@ describe("solutions.parse", function()
             assert.are.same({ best_practice = 487, clever = 168 }, sol.votes)
         end)
 
-        it("treats a reply without success/votes as a failure", function()
-            local got
-            solutions.vote(fresh(), "clever", function(_, err) got = err end)
-            posted.opts.callback({ success = false }, nil)
-            assert.truthy(got.msg:find("did not accept", 1, true))
+        -- Seen live on the most-solved kata: the server records the vote,
+        -- then its worker times out recounting and answers HTTP 200 with
+        -- { success = false, status = 500, message = "Request ran for
+        -- longer than 15000ms ..." }. Re-POSTing would time out again, so
+        -- the real state is re-read from the page instead.
+        describe("an unusable reply", function()
+            local page = require("codewars.api.page")
+            local real_fetch = page.fetch
+            local fetches
+            before_each(function()
+                fetches = 0
+                solutions.invalidate()
+            end)
+            after_each(function()
+                page.fetch = real_fetch
+                solutions.invalidate()
+            end)
+
+            local function voted_page()
+                -- The page after the vote: Best Practices 488 and is-voted.
+                return PAGE:gsub('<a class="vote%-label" data%-label="best_practice"><i class="icon%-moon%-up "></i>Best Practices<span>487</span>',
+                    '<a class="vote-label is-voted" data-label="best_practice"><i class="icon-moon-up "></i>Best Practices<span>488</span>', 1)
+            end
+
+            it("is reconciled by re-reading the page, bypassing the cache", function()
+                page.fetch = function(_, cb) fetches = fetches + 1; cb(fetches == 1 and PAGE or voted_page()) end
+                local sol
+                solutions.fetch("kid", "python", function(items) sol = items[1] end)
+                assert.are.equal(1, fetches)
+                local got
+                solutions.vote(sol, "best_practice", function(votes, err, note) got = { votes = votes, err = err, note = note } end)
+                posted.opts.callback({ success = false, status = 500, message = "Request ran for longer than 15000ms , sending SIGTERM to process 56" }, nil)
+                assert.are.equal(2, fetches, "page was not re-read")
+                assert.is_nil(got.err)
+                assert.are.equal(488, sol.votes.best_practice)
+                assert.is_true(sol.voted.best_practice)
+                assert.is_true(got.votes.best_practice.voted)
+                assert.truthy(got.note:find("15000ms", 1, true))
+                -- No second POST was attempted.
+                assert.are.equal("post", posted.method)
+            end)
+
+            it("reports the server's message when the re-read also fails", function()
+                page.fetch = function(_, cb) fetches = fetches + 1; if fetches == 1 then cb(PAGE) else cb(nil, { msg = "curl error", curl = true }) end end
+                local sol
+                solutions.fetch("kid", "python", function(items) sol = items[1] end)
+                local got
+                solutions.vote(sol, "clever", function(_, err) got = err end)
+                posted.opts.callback({ success = false, message = "boom" }, nil)
+                assert.truthy(got.msg:find("boom", 1, true))
+                assert.truthy(got.msg:find("re-reading the page failed", 1, true))
+                assert.are.same({ best_practice = 487, clever = 168 }, sol.votes)
+            end)
+
+            it("falls back to a plain error for a solution with no page origin", function()
+                local got
+                solutions.vote(fresh(), "clever", function(_, err) got = err end)
+                posted.opts.callback({ success = false }, nil)
+                assert.truthy(got.msg:find("did not accept", 1, true))
+            end)
         end)
 
         it("refuses an unknown label and a solution without ids without calling the API", function()

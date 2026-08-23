@@ -66,6 +66,11 @@ function solutions.fetch(kata_id, language, cb, opts)
         end
 
         local result = solutions.parse(body, language)
+        -- Each entry knows where it came from, so a vote can re-read the
+        -- page to reconcile when the server's reply is unusable.
+        for _, s in ipairs(result) do
+            s.kata_id, s.language = kata_id, language
+        end
         if #result == 0 then
             local level, msg = solutions.empty_reason(body, opts and opts.unranked)
             log[level](msg)
@@ -334,18 +339,59 @@ function solutions.vote(sol, label, cb)
                 return cb(nil, err)
             end
             if type(res) ~= "table" or not res.success or type(res.votes) ~= "table" then
-                return cb(nil, { msg = "Codewars did not accept the vote: " .. vim.inspect(res) })
+                return solutions.reconcile_vote(sol, res, cb)
             end
-            for _, l in ipairs(solutions.VOTE_LABELS) do
-                local v = res.votes[l]
-                if type(v) == "table" then
-                    sol.votes[l] = tonumber(v.count) or sol.votes[l]
-                    sol.voted[l] = v.voted == true
-                end
-            end
+            solutions.apply_votes(sol, res.votes)
             cb(res.votes)
         end,
     })
+end
+
+--- Copy a label_vote reply's counts and flags onto the solution.
+---@param sol cw.Solution
+---@param votes table { best_practice = { count, voted }, clever = { count, voted } }
+function solutions.apply_votes(sol, votes)
+    for _, l in ipairs(solutions.VOTE_LABELS) do
+        local v = votes[l]
+        if type(v) == "table" then
+            sol.votes[l] = tonumber(v.count) or sol.votes[l]
+            sol.voted[l] = v.voted == true
+        end
+    end
+end
+
+--- The server answered the vote with `success = false`. Seen live on the
+--- most-solved kata: its worker RECORDS the vote, then times out
+--- recounting ("Request ran for longer than 15000ms") and replies with
+--- an error body over HTTP 200. Re-POSTing would time out again, so
+--- instead re-read the page (bypassing the cache) and take the group's
+--- real state from there; the caller gets the votes plus a note saying
+--- the reply had to be reconciled. Only if that also fails is the
+--- server's message reported as the error.
+---@param sol cw.Solution
+---@param res any the unusable reply
+---@param cb fun(votes: table?, err: cw.err?, note: string?)
+function solutions.reconcile_vote(sol, res, cb)
+    local server_msg = type(res) == "table" and res.message or vim.inspect(res)
+    if not sol.kata_id or not sol.language then
+        return cb(nil, { msg = "Codewars did not accept the vote: " .. tostring(server_msg) })
+    end
+    solutions.fetch(sol.kata_id, sol.language, function(items, err)
+        local fresh
+        for _, s in ipairs(items or {}) do
+            if s.id == sol.id then fresh = s break end
+        end
+        if err or not fresh then
+            return cb(nil, { msg = ("Codewars did not confirm the vote (%s), and re-reading the page failed%s")
+                :format(tostring(server_msg), err and (": " .. (err.msg or "")) or "") })
+        end
+        sol.votes, sol.voted = fresh.votes, fresh.voted
+        local votes = {}
+        for _, l in ipairs(solutions.VOTE_LABELS) do
+            votes[l] = { count = fresh.votes[l], voted = fresh.voted[l] }
+        end
+        cb(votes, nil, ("Codewars timed out answering (%s); re-read the page instead"):format(tostring(server_msg)))
+    end, { force = true })
 end
 
 return solutions

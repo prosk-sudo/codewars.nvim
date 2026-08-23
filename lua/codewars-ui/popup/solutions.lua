@@ -326,15 +326,18 @@ function Solutions:vote(label)
     local sol = self.solutions[self.index]
     local idx = self.index
     self._voting = true
-    require("codewars.api.solutions").vote(sol, label, function(votes, err)
+    require("codewars.api.solutions").vote(sol, label, function(votes, err, note)
         self._voting = false
         if err then
             return log.error("Vote failed: " .. (err.msg or "unknown error"))
         end
         local name = label == "best_practice" and "Best Practices" or "Clever"
         local v = votes[label] or {}
-        log.info(v.voted and ("Voted %s (%d)"):format(name, v.count or 0)
-            or ("Removed your %s vote (%d)"):format(name, v.count or 0))
+        local what = v.voted and ("Voted %s (%d)"):format(name, v.count or 0)
+            or ("Removed your %s vote (%d)"):format(name, v.count or 0)
+        -- The server's reply was unusable and the state was re-read from
+        -- the page: say so, the wait was noticeable.
+        log.info(note and (what .. " — " .. note) or what)
         -- Only refresh if the popup is still open on the same solution.
         if self.popup and self.index == idx then
             self:draw_info(sol)
