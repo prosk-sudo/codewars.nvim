@@ -9,8 +9,16 @@ NUI_DIR ?= /tmp/nui.nvim
 # project) and anything INSIDE the checkout (PLENARY_DIR=lua would have
 # deleted the plugin). Resolved first, so "..", "../x", "$PWD/" and bare
 # relative names cannot slip past a string comparison.
+# Resolved with GNU `realpath -m` where available; BSD/macOS realpath has
+# no -m (and fails on a path that does not exist yet, which is exactly the
+# fresh-clone case), so fall back to resolving the parent with cd/pwd -P.
+# If neither works, $$d stays empty and the guard refuses -- never the
+# other way round.
 define refuse_unsafe_dir
-	d=$$(realpath -m -- "$(1)" 2>/dev/null || true); \
+	d=$$(realpath -m -- "$(1)" 2>/dev/null \
+		|| (cd "$(1)" 2>/dev/null && pwd -P) \
+		|| (cd "$$(dirname -- "$(1)")" 2>/dev/null && printf '%s/%s' "$$(pwd -P)" "$$(basename -- "$(1)")") \
+		|| true); \
 	case "$$d" in \
 		""|/|"$$HOME") echo "refusing to touch $(2)=$(1)"; exit 1 ;; \
 	esac; \
@@ -49,5 +57,6 @@ test: deps
 		-c "PlenaryBustedDirectory test/ {minimal_init = 'test/minimal_init.lua', sequential = true}"
 
 test-file: deps
+	@test -f "$(FILE)" || { echo "no such spec file: FILE=$(FILE)"; exit 1; }
 	nvim --headless -u test/minimal_init.lua \
 		-c "PlenaryBustedDirectory $(FILE) {minimal_init = 'test/minimal_init.lua', sequential = true}"

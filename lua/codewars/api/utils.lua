@@ -126,9 +126,11 @@ end
 function utils.curl(method, params)
     local params_cpy = vim.deepcopy(params)
 
+    -- `compressed` is left to plenary's default (true off Windows): Codewars
+    -- HTML compresses ~8x, and the cache build pulls hundreds of search
+    -- pages through here. It was pinned to false with no recorded reason.
     params = vim.tbl_deep_extend("force", {
         headers = headers.get(),
-        compressed = false,
         retry = 3,
         endpoint = "",
     }, params or {})

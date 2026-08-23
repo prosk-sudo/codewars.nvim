@@ -509,7 +509,13 @@ function Menu:get_button_rows()
 end
 
 function Menu:_jump_to_row(row)
-    local line = vim.fn.getline(row)
+    -- Read the MENU buffer, not the current one: the WinResized redraw can
+    -- run while another window is focused, and getline() there returned
+    -- the other buffer's line, putting the cursor at its indentation.
+    local line = ""
+    if self.bufnr and api.nvim_buf_is_valid(self.bufnr) then
+        line = (api.nvim_buf_get_lines(self.bufnr, row - 1, row, false))[1] or ""
+    end
     local col = #(line:match("^(%s*)") or "")
     pcall(api.nvim_win_set_cursor, self.winid, { row, col })
 end
