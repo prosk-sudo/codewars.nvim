@@ -51,6 +51,28 @@ describe("Menu:mount buffer choice", function()
         vim.cmd("tabclose!")
     end)
 
+    it("leaves an unnamed buffer that holds text alone, even with 'modified' cleared", function()
+        vim.cmd("tabnew")
+        local mine = vim.api.nvim_get_current_buf()
+        vim.api.nvim_buf_set_lines(mine, 0, -1, false, { "scratch notes" })
+        vim.bo[mine].modified = false
+        local menu = mount_here()
+        assert.are_not.equal(mine, menu.bufnr)
+        assert.are.same({ "scratch notes" }, vim.api.nvim_buf_get_lines(mine, 0, -1, false))
+        vim.cmd("tabclose!")
+    end)
+
+    it("mounts in a 'winfixbuf' window without raising E1513", function()
+        if vim.fn.has("nvim-0.10.0") == 0 then return end
+        local path = vim.fn.tempname() .. ".txt"
+        vim.fn.writefile({ "on disk" }, path)
+        vim.cmd("tabnew " .. vim.fn.fnameescape(path))
+        vim.wo.winfixbuf = true
+        local ok, err = pcall(mount_here)
+        assert.is_true(ok, tostring(err))
+        vim.cmd("tabclose!")
+    end)
+
     it("reuses an empty unnamed buffer (the normal :CW case)", function()
         vim.cmd("tabnew")
         local empty = vim.api.nvim_get_current_buf()

@@ -83,6 +83,22 @@ describe("Kata close lifecycle", function()
         assert.truthy(table.concat(vim.fn.readfile(path), "\n"):find("return x %* 2"))
     end)
 
+    it("keeps the buffer, listed, when the edits cannot be written", function()
+        local kata = open()
+        local path = kata.file:absolute()
+        vim.api.nvim_buf_set_lines(kata.bufnr, 0, -1, false, { "def f(x):", "    return 'unsaveable'" })
+        vim.fn.setfperm(path, "r--r--r--")
+        local buf = kata.bufnr
+        kata:unmount()
+        vim.wait(300)
+        assert.is_true(vim.api.nvim_buf_is_valid(buf), "buffer with unsaved edits was deleted")
+        assert.is_true(vim.bo[buf].buflisted)
+        assert.is_true(vim.bo[buf].modified)
+        assert.is_nil(table.concat(vim.fn.readfile(path), "\n"):find("unsaveable", 1, true))
+        vim.fn.setfperm(path, "rw-r--r--")
+        vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
     it("removes the buffers earlier language switches left behind", function()
         local kata = open("python")
         local first = kata.bufnr

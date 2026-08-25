@@ -428,8 +428,17 @@ function Kata:_unmount()
         vim.list_extend(bufs, self._old_bufnrs or {})
         for _, b in ipairs(bufs) do
             if b and vim.api.nvim_buf_is_valid(b) then
-                flush_if_modified(b)
-                pcall(vim.api.nvim_buf_delete, b, { force = true, unload = false })
+                local modified = vim.api.nvim_get_option_value("modified", { buf = b })
+                if modified and not flush_if_modified(b) then
+                    -- The write failed (read-only file, unwritable storage,
+                    -- full disk): deleting now would be the silent loss this
+                    -- exists to prevent. Keep the buffer, listed, and say so.
+                    pcall(vim.api.nvim_set_option_value, "buflisted", true, { buf = b })
+                    log.warn(("Could not save %s — the buffer is kept so your edits are not lost; :w it by hand.")
+                        :format(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(b), ":t")))
+                else
+                    pcall(vim.api.nvim_buf_delete, b, { force = true, unload = false })
+                end
             end
         end
         self._old_bufnrs = nil

@@ -218,10 +218,12 @@ end
 local function disposable(bufnr)
     if api.nvim_get_option_value("modified", { buf = bufnr }) then return false end
     if api.nvim_get_option_value("buftype", { buf = bufnr }) ~= "" then return false end
+    -- Content is checked for named AND unnamed buffers: an unnamed buffer
+    -- holding text with 'modified' cleared is still someone's text.
+    local empty = api.nvim_buf_line_count(bufnr) == 1 and api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == ""
+    if not empty then return false end
     local name = api.nvim_buf_get_name(bufnr)
-    if name == "" then return true end
-    return vim.fn.filereadable(name) == 0 and api.nvim_buf_line_count(bufnr) == 1
-        and api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == ""
+    return name == "" or vim.fn.filereadable(name) == 0
 end
 
 function Menu:mount()
@@ -231,7 +233,9 @@ function Menu:mount()
         self.bufnr = cur
     else
         self.bufnr = api.nvim_create_buf(false, true)
-        api.nvim_win_set_buf(self.winid, self.bufnr)
+        -- Through the helper: a plain nvim_win_set_buf raises E1513 in a
+        -- window that has 'winfixbuf' set.
+        ui_utils.win_set_buf(self.winid, self.bufnr, true)
     end
 
     api.nvim_buf_set_name(self.bufnr, "")
