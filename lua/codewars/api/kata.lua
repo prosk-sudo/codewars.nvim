@@ -123,12 +123,35 @@ end
 
 --- Detect a rendered validation error in a Turbolinks/editor HTML response
 --- (from save, an immediate publish rejection, or a finished deferred job).
+--- A JSON reply that says no. The save/publish endpoints usually answer with
+--- a re-rendered form (HTML), but they also answer JSON like
+--- {success=false, message="..."} -- which decode_json turned into a table
+--- that render_error ignored, so a rejected save was reported as saved.
+--- Returns the server's own wording, or nil when the reply is not a refusal.
+---@param res table decoded JSON reply
+---@return string?
+function kata.reply_error(res)
+    if type(res) ~= "table" then return nil end
+    local msg = res.message or res.reason or res.error
+    if type(msg) == "table" then msg = vim.inspect(msg) end
+    if res.success == false then
+        return msg and tostring(msg) or "Codewars rejected the request."
+    end
+    if msg and res.success == nil then
+        return tostring(msg)
+    end
+    return nil
+end
+
 --- The editor re-renders the form with an `<li data-field="X">message</li>`
 --- inside its error alert-box, and embeds a `languageErrors` object; a clean
 --- save has neither. Returns a human message, or nil when there is no error.
 ---@param body any string HTML, or a decoded table
 ---@return string?
 function kata.render_error(body)
+    if type(body) == "table" then
+        return kata.reply_error(body)
+    end
     if type(body) ~= "string" then
         return nil
     end

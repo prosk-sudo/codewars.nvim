@@ -5,6 +5,11 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Saving a fetched **private** kumite no longer flips it public: the snippet's
+  `secret` flag is read from the API and re-sent on save, as the save code
+  always claimed it was. A kata save that Codewars answers with a JSON
+  refusal (`success: false`) is now reported as rejected, with the server's
+  own message, instead of "saved"; a rejected publish shows the real reason.
 - Closing a kata no longer loses work. Unsaved solution edits are written to
   the solution file before the buffer is removed (it used to be force-deleted,
   bypassing Neovim's unsaved-changes protection — including via `:CW focus
