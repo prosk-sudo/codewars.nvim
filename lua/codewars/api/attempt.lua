@@ -66,8 +66,18 @@ function attempt.run(token, code, language, fixture, test_framework, solution_id
 
     local stdout_chunks = {}
     local stderr_chunks = {}
+    -- Response headers go to a dump so the HTTP status can be classified:
+    -- curl exits 0 on a 401 or 429, and without this the runner's JSON
+    -- error body was decoded and handed to the caller as a test RESULT.
+    local hdr = vim.fn.tempname()
+    local page = require("codewars.api.page")
 
-    vim.fn.jobstart({
+    local function cleanup()
+        pcall(os.remove, tmp)
+        pcall(os.remove, hdr)
+    end
+
+    local job = page.spawn({
         "curl", "-s",
         "-X", "POST",
         run_url,
@@ -75,6 +85,7 @@ function attempt.run(token, code, language, fixture, test_framework, solution_id
         "-H", "Authorization: Bearer " .. token,
         "-H", "User-Agent: Mozilla/5.0 (compatible; codewars.nvim)",
         "-d", "@" .. tmp,
+        "-D", hdr,
         "--max-time", "30",
     }, {
         stdout_buffered = true,
@@ -90,12 +101,18 @@ function attempt.run(token, code, language, fixture, test_framework, solution_id
             end
         end,
         on_exit = vim.schedule_wrap(function(_, exit_code)
-            pcall(os.remove, tmp)
+            local dump = page.slurp(hdr)
+            cleanup()
 
             local out = table.concat(stdout_chunks, "")
 
             if exit_code ~= 0 then
-                return cb(nil, { msg = ("curl exit code %d"):format(exit_code) })
+                return cb(nil, { msg = ("curl exit code %d"):format(exit_code), code = exit_code, curl = true })
+            end
+
+            local status_err = page.status_err(page.parse_header_dump(dump))
+            if status_err then
+                return cb(nil, status_err)
             end
 
             if out == "" then
@@ -103,13 +120,20 @@ function attempt.run(token, code, language, fixture, test_framework, solution_id
             end
 
             local ok, decoded = require("codewars.api.utils").decode_json(out)
-            if ok and decoded then
+            if ok and type(decoded) == "table" then
                 cb(decoded)
             else
                 cb(nil, { msg = "Failed to parse runner response: " .. out:sub(1, 200) })
             end
         end),
     })
+
+    -- The job never started (curl missing, spawn refused): on_exit will not
+    -- run, so report it here or the runner waits forever.
+    if not job then
+        cleanup()
+        cb(nil, { msg = "Could not start curl to reach the runner. Is curl installed?", curl = true })
+    end
 end
 
 --- Notify Codewars server of a runner result (required for attempt to count).

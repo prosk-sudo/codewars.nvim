@@ -90,6 +90,45 @@ describe("api.utils", function()
         end)
     end)
 
+    describe("handle_res error bodies", function()
+        it("does not crash when a JSON reason is a table", function()
+            local ok, res, err = pcall(api_utils.handle_res, {
+                exit = 0, status = 422, headers = {},
+                body = '{"reason":{"field":"title"}}',
+            })
+            assert.is_true(ok, tostring(res))
+            assert.are.equal(422, err.status)
+            assert.truthy(err.msg:find("title", 1, true))
+        end)
+    end)
+
+    -- plenary's Job:new raises ("Executable not found") before the job
+    -- runs, so the on_error hook never sees a missing curl: the raise
+    -- escaped into whatever UI flow made the request.
+    describe("curl spawn failure", function()
+        local curl = require("plenary.curl")
+        local real_get = curl.get
+        after_each(function() curl.get = real_get end)
+
+        it("reaches the async callback as a curl error instead of raising", function()
+            curl.get = function() error("curl: Executable not found") end
+            local done, err
+            local ok, raised = pcall(api_utils.get, "/x", { retry = 0, callback = function(_, e) err = e; done = true end })
+            assert.is_true(ok, tostring(raised))
+            vim.wait(1000, function() return done end)
+            assert.is_true(done, "callback never fired")
+            assert.are.equal(127, err.code)
+        end)
+
+        it("returns a curl error from the sync path instead of raising", function()
+            curl.get = function() error("curl: Executable not found") end
+            local ok, res, err = pcall(api_utils.get, "/x", { retry = 0 })
+            assert.is_true(ok, tostring(res))
+            assert.is_nil(res)
+            assert.are.equal(127, err.code)
+        end)
+    end)
+
     describe("handle_res 429", function()
         it("classifies 429 as rate limited and parses Retry-After", function()
             local _, err = api_utils.handle_res({
