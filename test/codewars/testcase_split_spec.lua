@@ -44,6 +44,31 @@ describe("TestcaseSplit:populate", function()
     end)
 end)
 
+-- hide() used to unmount, which deletes the buffer: the fixture is editable
+-- with no on-disk copy, so a toggle threw away every test the user wrote
+-- and show() repopulated the server's original.
+describe("TestcaseSplit hide/show keeps edits", function()
+    local TestcaseSplit = require("codewars-ui.split.testcase")
+
+    it("edits survive a hide/show cycle and back content() while hidden", function()
+        local split = TestcaseSplit:new({ slug = "toggle-kata", lang = "python" })
+        split:mount()
+        split:populate("original fixture")
+        local buf = split.bufnr
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "assert my_edit == 1" })
+
+        split:hide()
+        assert.is_false(split.visible)
+        assert.is_true(vim.api.nvim_buf_is_valid(buf), "buffer deleted on hide")
+        assert.are.equal("assert my_edit == 1", split:content())
+
+        split:show()
+        assert.are.equal(buf, split.bufnr, "show() remounted a new buffer")
+        assert.are.same({ "assert my_edit == 1" }, vim.api.nvim_buf_get_lines(split.bufnr, 0, -1, false))
+        split:unmount()
+    end)
+end)
+
 describe("TestcaseSplit:mount filetype", function()
     local TestcaseSplit = require("codewars-ui.split.testcase")
 

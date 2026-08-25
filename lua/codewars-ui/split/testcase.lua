@@ -128,11 +128,15 @@ function TestcaseSplit:show()
     end
 end
 
+--- Hide the window but KEEP the buffer. This used to unmount, which deletes
+--- the buffer: the fixture is editable and has no on-disk copy, so a
+--- toggle silently threw away every test case the user had written and
+--- the next show() repopulated the server's original. Hidden, the buffer
+--- still backs content(), so :CW test runs the edited fixture.
 function TestcaseSplit:hide()
     if not self.visible then return end
     if self.split then
-        self.split:unmount()
-        self.split = nil
+        self.split:hide()
     end
     self.visible = false
 end
