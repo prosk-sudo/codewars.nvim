@@ -40,7 +40,6 @@ describe("Cookie identity change", function()
     -- detected username (menu still "Signed in as: alice"), the picker's
     -- memoised completed set, and the remembered focus kata.
     describe("drops every identity-scoped cache", function()
-        local Path = require("plenary.path")
         local dir = vim.fn.tempname()
         local completed, session, config, cmd
 
