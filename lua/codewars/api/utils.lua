@@ -203,11 +203,18 @@ function utils.curl(method, params)
             params.callback(failed_out(e))
         end
 
-        curl[method](url, params)
+        -- plenary's Job:new raises ("Executable not found") BEFORE the job
+        -- runs, so on_error never sees a missing curl; route that through
+        -- the same callback rather than letting it propagate into the UI.
+        local ok, spawn_err = pcall(curl[method], url, params)
+        if not ok then
+            params.callback(failed_out({ exit = 127, stderr = tostring(spawn_err) }))
+        end
     else
         local failure
         params.on_error = function(e) failure = e end
-        local out = curl[method](url, params)
+        local ok, out = pcall(curl[method], url, params)
+        if not ok then failure = { exit = 127, stderr = tostring(out) } end
         if failure then out = failed_out(failure) end
         local res, err = utils.handle_res(out)
 
@@ -294,6 +301,12 @@ function utils.handle_res(out)
             return "unknown error"
         end)
 
+        -- `reason` / `error` are not always strings (a 422 can carry
+        -- {"reason": {"field": "title"}}); concatenating a table raised
+        -- inside the callback instead of returning an error.
+        if ok and type(msg) ~= "string" then
+            msg = vim.inspect(msg)
+        end
         res = out.body
         err = {
             code = 0,
