@@ -5,6 +5,20 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Closing a kata no longer loses work. Unsaved solution edits are written to
+  the solution file before the buffer is removed (it used to be force-deleted,
+  bypassing Neovim's unsaved-changes protection — including via `:CW focus
+  skip`); hiding the Test Cases pane keeps the buffer, so toggling it no longer
+  throws away edited test cases and `:CW test` runs what you wrote; buffers left
+  behind by language switches are cleaned up with the kata instead of leaking
+  for the session; and opening the same kata in a second language no longer
+  disables the first one's cleanup.
+- Bare `:CW` no longer turns the buffer you had open into the dashboard: a real
+  file or unsaved text is left alone and the menu gets its own scratch buffer.
+- Switching languages twice in quick succession applies the later choice, not
+  whichever reply arrived last; a kata already open in the language a mount
+  falls back to is reused instead of opened twice; solution paths with spaces
+  open correctly.
 - `:CW template on` now puts the cursor at the end of your starter code after
   re-wrapping the buffer — not wherever it happened to be (usually inside the
   template's preamble), and not the end of the file, which is the template's

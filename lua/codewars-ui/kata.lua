@@ -133,7 +133,9 @@ end
 function Kata:create_buffer()
     local path, _ = self:path()
 
-    vim.cmd("$tabe " .. path)
+    -- Escaped: a storage.home with a space or a Vim metacharacter would
+    -- otherwise open the wrong file, not the one just written.
+    vim.cmd("$tabe " .. vim.fn.fnameescape(path))
     self.bufnr = vim.api.nvim_get_current_buf()
     self.winid = vim.api.nvim_get_current_win()
     ui_utils.win_set_winfixbuf(self.winid)
@@ -240,6 +242,15 @@ function Kata:mount()
             local fallback = kata_data.languages[1]
             log.info(("Using %s ('%s' not available for this kata)"):format(fallback, self.lang))
             self.lang = fallback
+
+            -- The duplicate check above ran with the REQUESTED language; the
+            -- kata may already be open in the one we just fell back to.
+            local dup = utils.detect_duplicate_kata(self.slug, self.lang)
+            if dup then
+                pcall(vim.api.nvim_set_current_tabpage, dup)
+                self:_abandon_mount()
+                return
+            end
         end
 
         -- Train page requires the hex kata ID, not the readable slug
@@ -359,7 +370,11 @@ function Kata:handle_mount()
 end
 
 function Kata:autocmds()
-    local group = vim.api.nvim_create_augroup("codewars_kata_" .. self.slug, { clear = true })
+    -- Keyed by WINDOW, not slug: the same kata may be open in a second
+    -- language (detect_duplicate_kata only blocks slug+lang), and a
+    -- slug-keyed group with clear=true let the second mount wipe the
+    -- first's WinClosed handler, so that kata was never cleaned up.
+    local group = vim.api.nvim_create_augroup("codewars_kata_win_" .. tostring(self.winid), { clear = true })
 
     vim.api.nvim_create_autocmd("WinClosed", {
         group = group,
@@ -368,6 +383,26 @@ function Kata:autocmds()
             self:_unmount()
         end,
     })
+end
+
+--- Write a solution buffer to its file if it has unsaved edits. The
+--- buffers are force-deleted on close (the tab is gone, there is nothing
+--- to prompt in), and the file is the plugin's own storage, so saving is
+--- always the right call: closing a kata must never lose typed code.
+---@param bufnr integer
+---@return boolean saved
+local function flush_if_modified(bufnr)
+    if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then return false end
+    if not vim.api.nvim_get_option_value("modified", { buf = bufnr }) then return false end
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    if name == "" or vim.api.nvim_get_option_value("buftype", { buf = bufnr }) ~= "" then return false end
+    local ok = pcall(vim.api.nvim_buf_call, bufnr, function()
+        vim.cmd("silent noautocmd write")
+    end)
+    if ok then
+        log.info(("Saved unsaved edits to %s"):format(vim.fn.fnamemodify(name, ":t")))
+    end
+    return ok
 end
 
 function Kata:_unmount()
@@ -386,12 +421,21 @@ function Kata:_unmount()
             self.description:unmount()
         end
 
-        if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
-            vim.api.nvim_buf_delete(self.bufnr, { force = true, unload = false })
+        -- The current solution buffer plus every buffer an earlier language
+        -- switch left behind (they were only unlisted, so they leaked for
+        -- the rest of the session).
+        local bufs = { self.bufnr }
+        vim.list_extend(bufs, self._old_bufnrs or {})
+        for _, b in ipairs(bufs) do
+            if b and vim.api.nvim_buf_is_valid(b) then
+                flush_if_modified(b)
+                pcall(vim.api.nvim_buf_delete, b, { force = true, unload = false })
+            end
         end
+        self._old_bufnrs = nil
 
         _Cw_state.katas = vim.tbl_filter(function(k)
-            return k.bufnr ~= self.bufnr
+            return k ~= self and k.bufnr ~= self.bufnr
         end, _Cw_state.katas)
     end)
 end
@@ -421,6 +465,14 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
     local prev_lang = self.lang
     local prev_bufnr = self.bufnr
 
+    -- Generation counter: two switches in flight resolve in network order,
+    -- and without this the EARLIER reply landing last overwrote the later
+    -- choice (lang, session ids and the window's buffer). Only the newest
+    -- request may apply; and none may apply to a workspace that closed
+    -- while it was waiting.
+    self._lang_gen = (self._lang_gen or 0) + 1
+    local gen = self._lang_gen
+
     log.info(("Switching to %s..."):format(new_lang))
 
     local train_api = require("codewars.api.train")
@@ -430,6 +482,13 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
         end
 
         vim.schedule(function()
+            if gen ~= self._lang_gen then
+                return log.debug(("stale language switch to %s ignored"):format(new_lang))
+            end
+            if not (self.winid and vim.api.nvim_win_is_valid(self.winid)) then
+                return log.debug("language switch arrived after the kata closed")
+            end
+
             local ok, change_err = pcall(function()
                 self.lang = new_lang
                 self.project_id = session.projectId or self.project_id
@@ -458,6 +517,10 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 vim.fn.bufload(self.bufnr)
 
                 vim.api.nvim_set_option_value("buflisted", false, { buf = prev_bufnr })
+                -- Remembered so _unmount can flush and delete it: an unlisted
+                -- buffer nobody tracks leaks for the rest of the session.
+                self._old_bufnrs = self._old_bufnrs or {}
+                if prev_bufnr ~= self.bufnr then table.insert(self._old_bufnrs, prev_bufnr) end
                 ui_utils.buf_set_opts(self.bufnr, { buflisted = true })
                 ui_utils.win_set_buf(self.winid, self.bufnr, true)
                 self:_cursor_to_end()

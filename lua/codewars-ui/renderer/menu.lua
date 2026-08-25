@@ -207,9 +207,32 @@ function Menu:set_page(name)
     self:set_keymaps()
 end
 
+--- The dashboard may take over the current buffer ONLY when that buffer is
+--- disposable: unmodified, and either unnamed or the standalone-mode
+--- argument (`nvim codewars.nvim`, a name with no file behind it). Anything
+--- else -- a real file, or unsaved text -- gets a fresh scratch buffer
+--- instead. Taking over unconditionally turned an unsaved file into the
+--- menu and force-deleted it on exit.
+---@param bufnr integer
+---@return boolean
+local function disposable(bufnr)
+    if api.nvim_get_option_value("modified", { buf = bufnr }) then return false end
+    if api.nvim_get_option_value("buftype", { buf = bufnr }) ~= "" then return false end
+    local name = api.nvim_buf_get_name(bufnr)
+    if name == "" then return true end
+    return vim.fn.filereadable(name) == 0 and api.nvim_buf_line_count(bufnr) == 1
+        and api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == ""
+end
+
 function Menu:mount()
-    self.bufnr = api.nvim_get_current_buf()
     self.winid = api.nvim_get_current_win()
+    local cur = api.nvim_get_current_buf()
+    if disposable(cur) then
+        self.bufnr = cur
+    else
+        self.bufnr = api.nvim_create_buf(false, true)
+        api.nvim_win_set_buf(self.winid, self.bufnr)
+    end
 
     api.nvim_buf_set_name(self.bufnr, "")
 
