@@ -31,13 +31,36 @@ function Cookie.set(str)
     return nil
 end
 
---- Drop every cache that belongs to the signed-in identity. Called when
---- the cookie is set or deleted: the solutions cache carries the user's
---- own votes, and a stale `voted` flag would turn the next vote into a
---- DELETE of a vote the new account never cast.
+--- Drop EVERYTHING that belongs to the signed-in identity. Called when the
+--- cookie is set or deleted. The review traced what survived an account
+--- switch when only the solutions cache was dropped: Bob's :CW attempt
+--- ran against Alice's cached project/solution ids, the picker marked
+--- Alice's completed kata as Bob's (and the trainer dequeued them), the
+--- menu kept saying "Signed in as: alice", and :CW focus skip acted on
+--- Alice's remembered kata. Each of those lives in a different module, so
+--- this is the one place that enumerates them.
+---
+--- Every hook is a pcall'd lazy require: the cookie module must not pull
+--- the UI/picker chain in at load time, and a module that fails to load
+--- must not stop the others from being cleared.
 function Cookie.identity_changed()
-    local ok, solutions = pcall(require, "codewars.api.solutions")
-    if ok and solutions.invalidate then solutions.invalidate() end
+    local function with(mod, fn)
+        local ok, m = pcall(require, mod)
+        if ok and m then pcall(fn, m) end
+    end
+
+    -- The user's own votes are baked into the cached solutions pages.
+    with("codewars.api.solutions", function(m) m.invalidate() end)
+    -- completed.json / kata_details.json are keyed by the old username.
+    with("codewars.cache.completed", function(m) m.clear() end)
+    -- sessions/*.json hold the old account's project/solution ids.
+    with("codewars.cache.session", function(m) m.clear_all() end)
+    -- The picker memoises the completed set in memory.
+    with("codewars.picker", function(m) m.invalidate_completed_cache() end)
+    -- The remembered focus kata belongs to the old account's queue.
+    with("codewars.command", function(m) m.forget_focus() end)
+    -- Detected from the old dashboard; the menu re-detects when empty.
+    with("codewars.config", function(m) m.user.username = "" end)
 end
 
 ---@return boolean

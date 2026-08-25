@@ -624,6 +624,13 @@ end
 -- focus pointer itself.
 local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
 
+--- Forget the remembered focus kata. Called on an identity change: the
+--- queue it came from belongs to the previous account, so a `:CW focus
+--- skip` after signing in as someone else must not act on it.
+function cmd.forget_focus()
+    _last_focus = nil
+end
+
 -- One focus fetch at a time, enforced HERE and not just in the api layer.
 -- The api mutex rejects the second request, but by then the old code had
 -- already overwritten _last_focus — so a later `:CW focus skip` would
