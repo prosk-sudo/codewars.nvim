@@ -69,13 +69,28 @@ describe("Cookie identity change", function()
             config.user.username = "alice"
         end)
 
+        -- Put the real modules back so later specs do not inherit the
+        -- scratch-dir cache_file stub through package.loaded.
+        after_each(function()
+            for _, m in ipairs({ "codewars.cache.utils", "codewars.cache.cookie", "codewars.cache.completed", "codewars.cache.session" }) do
+                package.loaded[m] = nil
+            end
+        end)
+
         it("on a new cookie", function()
+            -- forget_focus is spied rather than observed: populating the
+            -- focus record needs the trainer + kata stubs that
+            -- focus_command_spec owns, which also proves the clear itself.
+            local forgot = 0
+            local real_forget = cmd.forget_focus
+            cmd.forget_focus = function() forgot = forgot + 1; real_forget() end
             assert.is_nil(Cookie.set("CSRF-TOKEN=abc; _session_id=xyz"))
+            cmd.forget_focus = real_forget
             assert.are.same({}, (completed.get()))
             assert.are.same({}, completed.get_details())
             assert.is_nil(session.get("some-kata", "python"))
             assert.are.equal("", config.user.username)
-            assert.is_function(cmd.forget_focus)
+            assert.are.equal(1, forgot, "identity_changed did not forget the focus kata")
         end)
 
         it("on sign-out", function()
