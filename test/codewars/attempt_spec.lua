@@ -71,6 +71,90 @@ describe("api.attempt", function()
         end)
     end)
 
+    -- attempt.run drives curl through jobstart. curl exits 0 on a 401 or a
+    -- 429, so without a status check the runner's JSON error body was
+    -- handed to the caller as a test RESULT; and a failed spawn never
+    -- fired on_exit, so the runner waited forever.
+    describe("run", function()
+        local real_jobstart = vim.fn.jobstart
+        local script, calls
+        local function write(path, s)
+            local f = assert(io.open(path, "w")); f:write(s); f:close()
+        end
+        before_each(function()
+            calls = 0
+            vim.fn.jobstart = function(cmd, opts)
+                calls = calls + 1
+                local r = script(cmd)
+                if r.spawn_fail then return 0 end
+                local hdr
+                for i, a in ipairs(cmd) do if a == "-D" then hdr = cmd[i + 1] end end
+                write(hdr, r.headers or "HTTP/2 200\r\n\r\n")
+                if r.body then opts.on_stdout(nil, { r.body }) end
+                opts.on_exit(nil, r.exit or 0)
+                return 7
+            end
+        end)
+        after_each(function() vim.fn.jobstart = real_jobstart end)
+
+        local function run()
+            local done, got
+            attempt.run("tok", "code", "python", "fixture", "cw-2", "sol", nil, nil, function(res, err)
+                got = { res, err }; done = true
+            end)
+            vim.wait(2000, function() return done end)
+            assert.is_true(done, "callback never fired")
+            return got[1], got[2]
+        end
+
+        it("hands a 200 JSON body to the caller as the result", function()
+            script = function() return { body = '{"result":{"passed":1}}' } end
+            local res, err = run()
+            assert.is_nil(err)
+            assert.are.equal(1, res.result.passed)
+        end)
+
+        it("reports a 429 as rate_limited, never as a result", function()
+            script = function() return { headers = "HTTP/2 429\r\nretry-after: 5\r\n\r\n", body = '{"error":"too many requests"}' } end
+            local res, err = run()
+            assert.is_nil(res)
+            assert.is_true(err.rate_limited)
+            assert.are.equal(5, err.retry_after)
+        end)
+
+        it("reports a 401 as an auth error", function()
+            script = function() return { headers = "HTTP/2 401\r\n\r\n", body = '{"error":"unauthorized"}' } end
+            local _, err = run()
+            assert.is_true(err.auth)
+        end)
+
+        it("still surfaces a curl exit code", function()
+            script = function() return { exit = 7 } end
+            local _, err = run()
+            assert.are.equal(7, err.code)
+            assert.is_true(err.curl)
+        end)
+
+        it("calls back when the job cannot even be started, and leaves no temp file behind", function()
+            local seen_tmp
+            script = function(cmd)
+                for i, a in ipairs(cmd) do if a == "-d" then seen_tmp = cmd[i + 1]:sub(2) end end
+                return { spawn_fail = true }
+            end
+            local _, err = run()
+            assert.is_true(err.curl)
+            assert.truthy(err.msg:find("curl", 1, true))
+            assert.are.equal(0, vim.fn.filereadable(seen_tmp))
+        end)
+
+        it("treats a non-object JSON body as a parse failure, not a result", function()
+            script = function() return { body = "42" } end
+            local res, err = run()
+            assert.is_nil(res)
+            assert.truthy(err.msg:find("parse", 1, true))
+        end)
+    end)
+
     describe("notify", function()
         it("calls post with correct endpoint", function()
             local called_endpoint

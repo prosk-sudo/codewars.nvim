@@ -480,4 +480,15 @@ describe("cmd.focus", function()
         assert.are.same({ cat = "beta", lang = "go" }, skip_calls[1])
         assert.are.same({ slug = "skipped-to-kata-1", lang = "go" }, mounts[2])
     end)
+
+    -- An identity change calls forget_focus: the remembered kata belongs to
+    -- the previous account's queue, so a skip afterwards must not act on it.
+    it("forget_focus clears a populated focus so skip has nothing to act on", function()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        assert.are.same({ lang = "python", category = "rank_up", slug = "served-kata-1" }, cmd.current_focus())
+        cmd.forget_focus()
+        assert.is_nil(cmd.current_focus())
+        cmd.focus_skip()
+        assert.are.equal(0, #skip_calls, "skip acted on a forgotten focus")
+    end)
 end)

@@ -48,11 +48,40 @@ function page.parse_header_dump(dump)
         if code then
             status, retry_after = tonumber(code), nil
         else
-            local v = line:match("^[Rr]etry%-[Aa]fter:%s*(.-)%s*$")
-            if v then retry_after = v end
+            -- Header names are case-insensitive; servers send Retry-After,
+            -- retry-after and RETRY-AFTER alike.
+            local name, v = line:match("^([%w%-]+):%s*(.-)%s*$")
+            if name and name:lower() == "retry-after" then retry_after = v end
         end
     end
     return status, retry_after
+end
+
+--- Read a whole file, or "" when it does not exist.
+---@param path string
+---@return string
+function page.slurp(path)
+    local f = io.open(path, "r")
+    if not f then return "" end
+    local s = f:read("*a")
+    f:close()
+    return s
+end
+
+--- vim.fn.jobstart that never leaves a caller hanging: returns the job id,
+--- or nil when the job could not be started. jobstart returns 0 or -1 for
+--- a bad command and RAISES (E475) when the executable is missing, and in
+--- both cases on_exit never fires -- so every transport that waited for
+--- on_exit alone spun forever with curl absent from PATH.
+---@param cmd string[]
+---@param opts table jobstart options
+---@return integer? job id
+function page.spawn(cmd, opts)
+    local ok, id = pcall(vim.fn.jobstart, cmd, opts)
+    if not ok or type(id) ~= "number" or id <= 0 then
+        return nil
+    end
+    return id
 end
 
 --- Turn an HTTP status into the error shape api.utils produces, so callers
@@ -113,15 +142,9 @@ function page.fetch(url, cb, attempt)
         "--max-time", "30",
     }, header_args)
 
-    local function slurp(path)
-        local f = io.open(path, "r")
-        if not f then return "" end
-        local s = f:read("*a")
-        f:close()
-        return s
-    end
+    local slurp = page.slurp
 
-    vim.fn.jobstart(cmd, {
+    local job = page.spawn(cmd, {
         on_exit = vim.schedule_wrap(function(_, exit_code)
             local body, dump = slurp(tmp), slurp(hdr)
             pcall(os.remove, tmp)
@@ -145,6 +168,14 @@ function page.fetch(url, cb, attempt)
             cb(body)
         end),
     })
+
+    -- The job never started (curl missing, spawn refused): on_exit will not
+    -- run, so report it here or the caller's spinner spins forever.
+    if not job then
+        pcall(os.remove, tmp)
+        pcall(os.remove, hdr)
+        cb(nil, { msg = "Could not start curl to fetch " .. url .. ". Is curl installed?", curl = true })
+    end
 end
 
 return page

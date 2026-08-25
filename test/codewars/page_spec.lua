@@ -136,6 +136,30 @@ describe("api.page", function()
             assert.are.equal(page.MAX_429_RETRIES + 1, runs)
         end)
 
+        -- jobstart returns 0/-1 for a bad command and raises when the
+        -- executable is missing; either way on_exit never fires, and the
+        -- caller's spinner spun forever.
+        it("calls back with a curl error when the job cannot be started", function()
+            vim.fn.jobstart = function() return 0 end
+            local body, err = drive()
+            assert.is_nil(body)
+            assert.is_true(err.curl)
+        end)
+
+        it("calls back with a curl error when jobstart raises (curl not found)", function()
+            vim.fn.jobstart = function() error("E475: Invalid argument: curl") end
+            local body, err = drive()
+            assert.is_nil(body)
+            assert.is_true(err.curl)
+        end)
+
+        it("honours a Retry-After header in any casing", function()
+            local _, ra = page.parse_header_dump("HTTP/2 429\r\nRETRY-AFTER: 12\r\n\r\n")
+            assert.are.equal("12", ra)
+            local _, ra2 = page.parse_header_dump("HTTP/2 429\r\nRetry-after: 3\r\n\r\n")
+            assert.are.equal("3", ra2)
+        end)
+
         it("still reports a curl failure by exit code", function()
             script = function() return { headers = "", body = "", exit = 6 } end
             local _, err = drive()
