@@ -5,6 +5,13 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Switching accounts (`:CW cookie` with a different session, or `:CW cookie
+  delete`) now drops everything the previous account owned: the completed-kata
+  list and details, every cached training session (project/solution ids), the
+  detected username, the picker's completed set, and the remembered focus
+  kata. Previously only the solutions cache was dropped, so the new account
+  could attempt against the old account's session ids, see its kata as
+  completed, and stay "Signed in as" the old name.
 - `:CW template on` now puts the cursor at the end of your starter code after
   re-wrapping the buffer — not wherever it happened to be (usually inside the
   template's preamble), and not the end of the file, which is the template's

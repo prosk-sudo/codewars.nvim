@@ -35,6 +35,15 @@ function completed.save_details(details)
     cache_utils.write_json(details_file(), details)
 end
 
+--- Remove both caches. The completed list is the signed-in user's, so it
+--- must not outlive their cookie; the kata details are not per-user but
+--- are only ever rebuilt from the list, so they go too.
+function completed.clear()
+    for _, f in ipairs({ list_file(), details_file() }) do
+        if f:exists() then pcall(f.rm, f) end
+    end
+end
+
 ---@param cb? function
 function completed.update(cb)
     local api_utils = require("codewars.api.utils")
