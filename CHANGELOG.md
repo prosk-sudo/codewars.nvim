@@ -5,6 +5,16 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Kumite editing follows its state machine everywhere. Buffers lock while a
+  save or publish is in flight and unlock again afterwards; `:CW kumite run`
+  refuses to run mid-save; `:CW kumite convert` refuses someone else's kumite
+  (fork it first) and refuses while you have unsaved edits, so the kata is built
+  from what you actually saved; renaming a published kumite through the
+  convert retry is refused with instructions instead of silently failing; a
+  fork always gets a test-fixture pane; and a save or publish whose reply
+  arrives after the workspace was closed no longer errors on the dead buffer.
+- Kata editor: adding a language and immediately saving or publishing again no
+  longer races the id read-back that would have dropped the new language.
 - Closing a kata no longer loses work. Unsaved solution edits are written to
   the solution file before the buffer is removed (it used to be force-deleted,
   bypassing Neovim's unsaved-changes protection — including via `:CW focus

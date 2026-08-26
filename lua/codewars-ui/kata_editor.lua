@@ -584,6 +584,10 @@ function KataEditor:save()
         return log.warn(err)
     end
 
+    if self:ids_pending() then
+        return
+    end
+
     local prev = self.state
     self:set_state("saving")
     self:refresh_title()
@@ -611,6 +615,9 @@ function KataEditor:save()
         -- save presents the language as new again and re-creates it.
         for _, lm in pairs(model.languages or {}) do
             if lm.id == nil or lm.id == "" then
+                -- Until the readback lands the new language still has an
+                -- empty id, and a second save/publish would CREATE it again.
+                self._ids_pending = true
                 self:refresh_language_ids()
                 break
             end
@@ -618,10 +625,22 @@ function KataEditor:save()
     end)
 end
 
+--- True while a save's new-language ids are still being read back; the
+--- editor refuses another save/publish in that window (see save()).
+---@return boolean
+function KataEditor:ids_pending()
+    if self._ids_pending then
+        log.warn("Still reading back the id of the language you just added — try again in a moment.")
+        return true
+    end
+    return false
+end
+
 --- Re-read the edit page to pick up snippet ids the server just minted for
 --- languages this workspace added. Content is untouched; only ids are adopted.
 function KataEditor:refresh_language_ids()
     require("codewars.api.kata").load(self.model.id, self.lang, function(fresh, err)
+        self._ids_pending = false
         if err or not fresh then
             return log.warn("Saved — but could not read back the new language's id. "
                 .. "Reopen the kata before saving again, or it will be created twice.")
@@ -655,6 +674,9 @@ function KataEditor:publish()
     local _, err = kstate.step(self.state, "publish")
     if err then
         return log.warn(err)
+    end
+    if self:ids_pending() then
+        return
     end
     if self:is_dirty() then
         return log.warn("You have unsaved edits — :CW kata save before publishing.")

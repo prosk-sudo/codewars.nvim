@@ -192,8 +192,18 @@ end
 --- cannot leave the buffers writable during an in-flight request.
 ---@param next_state string
 function Kumite:set_state(next_state)
+    local was_editable = kstate.is_editable(self.state)
     self.state = next_state
-    self:set_buffers_locked(kstate.is_locked(next_state))
+    -- Locked for every state that is not editable, not just the in-flight
+    -- ones: `published` is not editable either, and unlocking it left the
+    -- buffers writable while is_dirty() said "clean" -- edits typed after
+    -- publishing were silently dropped on close.
+    self:set_buffers_locked(not kstate.is_editable(next_state))
+    if was_editable and not kstate.is_editable(next_state) and not kstate.is_locked(next_state) then
+        -- Entering a read-only resting state from an editable one: put the
+        -- insert-key guard back so a keypress explains itself.
+        self:apply_readonly_guard()
+    end
 end
 
 function Kumite:clear_readonly_guard()
@@ -220,6 +230,17 @@ function Kumite:fork()
     ui_utils.buf_set_opts(self.bufnr, { modifiable = true })
     if self.fixture_split and self.fixture_split.bufnr then
         ui_utils.buf_set_opts(self.fixture_split.bufnr, { modifiable = true })
+    else
+        -- A read-only kumite with no fixture never got a split at mount;
+        -- the fork needs somewhere to write tests, or every :CW test is
+        -- refused with "no test fixture to run against".
+        local TestcaseSplit = require("codewars-ui.split.testcase")
+        self.fixture_split = TestcaseSplit:new(self)
+        self.fixture_split:mount()
+        self.fixture_split:populate("")
+        local test_ft = require("codewars.languages.filetypes").test(self.lang, self.snippet.test_language)
+        ui_utils.buf_set_opts(self.fixture_split.bufnr, { modifiable = true, filetype = test_ft or "" })
+        vim.bo[self.fixture_split.bufnr].modified = false
     end
 
     if self.description then
@@ -282,6 +303,13 @@ function Kumite:save(on_done)
         self.snippet.parent_id = self.parent_id or self.snippet.parent_id
         self.snippet.code = model.code
         self.snippet.fixture = model.fixture
+        -- The workspace may have been closed while the save was in flight;
+        -- title() reads the buffer and raised on an invalid one.
+        if not (self.bufnr and api.nvim_buf_is_valid(self.bufnr)) then
+            log.info("Saved as a draft on codewars.com — :CW kumite open " .. self.snippet.id)
+            if on_done then on_done(true) end
+            return
+        end
         if self.description then
             self.description:populate() -- header now shows the Codewars link
         end
@@ -341,11 +369,13 @@ function Kumite:_do_publish()
             return log.error("Publish failed — " .. (err.msg or "unknown error"))
         end
         self:set_state(kstate.step("publishing", "publish_done")) -- "published"
-        if self.description then
-            self.description:populate()
+        if self.bufnr and api.nvim_buf_is_valid(self.bufnr) then
+            if self.description then
+                self.description:populate()
+            end
+            self:refresh_title()
+            pcall(api.nvim_buf_set_name, self.bufnr, self:title())
         end
-        self:refresh_title()
-        pcall(api.nvim_buf_set_name, self.bufnr, self:title())
         log.info("Published! " .. url)
     end)
 end
@@ -359,6 +389,12 @@ end
 ---@return string?
 function Kumite:server_id()
     if self.state == "local_new" or self.state == "local_fork" then
+        return nil
+    end
+    -- Someone else's kumite: it has an id, but not one THIS workspace may
+    -- mutate. Without this, unpublish/convert posted owner-only requests
+    -- and left it to the server to refuse.
+    if self.state == "published_view" then
         return nil
     end
     -- A fork's first save passes through `saving`, where the state check above
@@ -410,12 +446,20 @@ function Kumite:convert()
     if kstate.is_locked(self.state) then
         return log.warn("A save or publish is in progress — wait for it to finish.")
     end
+    if self.state == "published_view" then
+        return log.warn("This is someone else's kumite — fork it to make a kata from it.")
+    end
     -- server_id(), not snippet.id: an unsaved fork still carries the PARENT's
     -- id, and converting on that would convert and hide the ORIGINAL kumite
     -- while silently discarding every local edit.
     local id = self:server_id()
     if not id then
         return log.warn("Save the kumite first (:CW kumite save), then convert.")
+    end
+    -- Convert reads the SAVED kumite: unsaved edits would stay local while
+    -- the kata was built from stale content and the kumite hidden.
+    if self:is_dirty() then
+        return log.warn("You have unsaved edits — :CW kumite save before converting.")
     end
     -- Converting flips the snippet's state to "converted" (verified live
     -- 2026-07-25). Catching it here turns a confusing server rejection into
@@ -487,6 +531,14 @@ end
 --- A kumite's title only reaches the server through a save, so rename, save,
 --- then retry -- without re-confirming, since the user already agreed to convert.
 function Kumite:_rename_and_retry_convert()
+    -- The retry renames by SAVING, and the state machine forbids save from
+    -- `published`. Offering the prompt anyway mutated the local title, hit
+    -- "Already published", and left the kumite renamed on screen only.
+    local _, save_err = kstate.step(self.state, "save")
+    if save_err then
+        return log.warn("Codewars already has a kata with this kumite's name, and a published "
+            .. "kumite cannot be renamed from here — :CW kumite unpublish, rename via save, then convert.")
+    end
     -- Do not name the taken title: the collision is on the STORED title, which
     -- can differ from this buffer's if an earlier rename never landed. And do
     -- not pre-append a suffix -- retries compounded it into "X II II".
@@ -498,13 +550,18 @@ function Kumite:_rename_and_retry_convert()
         if not name or vim.trim(name) == "" then
             return log.info("Convert cancelled — the name is still taken.")
         end
+        local previous_title = self.snippet.title
         self.snippet.title = vim.trim(name)
         self:refresh_title()
         -- The title only exists server-side after a save, and convert reads the
         -- STORED title, so the save has to land before retrying.
         self:save(function(ok)
             if not ok then
-                return log.error("Renamed locally, but the save failed — convert not retried.")
+                -- Nothing landed: put the title back rather than leave the
+                -- workspace claiming a name the server never saw.
+                self.snippet.title = previous_title
+                self:refresh_title()
+                return log.error("The rename could not be saved — convert not retried.")
             end
             self:_do_convert()
         end)
