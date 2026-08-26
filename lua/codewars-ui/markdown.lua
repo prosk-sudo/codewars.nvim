@@ -89,9 +89,16 @@ end
 ---@param stash string[]
 ---@return string
 local function restore(text, stash)
-    return (text:gsub("\1CWMD(%d+)\1", function(i)
-        return stash[tonumber(i)] or ""
-    end))
+    -- A stashed block can itself hold an earlier sentinel (a <pre> whose
+    -- inline code was protected first), so expand until none is left; every
+    -- entry predates its own sentinel, so this terminates.
+    local n
+    repeat
+        text, n = text:gsub("\1CWMD(%d+)\1", function(i)
+            return stash[tonumber(i)] or ""
+        end)
+    until n == 0
+    return text
 end
 
 --- Render `<blockquote>` as a real markdown quote: every line gets `> `, so a

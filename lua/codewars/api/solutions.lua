@@ -195,7 +195,9 @@ local function code_blocks(html)
         local code = page.unescape(html:sub(code_content_s, code_e - 1))
         pos = code_e + 7
         code = code:gsub("^%s+", ""):gsub("%s+$", "")
-        if #code > 10 then
+        -- Any non-empty block is a solution: a one-liner like `x=>x` is
+        -- shorter than the old 10-character floor and used to vanish.
+        if #code > 0 then
             codes[#codes + 1] = code
         end
     end
