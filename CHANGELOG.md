@@ -5,6 +5,17 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- The completed-kata cache can no longer be quietly wrong. Solving a kata
+  while the cache is missing or expired records it without stamping a
+  one-item list as a complete, fresh cache; a refresh that gets a reply it
+  does not understand keeps the cached list (and says so) instead of
+  overwriting it with an empty one; a kata you solved while a background
+  refresh was running stays marked complete; a refresh that fails passes the
+  error to the caller rather than pretending you have no completed kata; and
+  the "Fetched N kata details" message counts only the ones that worked,
+  with a rate-limit hint when that is why some failed. The problem-list
+  cache is left untouched when every search page comes back empty (site
+  markup drift), instead of being replaced by an empty fresh cache.
 - Kumite editing follows its state machine everywhere. Buffers lock while a
   save or publish is in flight and unlock again afterwards; `:CW kumite run`
   refuses to run mid-save; `:CW kumite convert` refuses someone else's kumite
