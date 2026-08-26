@@ -129,6 +129,9 @@ function M.from_html(text)
     end
 
     local stash, keep = new_stash()
+    -- Math first: it claims ```math fences and `$…$` spans, and stashes
+    -- every other fence/span on the way, so `$` inside code is never math.
+    text = require("codewars-ui.math").render(text, keep)
     text = protect(text, keep)
 
     -- Line breaks and rules first: they change structure, not content.
