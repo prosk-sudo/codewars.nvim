@@ -8,16 +8,44 @@ local function cache_file()
     return cache_utils.cache_file("problemlist.json")
 end
 
----@return table? { items: table[], timestamp: integer, lang: string }
+local DEFAULT_INTERVAL = 30 * 24 * 60 * 60
+
+---@return integer seconds after which the list counts as stale
+local function interval()
+    return (config.user.cache or {}).update_interval or DEFAULT_INTERVAL
+end
+
+--- The cached list, and whether it is older than `cache.update_interval`.
+--- A stale list is still returned: the catalogue changes slowly and a full
+--- rebuild takes minutes, so callers show what they have and refresh in the
+--- background (`refresh_if_stale`) rather than block on it.
+---@return table[]? items nil only when nothing is cached
+---@return boolean stale
+---@return integer? age seconds since the list was built
 function problemlist.get()
     local data = cache_utils.read_json(cache_file())
-    if not data then return nil end
+    if not data or not data.items then return nil, true, nil end
 
     local age = os.time() - (data.timestamp or 0)
-    local interval = (config.user.cache or {}).update_interval or (7 * 24 * 60 * 60)
-    if age > interval then return nil end
+    return data.items, age > interval(), age
+end
 
-    return data.items
+local refreshing = false
+
+--- Rebuild the list in the background when it is stale. Returns true when a
+--- refresh was started (or is already running). Silent otherwise.
+---@return boolean
+function problemlist.refresh_if_stale()
+    local items, stale, age = problemlist.get()
+    if not items or not stale then return false end
+    if refreshing then return true end
+    refreshing = true
+    local days = math.floor((age or 0) / 86400)
+    require("codewars.logger").info(("Problem list is %d days old — refreshing in the background."):format(days))
+    problemlist.update({}, function()
+        refreshing = false
+    end)
+    return true
 end
 
 --- Fetch fresh problem list by querying each rank separately (all languages).

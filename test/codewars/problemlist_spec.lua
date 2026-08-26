@@ -132,3 +132,57 @@ describe("cache.problemlist update", function()
         assert.are.equal(1, #items)
     end)
 end)
+
+-- A stale list is still served; only its refresh moves to the background.
+describe("cache.problemlist stale list", function()
+    local updates
+
+    before_each(function()
+        updates = 0
+        package.loaded["codewars.logger"] = {
+            info = function() end, warn = function() end, error = function() end,
+            err = function() end, debug = function() end,
+        }
+        package.loaded["codewars.logger.spinner"] = {
+            start = function()
+                return { update = function() end, success = function() end, error = function() end }
+            end,
+        }
+        package.loaded["codewars.config"] = { user = { cache = { update_interval = 100 } }, lang = "python" }
+        package.loaded["codewars.cache.utils"] = {
+            cache_file = function(name) return "mem:" .. name end,
+            read_json = function() return { timestamp = os.time() - 500, items = { { slug = "old" } } } end,
+            write_json = function() end,
+        }
+        package.loaded["codewars.api.search"] = {
+            fetch_page = function(_, _, cb)
+                updates = updates + 1
+                return cb({ { slug = "new", id = "new" } }, false)
+            end,
+        }
+        package.loaded["codewars.cache.problemlist"] = nil
+    end)
+
+    it("returns the old items flagged stale, with their age", function()
+        local items, stale, age = require("codewars.cache.problemlist").get()
+        assert.equals("old", items[1].slug)
+        assert.is_true(stale)
+        assert.is_true(age >= 500)
+    end)
+
+    it("refresh_if_stale rebuilds once in the background", function()
+        local problemlist = require("codewars.cache.problemlist")
+        assert.is_true(problemlist.refresh_if_stale())
+        vim.wait(2000, function() return updates > 0 end)
+        assert.is_true(updates > 0)
+    end)
+
+    it("does nothing for a fresh list", function()
+        package.loaded["codewars.cache.utils"].read_json = function()
+            return { timestamp = os.time(), items = { { slug = "fresh" } } }
+        end
+        local problemlist = require("codewars.cache.problemlist")
+        assert.is_false(problemlist.refresh_if_stale())
+        assert.equals(0, updates)
+    end)
+end)

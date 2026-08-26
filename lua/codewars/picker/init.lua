@@ -558,7 +558,10 @@ function picker.problems(opts)
     end
 
     local problemlist = require("codewars.cache.problemlist")
+    -- A stale list is shown as it is and rebuilt behind the picker; only a
+    -- missing one is built in the foreground.
     local cached = problemlist.get()
+    problemlist.refresh_if_stale()
 
     if cached then
         ensure_completed_set(function(completed_set)

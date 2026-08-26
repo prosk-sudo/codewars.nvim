@@ -166,13 +166,15 @@ one.
 
 ```lua
 cache = {
-    update_interval = 60 * 60 * 24 * 7,  -- 7 days
+    update_interval = 60 * 60 * 24 * 30,  -- 30 days
+    completed_interval = 60 * 60 * 24,    -- 1 day
 },
 ```
 
 | Option | Default | Description |
 |---|---|---|
-| `cache.update_interval` | `604800` (7 days) | How long before the problem list cache is considered stale (seconds). Set to `0` to always re-fetch. |
+| `cache.update_interval` | `2592000` (30 days) | How long the problem list is used as-is (seconds). After that it is still shown immediately by `:CW list` / `:CW random` and rebuilt in the background — you never wait for a refresh unless nothing is cached yet. `:CW cache update` forces a rebuild any time. |
+| `cache.completed_interval` | `86400` (1 day) | How long the completed-kata list is trusted before it is re-fetched (in the background) so kata solved on the website show as completed. |
 
 ## Console (Result Popup)
 
