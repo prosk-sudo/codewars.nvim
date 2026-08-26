@@ -16,6 +16,17 @@ All notable changes to codewars.nvim are documented here.
   with a rate-limit hint when that is why some failed. The problem-list
   cache is left untouched when every search page comes back empty (site
   markup drift), instead of being replaced by an empty fresh cache.
+- Solution templates round-trip exactly. A function template that builds
+  its text from `ctx.starter` is now recognised by `:CW template on/off`
+  (it used to be reported as having no `{{starter}}`); blank lines at the end
+  of your code survive `on` → `off`; whitespace-only lines come back with
+  their spaces; and a template that is nothing but `{{starter}}` never claims
+  to match a buffer, so `:CW template off` cannot cut lines from it.
+- The seeded NASM kumite fixture compiles: it is a C (criterion) file and now
+  starts with a C comment instead of a NASM `;` comment.
+- `lang = false` in `setup()` is treated as "not set" instead of becoming the
+  default language; a kata whose API reply carries `testLanguage = ""` gets
+  the test pane's proper filetype (NASM/SQL/etc. map to their test language).
 - Kumite editing follows its state machine everywhere. Buffers lock while a
   save or publish is in flight and unlock again afterwards; `:CW kumite run`
   refuses to run mid-save; `:CW kumite convert` refuses someone else's kumite
