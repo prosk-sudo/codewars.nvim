@@ -2,18 +2,6 @@
 
 All notable changes to codewars.nvim are documented here.
 
-## [Unreleased]
-
-### Changed
-- The problem list no longer expires under you. It is trusted for 30 days
-  (was 7), and even past that `:CW list` and `:CW random` open the list you
-  have immediately and rebuild it in the background — the minutes-long,
-  rate-limit-prone rebuild never blocks you again unless nothing is cached
-  at all. `:CW doctor` shows the list's age. The completed-kata list keeps
-  its own one-day refresh (`cache.completed_interval`) so kata you solve on
-  the website still show as completed promptly; if you had set
-  `cache.update_interval` to shorten that, move the value to the new option.
-
 ## [0.3.3] - 2026-08-26
 
 ### Added
@@ -26,6 +14,16 @@ All notable changes to codewars.nvim are documented here.
   span and block math a fenced block, so markdown never mangles it; anything
   the translator does not know is kept as written. A `$` inside code, or a
   price like `$5`, is left alone.
+
+### Changed
+- The problem list no longer expires under you. It is trusted for 30 days
+  (was 7), and even past that `:CW list` and `:CW random` open the list you
+  have immediately and rebuild it in the background — the minutes-long,
+  rate-limit-prone rebuild never blocks you again unless nothing is cached
+  at all. `:CW doctor` shows the list's age. The completed-kata list keeps
+  its own one-day refresh (`cache.completed_interval`) so kata you solve on
+  the website still show as completed promptly; if you had set
+  `cache.update_interval` to shorten that, move the value to the new option.
 
 ### Fixed
 - `:CW list difficulty=` and `order=` behave like the picker's own menus.
