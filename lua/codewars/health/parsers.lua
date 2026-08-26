@@ -44,6 +44,7 @@ local KUMITE_LIST = table.concat({
     [[<i class="icon-moon-user "></i><a href="/users/someone">someone</a>]],
     [[<pre lang="python"><code>print(1)</code></pre>]],
     [[</div>]],
+    [[<nav class="pagination"><a href="?page=1">1</a><span class="page current">2</span><a href="?page=3">3</a></nav>]],
 })
 
 local SOLUTIONS = table.concat({
@@ -84,11 +85,12 @@ M.checks = {
             if cc.tags_text ~= "Strings" then missing[#missing + 1] = "tags_text" end
             if cc.coauthors_wanted ~= true then missing[#missing + 1] = "coauthors_wanted" end
             if cc.description ~= "Describe it." then missing[#missing + 1] = "description" end
+            if py.fixture ~= "test" then missing[#missing + 1] = "fixture (percent-decode)" end
             if ((model.version_info or {}).python or {})[1] == nil then missing[#missing + 1] = "versionInfo" end
             if #missing > 0 then
                 return false, "fields not extracted: " .. table.concat(missing, ", ")
             end
-            return true, "8/8 fields"
+            return true, "9/9 fields"
         end,
     },
     {
@@ -106,7 +108,16 @@ M.checks = {
             if entry.code ~= "print(1)" then
                 return false, "code block not extracted"
             end
-            return true, "1 entry, all fields"
+            local missing = {}
+            if entry.id ~= "cccccccccccccccccccccccc" then missing[#missing + 1] = "id" end
+            if entry.author ~= "someone" then missing[#missing + 1] = "author" end
+            if entry.language ~= "python" then missing[#missing + 1] = "language" end
+            if result.current_page ~= 2 then missing[#missing + 1] = "current_page" end
+            if result.last_page ~= 3 then missing[#missing + 1] = "last_page" end
+            if #missing > 0 then
+                return false, "fields not extracted: " .. table.concat(missing, ", ")
+            end
+            return true, "1 entry, 5 fields + pagination"
         end,
     },
     {

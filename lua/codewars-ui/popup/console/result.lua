@@ -8,7 +8,9 @@ local ResultPopup = ConsolePopup:extend("CwResultPopup")
 
 ---@param res table
 function ResultPopup:handle(res)
-    if not self.bufnr then return end
+    -- A runner reply can land after the console was wiped; nil is not the
+    -- only dead state a bufnr has.
+    if not (self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr)) then return end
 
     local lines = {}
     local hl_lines = {}
@@ -69,7 +71,7 @@ function ResultPopup:handle(res)
         add("")
     end
 
-    if res.reason and tostring(res.reason) ~= "vim.NIL" then
+    if res.reason and res.reason ~= "" and tostring(res.reason) ~= "vim.NIL" then
         add_separator()
         add("  Error", "codewars_error")
         add_separator()
@@ -122,7 +124,7 @@ function ResultPopup:handle(res)
 end
 
 function ResultPopup:handle_error(err)
-    if not self.bufnr then return end
+    if not (self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr)) then return end
 
     local lines = { "== ERROR ==", "" }
     for line in (err.msg or "Unknown error"):gmatch("[^\r\n]+") do

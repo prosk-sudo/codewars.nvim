@@ -38,6 +38,23 @@ local function wrap(text, width)
         else
             local line = ""
             for word in paragraph:gmatch("%S+") do
+                -- A single token wider than the popup (a URL, a slug) is
+                -- split hard; it can never fit and would overflow the box.
+                while vim.fn.strdisplaywidth(word) > width and width > 0 do
+                    if line ~= "" then
+                        lines[#lines + 1] = line
+                        line = ""
+                    end
+                    -- Cut by display cells, not characters: a run of CJK or
+                    -- emoji is two cells per character.
+                    local n = 0
+                    while vim.fn.strdisplaywidth(vim.fn.strcharpart(word, 0, n + 1)) <= width do
+                        n = n + 1
+                    end
+                    n = math.max(n, 1)
+                    lines[#lines + 1] = vim.fn.strcharpart(word, 0, n)
+                    word = vim.fn.strcharpart(word, n)
+                end
                 local candidate = line == "" and word or (line .. " " .. word)
                 if vim.fn.strdisplaywidth(candidate) > width and line ~= "" then
                     lines[#lines + 1] = line

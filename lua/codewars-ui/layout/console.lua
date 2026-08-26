@@ -12,8 +12,10 @@ local ConsoleLayout = Layout:extend("CwConsoleLayout")
 
 function ConsoleLayout:unmount()
     ConsoleLayout.super.unmount(self)
-    self.result = Result(self)
-    self.popups = { self.result }
+    -- mount() builds a fresh Result; building one here too allocated a
+    -- scratch buffer on every kata close that nothing ever unmounted.
+    self.result = nil
+    self.popups = {}
 end
 
 function ConsoleLayout:hide()
@@ -31,6 +33,10 @@ function ConsoleLayout:hide()
 end
 
 function ConsoleLayout:mount()
+    if not self.result then
+        self.result = Result(self)
+        self.popups = { self.result }
+    end
     self:update(NuiLayout.Box({
         NuiLayout.Box(self.result, { size = "100%" }),
     }, { dir = "row" }))
@@ -51,6 +57,10 @@ function ConsoleLayout:run(mode)
 
     if config.user.console.open_on_runcode then
         self:show()
+    elseif not self.result then
+        -- Unmounted console with the auto-open off: rebuild it quietly so
+        -- the result has somewhere to land.
+        self:mount()
     end
 
     self.result:focus()

@@ -160,10 +160,12 @@ function cmd.menu()
     local ok, tabp = pcall(api.nvim_win_get_tabpage, winid)
     local ui = require("codewars-ui.utils")
 
-    if ok then
+    if ok and bufnr and api.nvim_buf_is_valid(bufnr) then
         api.nvim_set_current_tabpage(tabp)
         ui.win_set_buf(winid, bufnr)
     else
+        -- Window gone, or the buffer was wiped from under it: rebuild
+        -- rather than silently showing nothing.
         _Cw_state.menu:remount()
     end
 end
