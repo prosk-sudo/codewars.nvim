@@ -100,12 +100,14 @@ local _saved_rank_filter = nil
 -- Sort modes
 local sort_modes = {
     { key = "shuffle", label = "Shuffle" },
-    { key = "popularity", label = "Popularity (site order)" },
     { key = "name", label = "Name (A-Z)" },
     { key = "satisfaction", label = "Satisfaction (%)" },
     { key = "hardest", label = "Hardest first" },
     { key = "easiest", label = "Easiest first" },
 }
+
+-- Exposed so `:CW list order=` completion/validation can be pinned to it.
+picker.sort_modes = sort_modes
 
 ---@param key string
 ---@return integer? index into sort_modes
@@ -133,12 +135,35 @@ local difficulty_options = {
 ---@param items table[]
 ---@param rank integer? nil means all ranks
 ---@return table[]
+--- Rank of a list item. Catalogue items carry `rank_id`; completed-kata
+--- items (cache/completed.lua) carry `rank = { id, name }`. Every rank read
+--- in this file goes through here so the two lists stay interchangeable.
+---@param item table
+---@return integer?
+local function rank_of(item)
+    return item.rank_id or (item.rank and item.rank.id)
+end
+
+--- `rank` is nil (all), one rank, or a list of ranks (`:CW list
+--- difficulty=8,7`); the picker's Ctrl-d menu then narrows to one of them.
+---@param items table[]
+---@param rank integer|integer[]|nil
 local function filter_by_rank(items, rank)
     if not rank then return items end
+    local wanted = type(rank) == "table" and rank or { rank }
+    local set = {}
+    for _, r in ipairs(wanted) do set[r] = true end
     return vim.tbl_filter(function(item)
-        local rid = item.rank_id or (item.rank and item.rank.id)
-        return rid == rank
+        return set[rank_of(item)] == true
     end, items)
+end
+
+---@param rank integer|integer[]|nil
+---@return string
+local function rank_label(rank)
+    if not rank then return "All ranks" end
+    local ranks = type(rank) == "table" and rank or { rank }
+    return table.concat(vim.tbl_map(function(r) return tostring(math.abs(r)) end, ranks), ",") .. " kyu"
 end
 
 local function shuffle(tbl)
@@ -168,13 +193,14 @@ local function sort_items(items, mode)
         local pos = {}
         for i, item in ipairs(sorted) do pos[item] = i end
         table.sort(sorted, function(a, b)
-            local ra, rb = (a.rank_id or 0) * sign, (b.rank_id or 0) * sign
+            -- Unranked (beta) kata go last either way.
+            local ra, rb = rank_of(a), rank_of(b)
+            if (ra == nil) ~= (rb == nil) then return rb == nil end
+            ra, rb = (ra or 0) * sign, (rb or 0) * sign
             if ra ~= rb then return ra < rb end
             return pos[a] < pos[b]
         end)
     end
-    -- "popularity": the cache is built rank by rank in the site's
-    -- popularity order, so the list as stored already is that order.
     return sorted
 end
 
@@ -214,10 +240,14 @@ function picker._show_kata_list(items, title, completed_set, initial)
     local make_picker
     local cached_languages = problemlist_utils.collect_languages(items)
 
-    local function save_state()
-        _saved_sort_idx = current_sort_idx
-        _saved_lang_filter = current_lang_filter
-        _saved_rank_filter = current_rank_filter
+    -- Remember only what the user just chose in a menu. Values seeded by a
+    -- caller (`:CW list order=… difficulty=…`) are not persisted by touching
+    -- an unrelated menu, so other list views never inherit them.
+    ---@param field "sort"|"lang"|"rank"|nil nil = all three (the reset)
+    local function save_state(field)
+        if field == "sort" or not field then _saved_sort_idx = current_sort_idx end
+        if field == "lang" or not field then _saved_lang_filter = current_lang_filter end
+        if field == "rank" or not field then _saved_rank_filter = current_rank_filter end
     end
 
     local function build_display_list()
@@ -227,15 +257,12 @@ function picker._show_kata_list(items, title, completed_set, initial)
 
         local lang_label = current_lang_filter or "All languages"
         local sort_label = sort_modes[current_sort_idx].label
-        local rank_label = "All ranks"
-        if current_rank_filter then
-            rank_label = math.abs(current_rank_filter) .. " kyu"
-        end
+        local rank_text = rank_label(current_rank_filter)
 
         local controls = {
             { _control = "sort", label = ("  Sort: %s"):format(sort_label) },
             { _control = "lang", label = ("  Language: %s"):format(lang_label) },
-            { _control = "rank", label = ("  Difficulty: %s (%d)"):format(rank_label, #filtered) },
+            { _control = "rank", label = ("  Difficulty: %s (%d)"):format(rank_text, #filtered) },
             { _control = "separator" },
         }
 
@@ -322,7 +349,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
             height = #sort_modes + 4,
             on_select = function(idx)
                 current_sort_idx = idx
-                save_state()
+                save_state("sort")
                 vim.schedule(function() make_picker():find() end)
             end,
         })
@@ -369,7 +396,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
             height = math.min(#lang_entries + 2, 25),
             on_select = function(v)
                 current_lang_filter = v.lang
-                save_state()
+                save_state("lang")
                 vim.schedule(function() make_picker():find() end)
             end,
         })
@@ -382,7 +409,8 @@ function picker._show_kata_list(items, title, completed_set, initial)
         -- One pass over the list for every rank's count, not one per rank.
         local per_rank = {}
         for _, item in ipairs(lang_filtered) do
-            if item.rank_id then per_rank[item.rank_id] = (per_rank[item.rank_id] or 0) + 1 end
+            local r = rank_of(item)
+            if r then per_rank[r] = (per_rank[r] or 0) + 1 end
         end
         for j, opt in ipairs(difficulty_options) do
             if current_rank_filter == opt.rank then current_rank_idx = j - 1 end
@@ -403,7 +431,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
             height = #rank_entries + 4,
             on_select = function(v)
                 current_rank_filter = v.rank
-                save_state()
+                save_state("rank")
                 vim.schedule(function() make_picker():find() end)
             end,
         })
@@ -501,9 +529,19 @@ function picker._show_kata_list(items, title, completed_set, initial)
 end
 
 --- Browse all kata. Uses cached problem list for instant loading.
----@param opts? { query?: string, rank?: integer[], order?: string }
+---@param opts? { query?: string, rank?: integer[], sort_key?: string }
+--- rank: the requested kyu ranks (negative ids); they become the picker's own
+--- rank filter -- one rank or a set -- so Ctrl-d shows what was asked for and
+--- can still widen back to "All ranks". sort_key: one of sort_modes' keys.
 function picker.problems(opts)
     opts = opts or {}
+
+    -- What this open asks for up front. Only set when actually requested,
+    -- so a plain `:CW list` keeps the rank remembered from last time.
+    local initial = { sort_key = opts.sort_key }
+    if opts.rank and #opts.rank > 0 then
+        initial.rank_filter = #opts.rank == 1 and opts.rank[1] or opts.rank
+    end
 
     if opts.query and opts.query ~= "" then
         local search_api = require("codewars.api.search")
@@ -513,7 +551,7 @@ function picker.problems(opts)
             if not results or #results == 0 then return log.warn("No kata found") end
 
             ensure_completed_set(function(completed_set)
-                picker._show_kata_list(results, "Select a Question", completed_set)
+                picker._show_kata_list(results, "Select a Question", completed_set, initial)
             end)
         end)
         return
@@ -522,33 +560,17 @@ function picker.problems(opts)
     local problemlist = require("codewars.cache.problemlist")
     local cached = problemlist.get()
 
-    -- problemlist.update fetches every rank regardless of opts.rank, so the
-    -- filter must apply to BOTH branches; it used to apply only to the
-    -- cached one, and a fresh build showed all eight ranks.
-    -- A single requested rank becomes the picker's OWN rank filter, so its
-    -- Ctrl-d menu and counts show exactly what the user asked for; several
-    -- ranks are narrowed here and the menu reads "All ranks" over that set.
-    -- Either way the remembered filter from a previous open is replaced,
-    -- so a stale in-picker choice cannot empty the list just requested.
-    local single_rank = opts.rank and #opts.rank == 1 and opts.rank[1] or nil
-    local initial = { sort_key = opts.sort_key, rank_filter = single_rank or false }
-    local function by_rank(items)
-        if not opts.rank or #opts.rank == 0 or single_rank then return items end
-        local rank_set = {}
-        for _, r in ipairs(opts.rank) do rank_set[r] = true end
-        return vim.tbl_filter(function(item)
-            return item.rank_id and rank_set[item.rank_id]
-        end, items)
-    end
-
     if cached then
         ensure_completed_set(function(completed_set)
-            picker._show_kata_list(by_rank(cached), "Select a Question", completed_set, initial)
+            picker._show_kata_list(cached, "Select a Question", completed_set, initial)
         end)
     else
         problemlist.update(opts, function(items, partial)
-            items = by_rank(items or {})
-            if #items == 0 then
+            items = items or {}
+            -- Judge emptiness on what the picker will actually show for the
+            -- requested ranks, not on the whole (possibly partial) catalogue.
+            local shown = filter_by_rank(items, initial.rank_filter or nil)
+            if #shown == 0 then
                 -- An aborted run already reported its own error.
                 if partial then return end
                 return log.warn("No kata found")
@@ -556,7 +578,7 @@ function picker.problems(opts)
             if partial then
                 -- Nothing was cached, so the next picker open retries; but
                 -- do not pass off the fragment as the whole catalogue.
-                log.warn(("Showing %d kata fetched before the build was aborted — run :CW cache update to retry"):format(#items))
+                log.warn(("Showing %d kata fetched before the build was aborted — run :CW cache update to retry"):format(#shown))
             end
             ensure_completed_set(function(completed_set)
                 picker._show_kata_list(items, "Select a Question", completed_set, initial)

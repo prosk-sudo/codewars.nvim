@@ -21,14 +21,19 @@ local kata_pane_keys = { "answer", "setup", "fixture", "example", "description" 
 local arguments = {
     list = {
         difficulty = { "8", "7", "6", "5", "4", "3", "2", "1" },
-        -- Keep in sync with picker.sort_modes keys (literal so completion does
-        -- not eager-load telescope, same reasoning as the lists below).
-        order = { "popularity", "name", "satisfaction", "hardest", "easiest", "shuffle" },
+        -- Keep in sync with picker.sort_modes keys (pinned by
+        -- input_parsing_spec; literal so completion does not load the picker).
+        order = { "shuffle", "name", "satisfaction", "hardest", "easiest" },
     },
 }
 
+-- Options that take a comma-separated list. Completion only offers a
+-- `key=a,b` continuation for these; the rest are single-valued.
+local multi_value = { difficulty = true }
+
 ---@class cw.Commands
 local cmd = {}
+cmd.arguments = arguments
 
 function cmd.help()
     local NuiPopup = require("nui.popup")
@@ -97,7 +102,7 @@ function cmd.help()
         { "exit",           "Close codewars.nvim" },
         { "",               "" },
         { "KATA LIST KEYS", "" },
-        { "Ctrl-s",         "Sort (shuffle, name, satisfaction)" },
+        { "Ctrl-s",         "Sort (shuffle, name, satisfaction, hardest, easiest)" },
         { "Ctrl-l",         "Filter by language" },
         { "Ctrl-d",         "Filter by difficulty" },
         { "Ctrl-r",         "Reset all filters" },
@@ -886,12 +891,16 @@ function cmd.list(options)
             return log.error("difficulty= needs a value, e.g. difficulty=8 or difficulty=8,7")
         end
         opts.rank = {}
+        local seen = {}
         for _, d in ipairs(options.difficulty) do
             local n = tonumber(d)
             if not n or n < 1 or n > 8 or n % 1 ~= 0 then
                 return log.error(("Invalid difficulty: %s (expected a kyu from 1 to 8)"):format(d))
             end
-            opts.rank[#opts.rank + 1] = -n
+            if not seen[n] then
+                seen[n] = true
+                opts.rank[#opts.rank + 1] = -n
+            end
         end
     end
 
@@ -900,6 +909,12 @@ function cmd.list(options)
     -- these are the orders that can be honoured (the old newest/oldest were
     -- accepted and silently ignored).
     if options.order then
+        if #options.order == 0 then
+            return log.error("order= needs a value: " .. table.concat(arguments.list.order, ", "))
+        end
+        if #options.order > 1 then
+            return log.error("order= takes one value, not " .. table.concat(options.order, ","))
+        end
         local order = options.order[1]
         if not vim.tbl_contains(arguments.list.order, order) then
             return log.error(("Invalid order: %s (expected one of %s)"):format(
@@ -1185,6 +1200,9 @@ function cmd.rec_complete(args, options, cmds)
         local s = vim.split(txt, "=")
         if s[2] and cmds._args[s[1]] then
             local vals = vim.split(s[2], ",")
+            if #vals > 1 and not multi_value[s[1]] then
+                return {}
+            end
             -- Neovim replaces the whole word being completed, so each
             -- candidate must carry the `key=` and any values already typed
             -- (difficulty=8, -> difficulty=8,7), or the prefix vanishes.
