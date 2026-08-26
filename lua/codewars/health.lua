@@ -120,11 +120,14 @@ function M.check()
     start("Cache")
 
     local problemlist = require("codewars.cache.problemlist")
-    local items = problemlist.get()
-    if items then
-        ok(("%d kata cached"):format(#items))
+    local items, stale, age = problemlist.get()
+    if items and not stale then
+        ok(("%d kata cached, %d days old"):format(#items, math.floor((age or 0) / 86400)))
+    elseif items then
+        ok(("%d kata cached, %d days old — refreshed in the background on next :CW list"):format(
+            #items, math.floor((age or 0) / 86400)))
     else
-        warn("Problem list cache is empty or expired. Run :CW cache update to populate.")
+        warn("Problem list cache is empty. Run :CW cache update to populate.")
     end
 
     local session_dir = config.storage.cache and config.storage.cache:joinpath("sessions")

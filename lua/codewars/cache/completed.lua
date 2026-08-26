@@ -13,7 +13,9 @@ function completed.get()
     local raw = cache_utils.read_json(list_file())
     if not raw or not raw.items then return {}, true end
     local age = os.time() - (raw.timestamp or 0)
-    local stale = age > (config.user.cache.update_interval or 86400)
+    -- Its own interval: the problem list can sit for weeks, but kata solved
+    -- on the website should show as completed here within a day.
+    local stale = age > (config.user.cache.completed_interval or 86400)
     return raw.items, stale
 end
 

@@ -45,6 +45,7 @@ function M.random_for_lang(lang)
     if not items or #items == 0 then
         return nil, "Problem list empty. Run :CW cache update first."
     end
+    problemlist.refresh_if_stale()
 
     local filtered = M.filter_by_language(items, lang)
     if #filtered == 0 then
