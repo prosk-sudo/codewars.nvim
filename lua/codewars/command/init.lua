@@ -169,20 +169,31 @@ function cmd.menu()
 end
 
 function cmd.train(options)
-    local slug = options._positional and options._positional[1]
-    if not slug then
-        return log.error("Usage: :CW train <slug> [language]")
+    local pos = vim.list_slice(options._positional or {})
+    if #pos == 0 then
+        return log.error("Usage: :CW train <title|slug|url> [language]")
     end
 
     local utils = require("codewars.utils")
-    slug = utils.parse_slug(slug)
-
     local lang = config.lang
     local lang_explicit = false
-    if options._positional and options._positional[2] then
-        lang = options._positional[2]
-        lang_explicit = true
+    -- A title is typed as bare words (:CW train Unique In Order python), so
+    -- the language is whichever trailing word names one. With exactly two
+    -- words the second is taken as a language and an unknown one is
+    -- rejected here (with the quoting hint) instead of being folded into the
+    -- slug or reaching Kata:path's assert; a two-word title is quoted.
+    if #pos >= 2 then
+        local last = pos[#pos]
+        if utils.get_lang(last) then
+            lang = last
+            lang_explicit = true
+            pos[#pos] = nil
+        elseif #pos == 2 then
+            utils.resolve_lang_arg(last)
+            return log.info(('If "%s %s" is a kata title, quote it: :CW train "%s %s"'):format(pos[1], last, pos[1], last))
+        end
     end
+    local slug = utils.parse_slug(table.concat(pos, " "))
 
     utils.auth_guard()
 
@@ -865,9 +876,14 @@ function cmd.list(options)
 
     -- Parse difficulty filter: difficulty=8,7 -> rank={-8,-7}
     if options.difficulty then
-        opts.rank = vim.tbl_map(function(d)
-            return -tonumber(d)
-        end, options.difficulty)
+        opts.rank = {}
+        for _, d in ipairs(options.difficulty) do
+            local n = tonumber(d)
+            if not n or n < 1 or n > 8 or n % 1 ~= 0 then
+                return log.error(("Invalid difficulty: %s (expected a kyu from 1 to 8)"):format(d))
+            end
+            opts.rank[#opts.rank + 1] = -n
+        end
     end
 
     -- Parse order: order=popularity (default), newest, hardest
@@ -1079,7 +1095,12 @@ end
 ---@param args string
 ---@return string[], string[]
 function cmd.parse(args)
-    local parts = vim.split(vim.trim(args), "%s+")
+    -- Same tokenizer as exec, so completion sees a quoted title as one
+    -- argument too and offers the language at the right position.
+    local parts = cmd.tokenize(args)
+    if #parts == 0 then
+        parts = { "" }
+    end
     if args:sub(-1) == " " then
         parts[#parts + 1] = ""
     end
@@ -1166,12 +1187,51 @@ function cmd.rec_complete(args, options, cmds)
     end, keys)
 end
 
+--- Split the raw `:CW` argument string into tokens. Whitespace separates
+--- tokens; a "..." or '...' segment is one token with the quotes removed, so
+--- a multi-word kata title survives (:CW train "Unique In Order" python).
+---@param s string
+---@return string[]
+function cmd.tokenize(s)
+    local parts, buf, quote = {}, nil, nil
+    for c in (s or ""):gmatch(".") do
+        if quote then
+            if c == quote then
+                quote = nil
+            else
+                buf = buf .. c
+            end
+        elseif (c == '"' or c == "'") and buf == nil then
+            -- A quote only opens a group at the start of a token, so an
+            -- apostrophe inside a word (it's-a-title) is ordinary text.
+            quote = c
+            buf = ""
+        elseif c:match("%s") then
+            if buf then
+                parts[#parts + 1] = buf
+                buf = nil
+            end
+        else
+            buf = (buf or "") .. c
+        end
+    end
+    if quote then
+        -- Never closed: the quote was ordinary text, so fall back to the
+        -- plain whitespace split rather than swallowing the rest of the line.
+        return vim.split(vim.trim(s), "%s+", { trimempty = true })
+    end
+    if buf then
+        parts[#parts + 1] = buf
+    end
+    return parts
+end
+
 function cmd.exec(args)
     local cmds = cmd.commands
     local options = vim.empty_dict()
     local positional = {}
 
-    local parts = vim.split(vim.trim(args.args), "%s+", { trimempty = true })
+    local parts = cmd.tokenize(args.args)
 
     for _, s in ipairs(parts) do
         local key, value = split_option(s)

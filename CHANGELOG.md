@@ -5,6 +5,21 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- `:CW train` accepts a kata title the way COMMANDS.md always said it did:
+  `:CW train Unique In Order python` and `:CW train "Unique In Order"` both
+  work (a trailing word that names a language is the language; quotes keep a
+  title together), and an unknown language after a slug is reported as
+  `Unknown language: …` instead of an assertion from deep inside the kata
+  path. `:CW list difficulty=abc` reports the bad value instead of raising.
+- Solution comments keep generics: `List<string>`, `Map<K, V>` and
+  `ArrayList<>` used to be stripped as if they were HTML tags. Numeric HTML
+  entities (`&#8217;`, `&#xA9;`) in clan names and comments are decoded.
+  One-line community solutions of ten characters or fewer are no longer
+  dropped from the solutions list.
+- A kata description whose `<pre>` block contains inline code no longer shows
+  a literal `CWMD1` placeholder where the code should be.
+- Reading your profile from the dashboard no longer fails on accounts whose
+  data contains an escaped quote before a closing parenthesis.
 - The completed-kata cache can no longer be quietly wrong. Solving a kata
   while the cache is missing or expired records it without stamping a
   one-item list as a complete, fresh cache; a refresh that gets a reply it
