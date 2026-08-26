@@ -16,6 +16,14 @@ function M.run(ws, result)
     if BUSY then
         return log.warn("A kumite run is already in progress.")
     end
+    -- The state machine says when a run is allowed (not while a save or
+    -- publish is in flight); this was the one action that never asked it.
+    if ws.state then
+        local _, state_err = require("codewars.kumite.state").step(ws.state, "run")
+        if state_err then
+            return log.warn(state_err)
+        end
+    end
 
     local code = table.concat(vim.api.nvim_buf_get_lines(ws.bufnr, 0, -1, false), "\n")
     local fixture = ws:fixture_content()
