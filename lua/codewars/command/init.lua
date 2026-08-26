@@ -21,7 +21,8 @@ local kata_pane_keys = { "answer", "setup", "fixture", "example", "description" 
 local arguments = {
     list = {
         difficulty = { "8", "7", "6", "5", "4", "3", "2", "1" },
-        order = { "popularity", "newest", "oldest", "hardest", "easiest", "positive" },
+        -- Keep in sync with picker.sort_modes keys ("shuffle" maps to "default").
+        order = { "popularity", "name", "satisfaction", "hardest", "easiest", "shuffle" },
     },
 }
 
@@ -888,17 +889,17 @@ function cmd.list(options)
         end
     end
 
-    -- Parse order: order=popularity (default), newest, hardest
+    -- order= selects the picker's sort mode. The list is the cached
+    -- catalogue, which carries rank, name and satisfaction but no dates, so
+    -- these are the orders that can be honoured (the old newest/oldest were
+    -- accepted and silently ignored).
     if options.order then
-        local order_map = {
-            popularity = "popularity+desc",
-            newest = "sort_date+desc",
-            oldest = "sort_date+asc",
-            hardest = "rank_id+desc",
-            easiest = "rank_id+asc",
-            positive = "satisfaction_percent+desc,total_completed+desc",
-        }
-        opts.order = order_map[options.order[1]] or "popularity+desc"
+        local order = options.order[1]
+        if not vim.tbl_contains(arguments.list.order, order) then
+            return log.error(("Invalid order: %s (expected one of %s)"):format(
+                tostring(order), table.concat(arguments.list.order, ", ")))
+        end
+        opts.sort_key = order == "shuffle" and "default" or order
     end
 
     picker.problems(opts)
@@ -1178,9 +1179,17 @@ function cmd.rec_complete(args, options, cmds)
         local s = vim.split(txt, "=")
         if s[2] and cmds._args[s[1]] then
             local vals = vim.split(s[2], ",")
-            return vim.tbl_filter(function(key)
+            -- Neovim replaces the whole word being completed, so each
+            -- candidate must carry the `key=` and any values already typed
+            -- (difficulty=8, -> difficulty=8,7), or the prefix vanishes.
+            local typed = table.concat(vim.list_slice(vals, 1, #vals - 1), ",")
+            local head = s[1] .. "=" .. (typed ~= "" and (typed .. ",") or "")
+            local matches = vim.tbl_filter(function(key)
                 return not vim.tbl_contains(vals, key) and key:find(vals[#vals], 1, true) == 1
             end, cmds._args[s[1]])
+            return vim.tbl_map(function(key)
+                return head .. key
+            end, matches)
         end
     end
 
@@ -1262,8 +1271,9 @@ function cmd.exec(args)
 end
 
 function cmd.setup()
+    -- No `bar`: with -bar a double quote starts an Ex comment, so
+    -- `:CW train "Unique In Order"` reached exec as just `train`.
     api.nvim_create_user_command("CW", cmd.exec, {
-        bar = true,
         bang = true,
         nargs = "*",
         desc = "Codewars",

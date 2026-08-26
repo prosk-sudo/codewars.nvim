@@ -19,7 +19,7 @@ Run `:CW help` inside Neovim for a quick reference.
 
 | Command | Description |
 |---|---|
-| `:CW list` | Browse kata with filters (telescope) |
+| `:CW list [difficulty=8,7] [order=…]` | Browse kata with filters (telescope). `difficulty=` takes kyu numbers (one becomes the picker's rank filter; several narrow the list); `order=` is one of `popularity` (site order), `name`, `satisfaction`, `hardest`, `easiest`, `shuffle` — `<Tab>` completes both |
 | `:CW completed` | Browse completed kata (telescope) |
 | `:CW solutions` | View community solutions for current kata, with Best Practices / Clever counts and comments. In the popup: `1`–`0`, `]`/`[` page through solutions, `gb` / `gv` vote Best Practices / Clever (again to retract), `c` toggles the comment pane, `<Tab>` switches pane, `q` closes |
 | `:CW leaderboard [category]` | Top 500 leaderboard: `overall`, `kata` (completed), `authored`, `ranks`. No args opens the category picker; also in the menu under `l` |
