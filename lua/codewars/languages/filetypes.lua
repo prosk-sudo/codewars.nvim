@@ -52,6 +52,11 @@ end
 ---@param test_language string? codewars testLanguage slug, if known
 ---@return string? filetype
 function M.test(slug, test_language)
+    -- The API sends testLanguage = "" for most kata; an empty string is
+    -- truthy in Lua and would skip the cross-language mapping.
+    if test_language == "" then
+        test_language = nil
+    end
     local tl = test_language or M.test_lang[slug] or slug
     return M.map[tl] or M.map[slug]
 end
