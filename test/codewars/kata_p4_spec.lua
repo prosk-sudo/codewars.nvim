@@ -122,6 +122,24 @@ describe("kata.render_error", function()
         assert.is_nil(kata.render_error('<div class="alert-box error is-hidden"><ul></ul></div>'))
         assert.is_nil(kata.render_error({ success = true }))
     end)
+
+    -- The save/publish endpoints can answer JSON {success=false, message=...}
+    -- instead of a re-rendered form; render_error ignored tables, so a
+    -- rejected save was reported as saved and publish lost the server's
+    -- reason.
+    it("reports a JSON refusal with the server's own message", function()
+        assert.are.equal("validation failed", kata.render_error({ success = false, message = "validation failed" }))
+        assert.are.equal("name taken", kata.render_error({ success = false, reason = "name taken" }))
+        assert.are.equal("Codewars rejected the request.", kata.render_error({ success = false }))
+        assert.truthy(kata.render_error({ success = false, message = { field = "title" } }):find("title", 1, true))
+    end)
+
+    it("a bare error message without a success flag is still a refusal", function()
+        assert.are.equal("nope", kata.render_error({ error = "nope" }))
+        assert.is_nil(kata.render_error({ success = true, message = "ok" }))
+        -- a bare acknowledgement is not a refusal
+        assert.is_nil(kata.render_error({ message = "Saved" }))
+    end)
 end)
 
 describe("kata.save", function()

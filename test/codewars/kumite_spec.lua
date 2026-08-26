@@ -230,6 +230,20 @@ describe("api.kumite", function()
             assert.is_nil(got.snippet.parent_id)
         end)
 
+        -- draft_payload re-sends `secret` on every save. fetch_snippet never
+        -- populated it, so saving a fetched PRIVATE kumite sent secret=false
+        -- and flipped it public.
+        it("keeps a private kumite private through fetch -> save payload", function()
+            stub_get({ id = ID_ROOT, title = "t", language = "python", code = "x", secret = true })
+            local got
+            kumite.fetch_snippet(ID_ROOT, function(snippet) got = snippet end)
+            assert.is_true(got.secret)
+            assert.is_true(kumite.draft_payload(got).code_snippet.secret)
+            stub_get({ id = ID_ROOT, title = "t", language = "python", code = "x", secret = false })
+            kumite.fetch_snippet(ID_ROOT, function(snippet) got = snippet end)
+            assert.is_false(got.secret)
+        end)
+
         it("unescapes the HTML entities the API serves in author text", function()
             -- Live shape (2026-07-25): a snippet typed as `return "woof woof"`
             -- on the website comes back with &quot; in code and fixture. Left

@@ -217,6 +217,10 @@ function kumite.fetch_snippet(id, cb)
                 parent_id = res.parentId,
                 published_at = res.publishedAt,
                 author = res.user and res.user.username or nil,
+                -- draft_payload re-sends this on every save; leaving it out
+                -- here meant saving a fetched PRIVATE kumite sent secret=false
+                -- and flipped it public.
+                secret = res.secret == true,
             })
         end,
     })
