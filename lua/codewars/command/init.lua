@@ -880,6 +880,11 @@ function cmd.list(options)
 
     -- Parse difficulty filter: difficulty=8,7 -> rank={-8,-7}
     if options.difficulty then
+        -- `difficulty=` with nothing after it arrives as an empty (truthy)
+        -- table; it must not become an empty rank set that filters out all.
+        if #options.difficulty == 0 then
+            return log.error("difficulty= needs a value, e.g. difficulty=8 or difficulty=8,7")
+        end
         opts.rank = {}
         for _, d in ipairs(options.difficulty) do
             local n = tonumber(d)
