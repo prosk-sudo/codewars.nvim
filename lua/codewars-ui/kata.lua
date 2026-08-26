@@ -521,6 +521,9 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 self.language_version = session.activeVersion
                 self.last_attempt_success = false
                 self.finalized = false
+                -- Any notify still in flight belongs to the old session; it
+                -- must not keep submit locked for this one.
+                self._notify_pending = 0
 
                 local lang_info = utils.get_lang(new_lang)
                 assert(lang_info, "Unsupported language: " .. new_lang)
@@ -558,7 +561,15 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
 
             if not ok then
                 log.error("Failed to change language\n" .. tostring(change_err))
+                -- The target buffer may already exist; track it so unmount
+                -- deletes it instead of leaving a listed stray.
+                local target_bufnr = self.bufnr
                 for _, k in ipairs(SESSION_FIELDS) do self[k] = before[k] end
+                if target_bufnr and target_bufnr ~= prev_bufnr and vim.api.nvim_buf_is_valid(target_bufnr) then
+                    self._old_bufnrs = self._old_bufnrs or {}
+                    table.insert(self._old_bufnrs, target_bufnr)
+                    pcall(vim.api.nvim_set_option_value, "buflisted", false, { buf = target_bufnr })
+                end
                 if prev_bufnr and vim.api.nvim_buf_is_valid(prev_bufnr) then
                     pcall(ui_utils.buf_set_opts, prev_bufnr, { buflisted = true })
                     if self.winid and vim.api.nvim_win_is_valid(self.winid) then

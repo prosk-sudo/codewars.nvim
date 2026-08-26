@@ -316,7 +316,11 @@ function Runner:handle(mode)
                                 kata._notify_pending = math.max(0, (kata._notify_pending or 1) - 1)
                             end
                             local not_registered = nerr ~= nil or (nres and nres.success == false)
-                            if not_registered and gates_submit and completed then
+                            -- Rechecked at reply time: a switch to another
+                            -- language meanwhile means this notify belongs to
+                            -- a session that is no longer the kata's.
+                            local still_same = kata.project_id == project_id and kata.solution_id == solution_id
+                            if not_registered and gates_submit and completed and still_same then
                                 kata.last_attempt_success = false
                                 log.warn("Codewars did not register this attempt"
                                     .. (nerr and nerr.msg and (" (" .. tostring(nerr.msg):gsub("\n.*", "") .. ")") or "")
