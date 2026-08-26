@@ -100,9 +100,21 @@ local _saved_rank_filter = nil
 -- Sort modes
 local sort_modes = {
     { key = "default", label = "Shuffle" },
+    { key = "popularity", label = "Popularity (site order)" },
     { key = "name", label = "Name (A-Z)" },
     { key = "satisfaction", label = "Satisfaction (%)" },
+    { key = "hardest", label = "Hardest first" },
+    { key = "easiest", label = "Easiest first" },
 }
+
+---@param key string
+---@return integer? index into sort_modes
+local function sort_index(key)
+    for i, mode in ipairs(sort_modes) do
+        if mode.key == key then return i end
+    end
+    return nil
+end
 
 -- Difficulty filter options
 local difficulty_options = {
@@ -149,7 +161,20 @@ local function sort_items(items, mode)
         table.sort(sorted, function(a, b)
             return (a.satisfaction or 0) > (b.satisfaction or 0)
         end)
+    elseif mode == "hardest" or mode == "easiest" then
+        -- rank_id is -8 (easiest) .. -1 (hardest); ties keep cache order,
+        -- which is the site's popularity order within a rank.
+        local sign = mode == "hardest" and -1 or 1
+        local pos = {}
+        for i, item in ipairs(sorted) do pos[item] = i end
+        table.sort(sorted, function(a, b)
+            local ra, rb = (a.rank_id or 0) * sign, (b.rank_id or 0) * sign
+            if ra ~= rb then return ra < rb end
+            return pos[a] < pos[b]
+        end)
     end
+    -- "popularity": the cache is built rank by rank in the site's
+    -- popularity order, so the list as stored already is that order.
     return sorted
 end
 
@@ -157,10 +182,22 @@ end
 ---@param items table[]
 ---@param title string
 ---@param completed_set table<string, boolean>
-function picker._show_kata_list(items, title, completed_set)
+---@param initial? { sort_key?: string, rank_filter?: integer|false } state the
+--- caller asks for up front (`:CW list order=… difficulty=…`); it replaces the
+--- remembered sort / rank filter so the picker's own menus show the same thing.
+--- rank_filter = false means "All ranks" explicitly.
+function picker._show_kata_list(items, title, completed_set, initial)
     -- Memoized telescope table lives in picker.dropdown; shared error path.
     local t = dropdown.telescope()
     if not t then return end
+    if initial then
+        if initial.sort_key and sort_index(initial.sort_key) then
+            _saved_sort_idx = sort_index(initial.sort_key)
+        end
+        if initial.rank_filter ~= nil then
+            _saved_rank_filter = initial.rank_filter or nil
+        end
+    end
 
     local displayer = t.entry_display.create({
         separator = " ",
@@ -485,8 +522,18 @@ function picker.problems(opts)
     -- problemlist.update fetches every rank regardless of opts.rank, so the
     -- filter must apply to BOTH branches; it used to apply only to the
     -- cached one, and a fresh build showed all eight ranks.
+    -- A single requested rank becomes the picker's OWN rank filter, so its
+    -- Ctrl-d menu and counts show exactly what the user asked for; several
+    -- ranks are narrowed here and the menu reads "All ranks" over that set.
+    -- Either way the remembered filter from a previous open is replaced,
+    -- so a stale in-picker choice cannot empty the list just requested.
+    local initial = { sort_key = opts.sort_key, rank_filter = false }
     local function by_rank(items)
         if not opts.rank then return items end
+        if #opts.rank == 1 then
+            initial.rank_filter = opts.rank[1]
+            return items
+        end
         local rank_set = {}
         for _, r in ipairs(opts.rank) do rank_set[r] = true end
         return vim.tbl_filter(function(item)
@@ -496,7 +543,7 @@ function picker.problems(opts)
 
     if cached then
         ensure_completed_set(function(completed_set)
-            picker._show_kata_list(by_rank(cached), "Select a Question", completed_set)
+            picker._show_kata_list(by_rank(cached), "Select a Question", completed_set, initial)
         end)
     else
         problemlist.update(opts, function(items, partial)
@@ -512,7 +559,7 @@ function picker.problems(opts)
                 log.warn(("Showing %d kata fetched before the build was aborted — run :CW cache update to retry"):format(#items))
             end
             ensure_completed_set(function(completed_set)
-                picker._show_kata_list(items, "Select a Question", completed_set)
+                picker._show_kata_list(items, "Select a Question", completed_set, initial)
             end)
         end)
     end

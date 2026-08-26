@@ -5,6 +5,16 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- `:CW list difficulty=` and `order=` behave like the picker's own menus.
+  `<Tab>` after `difficulty=` or `order=` completes the value without erasing
+  what you typed (`difficulty=8,` offers `difficulty=8,7`, …). A single
+  `difficulty=N` is applied as the picker's rank filter, so `Ctrl-d` shows
+  that rank selected with the real per-rank counts instead of "All ranks" and
+  zeros; several ranks narrow the list. `order=` was silently ignored for the
+  cached list and accepted values it could never honour; it now selects the
+  picker's sort mode — `popularity` (site order), `name`, `satisfaction`,
+  `hardest`, `easiest`, `shuffle` — and rejects anything else. `Ctrl-s` in
+  the picker offers the same six orders.
 - `:CW train "remove first and last character"` works: the `:CW` command was
   registered with `-bar`, under which a double quote starts an Ex comment, so
   everything from the quote on was thrown away before the plugin saw it.

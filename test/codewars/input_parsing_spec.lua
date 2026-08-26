@@ -72,6 +72,49 @@ describe("cmd.train arguments", function()
     end)
 end)
 
+describe(":CW list completion", function()
+    it("keeps the key= prefix and the values already typed", function()
+        assert.same({ "difficulty=8", "difficulty=7", "difficulty=6", "difficulty=5",
+            "difficulty=4", "difficulty=3", "difficulty=2", "difficulty=1" }, cmd.complete(nil, "CW list difficulty="))
+        assert.equals("difficulty=8,7", cmd.complete(nil, "CW list difficulty=8,")[1])
+        assert.same({}, cmd.complete(nil, "CW list difficulty=8,7"))
+        assert.same({ "order=hardest" }, cmd.complete(nil, "CW list order=h"))
+    end)
+end)
+
+describe(":CW list order", function()
+    local real_guard, real_picker, got
+
+    before_each(function()
+        got = nil
+        real_guard = require("codewars.utils").auth_guard
+        require("codewars.utils").auth_guard = function() end
+        real_picker = package.loaded["codewars.picker"]
+        package.loaded["codewars.picker"] = { problems = function(opts) got = opts end }
+    end)
+
+    after_each(function()
+        require("codewars.utils").auth_guard = real_guard
+        package.loaded["codewars.picker"] = real_picker
+    end)
+
+    it("maps order= to a picker sort mode and difficulty= to ranks", function()
+        cmd.list({ order = { "hardest" }, difficulty = { "8", "7" } })
+        assert.equals("hardest", got.sort_key)
+        assert.same({ -8, -7 }, got.rank)
+        cmd.list({ order = { "shuffle" } })
+        assert.equals("default", got.sort_key)
+    end)
+
+    it("rejects an order the cached list cannot honour", function()
+        local errors, restore = capture_errors()
+        cmd.list({ order = { "newest" } })
+        restore()
+        assert.is_nil(got)
+        assert.truthy(errors[1]:find("Invalid order: newest", 1, true))
+    end)
+end)
+
 describe(":CW list difficulty", function()
     it("reports a non-numeric difficulty instead of raising", function()
         -- list checks the cookie first; CI has none, so stand in for it.
