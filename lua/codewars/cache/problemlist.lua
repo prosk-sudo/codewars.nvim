@@ -59,6 +59,15 @@ function problemlist.update(opts, cb)
             end
         end
 
+        -- Every page parsing as empty is not "Codewars has no kata": it is
+        -- search-markup drift or an interstitial page that returned 200.
+        -- fetch_page reports parse-empty as an ordinary end of rank, so this
+        -- is the one place that can tell the two apart.
+        if not partial and #unique == 0 then
+            spinner:error("No kata found on any search page — the site markup may have changed; cache left as is.")
+            partial = true
+        end
+
         if partial then
             -- Deliberately not written: a short list stamped with `now` would
             -- look fresh for the whole cache interval, quietly hiding the

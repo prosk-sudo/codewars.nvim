@@ -448,7 +448,8 @@ end program
 ]==],
 
     nasm = [==[
-; this is just an example. See https://docs.codewars.com/languages/nasm
+// this is just an example. See https://docs.codewars.com/languages/nasm
+// NASM kumites are tested from C (criterion), so this file is C, not asm.
 #include <criterion/criterion.h>
 int add(int, int);
 Test(add_test, should_add_integers) {
