@@ -2,7 +2,7 @@
 
 All notable changes to codewars.nvim are documented here.
 
-## [Unreleased]
+## [0.3.3] - 2026-08-26
 
 ### Added
 - Math in kata descriptions is rendered as readable text instead of raw

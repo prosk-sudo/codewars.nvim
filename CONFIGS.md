@@ -28,7 +28,7 @@ inside `setup({})`, which silently ignores them.
 
 | Option | Description |
 |---|---|
-| `version = "*"` | Follow tagged releases: `:Lazy update` moves to the newest tag (e.g. `v0.3.2`) instead of the tip of `main`. Recommended — you get exactly what the [CHANGELOG](CHANGELOG.md) describes. |
+| `version = "*"` | Follow tagged releases: `:Lazy update` moves to the newest tag (e.g. `v0.3.3`) instead of the tip of `main`. Recommended — you get exactly what the [CHANGELOG](CHANGELOG.md) describes. |
 | *(neither)* | Track `main`: `:Lazy update` fetches the latest commit. Newest fixes first, occasionally ahead of the docs. |
 | `dir = "<path>"` | Load a local checkout instead of a clone. Whatever is on disk runs — nothing to update, ideal when developing the plugin. Overrides `version`. |
 
