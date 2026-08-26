@@ -18,9 +18,10 @@ function completed.get()
 end
 
 ---@param data table[]
-function completed.save(data)
+---@param timestamp integer? keep an existing stamp instead of "now"
+function completed.save(data, timestamp)
     cache_utils.write_json(list_file(), {
-        timestamp = os.time(),
+        timestamp = timestamp or os.time(),
         items = data,
     })
 end
@@ -75,22 +76,38 @@ function completed.update(cb)
                     -- Hand back whatever is on disk and let the next open
                     -- retry.
                     log.err(err)
-                    if cb then cb((completed.get())) end
+                    if cb then cb((completed.get()), err) end
                     return
                 end
 
-                if res and res.data then
-                    vim.list_extend(all, res.data)
-                    if res.totalPages and page < res.totalPages - 1 then
-                        page = page + 1
-                        fetch_page()
-                    else
-                        completed.save(all)
-                        log.info(("Fetched %d completed kata"):format(#all))
-                        if cb then cb(all) end
-                    end
+                if not (type(res) == "table" and type(res.data) == "table") then
+                    -- A 2xx without `data` is not "no completed kata": it is
+                    -- a reply we do not understand (interstitial, drift).
+                    -- Saving `all` here overwrote a valid cache with a
+                    -- fresh-stamped empty or partial list.
+                    local bad = { msg = "Unexpected reply from the completed-kata API; keeping the cached list." }
+                    log.err(bad)
+                    if cb then cb((completed.get()), bad) end
+                    return
+                end
+
+                vim.list_extend(all, res.data)
+                if res.totalPages and page < res.totalPages - 1 then
+                    page = page + 1
+                    fetch_page()
                 else
+                    -- A kata marked complete locally while this refresh was
+                    -- in flight is not in the fetched pages yet; keep it
+                    -- rather than un-completing it until the next refresh.
+                    local fetched = {}
+                    for _, item in ipairs(all) do fetched[item.id] = true end
+                    for _, item in ipairs((completed.get())) do
+                        if item.local_mark and not fetched[item.id] then
+                            table.insert(all, 1, item)
+                        end
+                    end
                     completed.save(all)
+                    log.info(("Fetched %d completed kata"):format(#all))
                     if cb then cb(all) end
                 end
             end,
@@ -105,7 +122,11 @@ end
 ---@param slug string?
 ---@param lang string?
 function completed.mark(kata_id, slug, lang)
-    local items = completed.get()
+    -- Raw, not get(): a missing or expired cache must stay missing or
+    -- expired. Stamping a one-item list "now" made a partial cache look
+    -- complete and fresh for a whole cache interval.
+    local raw = cache_utils.read_json(list_file()) or {}
+    local items = raw.items or {}
     -- Check if already present
     for _, item in ipairs(items) do
         if item.id == kata_id then return end
@@ -115,8 +136,9 @@ function completed.mark(kata_id, slug, lang)
         slug = slug or kata_id,
         completedLanguages = lang and { lang } or {},
         completedAt = os.date("!%Y-%m-%dT%H:%M:%S.000Z"),
+        local_mark = true,
     })
-    completed.save(items)
+    completed.save(items, raw.timestamp or 0)
 end
 
 --- Enrich completed kata with rank/tag details.
@@ -145,6 +167,8 @@ function completed.enrich(items, cb)
     -- Fetch missing details (limit to 50, 5 concurrent)
     local total = math.min(#missing, 50)
     local fetched = 0
+    local failed = 0
+    local rate_limited = false
     local concurrent = 0
     local max_concurrent = 5
     local idx = 0
@@ -166,10 +190,20 @@ function completed.enrich(items, cb)
 
                 if not err and res then
                     details[slug] = { rank = res.rank, tags = res.tags }
+                else
+                    failed = failed + 1
+                    rate_limited = rate_limited or (err and err.rate_limited) or false
                 end
 
                 if fetched >= total then
-                    spinner:success(("Fetched %d kata details"):format(total))
+                    if failed == 0 then
+                        spinner:success(("Fetched %d kata details"):format(total))
+                    else
+                        -- Honest count: the ones that failed are still
+                        -- missing and will be retried on the next open.
+                        spinner:error(("Fetched %d of %d kata details%s"):format(
+                            total - failed, total, rate_limited and " (rate limited — try again later)" or ""))
+                    end
                     completed.save_details(details)
                     for _, item in ipairs(items) do
                         local s = item.slug or item.id

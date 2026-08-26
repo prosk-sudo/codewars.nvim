@@ -7,6 +7,18 @@
 --- conceal setup. This paints it directly, so every user sees the same
 --- thing and nothing attaches to the scratch buffer.
 local page = require("codewars.api.page")
+
+--- Tags Codewars' comment markdown can emit; anything else in angle
+--- brackets is user text (generics, `<T>`), not markup.
+local HTML_TAGS = {}
+for _, t in ipairs({
+    "p", "div", "span", "a", "b", "i", "em", "strong", "u", "s", "del", "ins", "code", "pre", "kbd",
+    "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "img", "sup", "sub",
+    "small", "table", "thead", "tbody", "tr", "td", "th", "details", "summary",
+    "strike", "font", "center", "mark", "abbr", "cite", "dl", "dt", "dd", "q", "tt", "var", "samp",
+}) do
+    HTML_TAGS[t] = true
+end
 local theme = require("codewars.theme")
 
 local M = {}
@@ -110,7 +122,13 @@ end
 ---@return string[] lines
 local function body_lines(body)
     local s = page.unescape(body or "")
-    s = s:gsub("<br%s*/?>", "\n"):gsub("</?[%w]+[^>]*>", "")
+    -- Only real HTML tags are markup: `List<string>` or `Map<K, V>` in a
+    -- comment is code and must survive.
+    s = s:gsub("<br%s*/?>", "\n"):gsub("<(/?)(%a[%w]*)([^>]*)>", function(_, name)
+        if HTML_TAGS[name:lower()] then
+            return ""
+        end
+    end)
     s = s:gsub("\r", "")
     local lines = vim.split(s, "\n", { plain = true })
     while #lines > 0 and lines[#lines]:match("^%s*$") do

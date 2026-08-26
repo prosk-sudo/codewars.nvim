@@ -89,9 +89,16 @@ end
 ---@param stash string[]
 ---@return string
 local function restore(text, stash)
-    return (text:gsub("\1CWMD(%d+)\1", function(i)
-        return stash[tonumber(i)] or ""
-    end))
+    -- A stashed block can itself hold an earlier sentinel (a <pre> whose
+    -- inline code was protected first), so expand until none is left; every
+    -- entry predates its own sentinel, so this terminates.
+    local n
+    repeat
+        text, n = text:gsub("\1CWMD(%d+)\1", function(i)
+            return stash[tonumber(i)] or ""
+        end)
+    until n == 0
+    return text
 end
 
 --- Render `<blockquote>` as a real markdown quote: every line gets `> `, so a
@@ -111,6 +118,12 @@ end
 ---@param text string?
 ---@return string
 function M.from_html(text)
+    -- The stash sentinels are built on \1, which no HTML page legitimately
+    -- contains. Dropping any that arrive in the input means a page cannot
+    -- forge a sentinel that restore() would expand into itself forever.
+    if type(text) == "string" then
+        text = text:gsub("\1", "")
+    end
     if type(text) ~= "string" or text == "" then
         return text or ""
     end

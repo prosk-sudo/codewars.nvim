@@ -25,6 +25,31 @@ end
 --- ONLY place the username is ever discovered, so a single 429 here used to
 --- leave the whole session without an identity. Going through the shared
 --- layer means a rate-limited dashboard is retried instead of abandoned.
+--- The raw JS string literal handed to `currentUser = JSON.parse("...")`.
+--- Walked character by character because the literal contains escaped
+--- quotes (`\"`), and a non-greedy pattern stops at the first `")` inside
+--- the data (a profile whose text mentions a quoted word before `)`).
+---@param body string
+---@return string? literal still JS-escaped, nil when absent
+function user.parse_literal(body)
+    local _, open = body:find('currentUser%s*=%s*JSON%.parse%("')
+    if not open then
+        return nil
+    end
+    local i = open + 1
+    while i <= #body do
+        local c = body:sub(i, i)
+        if c == "\\" then
+            i = i + 2
+        elseif c == '"' then
+            return body:sub(open + 1, i - 1)
+        else
+            i = i + 1
+        end
+    end
+    return nil
+end
+
 function user.get_current(cb, opts)
     local hdrs = headers_mod.get()
     hdrs["Accept"] = "text/html"
@@ -43,7 +68,7 @@ function user.get_current(cb, opts)
             local body = type(res) == "string" and res or ""
 
             -- Extract currentUser JSON from: currentUser = JSON.parse("{...}")
-            local json_str = body:match('currentUser%s*=%s*JSON%.parse%("(.-)"%)')
+            local json_str = user.parse_literal(body)
             if not json_str then
                 -- Either the markup drifted, or this is the login page
                 -- because the cookie expired. Both leave us anonymous.

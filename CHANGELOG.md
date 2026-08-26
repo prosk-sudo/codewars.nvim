@@ -13,6 +13,43 @@ All notable changes to codewars.nvim are documented here.
   language switch fails half-way, every session field (ids, fixtures,
   file) is put back and the previous buffer is shown again, instead of
   leaving a mix of the old buffer and the new session.
+- `:CW train` accepts a kata title the way COMMANDS.md always said it did:
+  `:CW train Unique In Order python` and `:CW train "Unique In Order"` both
+  work (a trailing word that names a language is the language; quotes keep a
+  title together), and an unknown language after a slug is reported as
+  `Unknown language: …` instead of an assertion from deep inside the kata
+  path. `:CW list difficulty=abc` reports the bad value instead of raising.
+- Solution comments keep generics: `List<string>`, `Map<K, V>` and
+  `ArrayList<>` used to be stripped as if they were HTML tags. Numeric HTML
+  entities (`&#8217;`, `&#xA9;`) in clan names and comments are decoded.
+  One-line community solutions of ten characters or fewer are no longer
+  dropped from the solutions list.
+- A kata description whose `<pre>` block contains inline code no longer shows
+  a literal `CWMD1` placeholder where the code should be.
+- Reading your profile from the dashboard no longer fails on accounts whose
+  data contains an escaped quote before a closing parenthesis.
+- The completed-kata cache can no longer be quietly wrong. Solving a kata
+  while the cache is missing or expired records it without stamping a
+  one-item list as a complete, fresh cache; a refresh that gets a reply it
+  does not understand keeps the cached list (and says so) instead of
+  overwriting it with an empty one; a kata you solved while a background
+  refresh was running stays marked complete; a refresh that fails passes the
+  error to the caller rather than pretending you have no completed kata; and
+  the "Fetched N kata details" message counts only the ones that worked,
+  with a rate-limit hint when that is why some failed. The problem-list
+  cache is left untouched when every search page comes back empty (site
+  markup drift), instead of being replaced by an empty fresh cache.
+- Solution templates round-trip exactly. A function template that builds
+  its text from `ctx.starter` is now recognised by `:CW template on/off`
+  (it used to be reported as having no `{{starter}}`); blank lines at the end
+  of your code survive `on` → `off`; whitespace-only lines come back with
+  their spaces; and a template that is nothing but `{{starter}}` never claims
+  to match a buffer, so `:CW template off` cannot cut lines from it.
+- The seeded NASM kumite fixture compiles: it is a C (criterion) file and now
+  starts with a C comment instead of a NASM `;` comment.
+- `lang = false` in `setup()` is treated as "not set" instead of becoming the
+  default language; a kata whose API reply carries `testLanguage = ""` gets
+  the test pane's proper filetype (NASM/SQL/etc. map to their test language).
 - Kumite editing follows its state machine everywhere. Buffers lock while a
   save or publish is in flight and unlock again afterwards; `:CW kumite run`
   refuses to run mid-save; `:CW kumite convert` refuses someone else's kumite

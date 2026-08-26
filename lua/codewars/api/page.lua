@@ -19,7 +19,21 @@ local ENTITIES = {
 ---@param s string
 ---@return string
 function page.unescape(s)
-    return (s:gsub("&[#%w]+;", ENTITIES))
+    return (s:gsub("&(#?[%w]+);", function(name)
+        local known = ENTITIES["&" .. name .. ";"]
+        if known then
+            return known
+        end
+        -- Numeric references (&#8217; / &#x2019;) are the common form in
+        -- clan names and comments and were leaking through as literal text.
+        local dec = name:match("^#(%d+)$")
+        local hex = name:match("^#[xX](%x+)$")
+        local code = dec and tonumber(dec) or hex and tonumber(hex, 16)
+        local surrogate = code and code >= 0xD800 and code <= 0xDFFF
+        if code and code > 0 and code <= 0x10FFFF and not surrogate then
+            return vim.fn.nr2char(code, 1)
+        end
+    end))
 end
 
 --- Standard error wording for a failed page.fetch. Callers with bespoke

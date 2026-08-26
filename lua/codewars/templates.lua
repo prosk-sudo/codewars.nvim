@@ -230,6 +230,11 @@ local function unindent(text, indent)
         return text
     end
     return map_lines_after_first(text, function(line)
+        -- Mirror of reindent: whitespace-only lines were never padded, so
+        -- they are handed back untouched instead of losing their spaces.
+        if line:match("^[ \t]*$") then
+            return line
+        end
         -- Only where the indent is actually present, so a line the user
         -- re-indented themselves comes back as they left it.
         return line:sub(1, #indent) == indent and line:sub(#indent + 1) or line
@@ -261,8 +266,11 @@ local function wrapper(lang, ctx)
     local resolved = vim.tbl_extend("keep", ctx or {}, {
         lang = lang,
         ext = extension_for(lang),
-        starter = SENTINEL,
     })
+    -- The sentinel must win over the caller's starter: Kata:_template_ctx
+    -- always passes one, and a function template that splices ctx.starter
+    -- itself would otherwise render the real code and never be found.
+    resolved.starter = SENTINEL
 
     local template = evaluate(spec, resolved)
     if not template then
@@ -305,10 +313,15 @@ end
 ---@param w table
 ---@return boolean
 local function is_wrapped(body, w)
+    local suffix = chomp(w.suffix)
+    -- A template that is nothing but {{starter}} matches every buffer; there
+    -- is nothing to strip and nothing to prove, so never claim a match.
+    if w.prefix == "" and suffix == "" then
+        return false
+    end
     if body:sub(1, #w.prefix) ~= w.prefix then
         return false
     end
-    local suffix = chomp(w.suffix)
     return suffix == "" or body:sub(-#suffix) == suffix
 end
 
@@ -325,9 +338,10 @@ function M.wrap(lang, text, ctx)
     if is_wrapped(chomp(text), w) then
         return nil, ("This buffer already starts from your %s template."):format(lang)
     end
-    -- Chomped so wrap and strip are exact inverses in buffer space: a template
-    -- ending in a newline would otherwise add a blank last line each round.
-    local wrapped = chomp(w.prefix .. reindent(text, w.indent) .. w.suffix)
+    -- Only the template's own trailing newline is chomped (it would add a
+    -- blank last line each round); the user's trailing blank lines are theirs
+    -- and must survive so strip() can hand them back.
+    local wrapped = w.prefix .. reindent(text, w.indent) .. chomp(w.suffix)
 
     -- Where the starter ENDS in the wrapped text, as a {row, col} cursor
     -- position: with content after {{starter}} the end of the buffer is the
@@ -360,7 +374,10 @@ function M.strip(lang, text, ctx)
     end
 
     local suffix = chomp(w.suffix)
-    return unindent(body:sub(#w.prefix + 1, #body - #suffix), w.indent)
+    -- With no suffix the buffer's trailing blank lines belong to the user's
+    -- code (wrap left them in place), so take them from the unchomped text.
+    local inner = suffix == "" and text:sub(#w.prefix + 1) or body:sub(#w.prefix + 1, #body - #suffix)
+    return unindent(inner, w.indent)
 end
 
 ---@param lang string
