@@ -99,7 +99,7 @@ local _saved_rank_filter = nil
 
 -- Sort modes
 local sort_modes = {
-    { key = "default", label = "Shuffle" },
+    { key = "shuffle", label = "Shuffle" },
     { key = "popularity", label = "Popularity (site order)" },
     { key = "name", label = "Name (A-Z)" },
     { key = "satisfaction", label = "Satisfaction (%)" },
@@ -151,7 +151,7 @@ local function shuffle(tbl)
 end
 
 local function sort_items(items, mode)
-    if mode == "default" then return shuffle(items) end
+    if mode == "shuffle" then return shuffle(items) end
     local sorted = vim.list_slice(items, 1, #items)
     if mode == "name" then
         table.sort(sorted, function(a, b)
@@ -183,21 +183,16 @@ end
 ---@param title string
 ---@param completed_set table<string, boolean>
 ---@param initial? { sort_key?: string, rank_filter?: integer|false } state the
---- caller asks for up front (`:CW list order=… difficulty=…`); it replaces the
---- remembered sort / rank filter so the picker's own menus show the same thing.
---- rank_filter = false means "All ranks" explicitly.
+--- caller asks for up front (`:CW list order=… difficulty=…`). It seeds THIS
+--- picker's sort / rank filter in place of the remembered ones, so its menus
+--- show what was asked for; the remembered state only changes when the user
+--- touches a menu (save_state), never from a caller, so other list views are
+--- not affected. rank_filter = false means "All ranks" explicitly.
 function picker._show_kata_list(items, title, completed_set, initial)
     -- Memoized telescope table lives in picker.dropdown; shared error path.
     local t = dropdown.telescope()
     if not t then return end
-    if initial then
-        if initial.sort_key and sort_index(initial.sort_key) then
-            _saved_sort_idx = sort_index(initial.sort_key)
-        end
-        if initial.rank_filter ~= nil then
-            _saved_rank_filter = initial.rank_filter or nil
-        end
-    end
+    initial = initial or {}
 
     local displayer = t.entry_display.create({
         separator = " ",
@@ -210,9 +205,12 @@ function picker._show_kata_list(items, title, completed_set, initial)
         },
     })
 
-    local current_sort_idx = _saved_sort_idx
+    local current_sort_idx = sort_index(initial.sort_key) or _saved_sort_idx
     local current_lang_filter = _saved_lang_filter
     local current_rank_filter = _saved_rank_filter
+    if initial.rank_filter ~= nil then
+        current_rank_filter = initial.rank_filter or nil
+    end
     local make_picker
     local cached_languages = problemlist_utils.collect_languages(items)
 
@@ -381,10 +379,15 @@ function picker._show_kata_list(items, title, completed_set, initial)
         local rank_entries = {}
         local current_rank_idx = 0
         local lang_filtered = problemlist_utils.filter_by_language(items, current_lang_filter)
+        -- One pass over the list for every rank's count, not one per rank.
+        local per_rank = {}
+        for _, item in ipairs(lang_filtered) do
+            if item.rank_id then per_rank[item.rank_id] = (per_rank[item.rank_id] or 0) + 1 end
+        end
         for j, opt in ipairs(difficulty_options) do
             if current_rank_filter == opt.rank then current_rank_idx = j - 1 end
             local prefix = current_rank_filter == opt.rank and "● " or "  "
-            local count = #filter_by_rank(lang_filtered, opt.rank)
+            local count = opt.rank and (per_rank[opt.rank] or 0) or #lang_filtered
             table.insert(rank_entries, {
                 -- value wraps the nil-able rank so on_select can distinguish "All ranks"
                 value = { rank = opt.rank },
@@ -527,13 +530,10 @@ function picker.problems(opts)
     -- ranks are narrowed here and the menu reads "All ranks" over that set.
     -- Either way the remembered filter from a previous open is replaced,
     -- so a stale in-picker choice cannot empty the list just requested.
-    local initial = { sort_key = opts.sort_key, rank_filter = false }
+    local single_rank = opts.rank and #opts.rank == 1 and opts.rank[1] or nil
+    local initial = { sort_key = opts.sort_key, rank_filter = single_rank or false }
     local function by_rank(items)
-        if not opts.rank then return items end
-        if #opts.rank == 1 then
-            initial.rank_filter = opts.rank[1]
-            return items
-        end
+        if not opts.rank or single_rank then return items end
         local rank_set = {}
         for _, r in ipairs(opts.rank) do rank_set[r] = true end
         return vim.tbl_filter(function(item)

@@ -21,7 +21,8 @@ local kata_pane_keys = { "answer", "setup", "fixture", "example", "description" 
 local arguments = {
     list = {
         difficulty = { "8", "7", "6", "5", "4", "3", "2", "1" },
-        -- Keep in sync with picker.sort_modes keys ("shuffle" maps to "default").
+        -- Keep in sync with picker.sort_modes keys (literal so completion does
+        -- not eager-load telescope, same reasoning as the lists below).
         order = { "popularity", "name", "satisfaction", "hardest", "easiest", "shuffle" },
     },
 }
@@ -899,7 +900,7 @@ function cmd.list(options)
             return log.error(("Invalid order: %s (expected one of %s)"):format(
                 tostring(order), table.concat(arguments.list.order, ", ")))
         end
-        opts.sort_key = order == "shuffle" and "default" or order
+        opts.sort_key = order
     end
 
     picker.problems(opts)
@@ -1182,8 +1183,7 @@ function cmd.rec_complete(args, options, cmds)
             -- Neovim replaces the whole word being completed, so each
             -- candidate must carry the `key=` and any values already typed
             -- (difficulty=8, -> difficulty=8,7), or the prefix vanishes.
-            local typed = table.concat(vim.list_slice(vals, 1, #vals - 1), ",")
-            local head = s[1] .. "=" .. (typed ~= "" and (typed .. ",") or "")
+            local head = txt:sub(1, #txt - #vals[#vals])
             local matches = vim.tbl_filter(function(key)
                 return not vim.tbl_contains(vals, key) and key:find(vals[#vals], 1, true) == 1
             end, cmds._args[s[1]])

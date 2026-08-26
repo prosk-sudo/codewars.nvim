@@ -103,7 +103,7 @@ describe(":CW list order", function()
         assert.equals("hardest", got.sort_key)
         assert.same({ -8, -7 }, got.rank)
         cmd.list({ order = { "shuffle" } })
-        assert.equals("default", got.sort_key)
+        assert.equals("shuffle", got.sort_key)
     end)
 
     it("rejects an order the cached list cannot honour", function()
