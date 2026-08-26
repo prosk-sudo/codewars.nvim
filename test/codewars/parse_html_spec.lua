@@ -78,10 +78,10 @@ describe("solutions.parse_html", function()
         assert.are.equal(0, #result)
     end)
 
-    it("filters out short code blocks (<= 10 chars)", function()
-        local html = '<pre><code>short</code></pre>'
+    it("keeps short solutions and drops only empty blocks", function()
+        local html = '<pre><code>x=&gt;x</code></pre><pre><code>   </code></pre>'
         local result = solutions.parse_html(html, "python")
-        assert.are.equal(0, #result)
+        assert.are.same({ "x=>x" }, result)
     end)
 
     it("handles empty HTML", function()
