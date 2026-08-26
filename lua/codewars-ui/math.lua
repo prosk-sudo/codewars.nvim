@@ -255,6 +255,13 @@ function M.render(text, keep)
         end
         return keep("```" .. lang .. "\n" .. body .. "```")
     end)
+    -- Authors also write `$…$` inside a code span, and Codewars renders
+    -- that as math too. A span that is entirely `$…$` is math; any other
+    -- span (`$HOME`) is code.
+    text = text:gsub("`%$([^`\n%$]-)%$`", function(body)
+        if not looks_like_math(body) then return nil end
+        return keep("`" .. convert(body) .. "`")
+    end)
     text = text:gsub("`[^`\n]-`", keep)
     text = text:gsub("%$%$(.-)%$%$", function(body)
         return keep(block(body))

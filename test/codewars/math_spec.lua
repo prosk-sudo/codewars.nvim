@@ -43,6 +43,20 @@ describe("markdown.from_html math", function()
     it("renders inline math as a code span and leaves prices alone", function()
         assert.equals("Area is `π · r²` here.", markdown.from_html("Area is $\\pi \\cdot r^2$ here."))
         assert.equals("It costs $5 and $10.", markdown.from_html("It costs $5 and $10."))
-        assert.equals("Use `$HOME` and `$x^2$`.", markdown.from_html("Use `$HOME` and `$x^2$`."))
+        assert.equals("Use `$HOME`.", markdown.from_html("Use `$HOME`."))
+    end)
+
+    it("renders math written inside a code span, as Codewars does", function()
+        local out = markdown.from_html(table.concat({
+            "* `$\\text{Min} = \\dfrac{ \\text{Age} } {2} + 7$`",
+            "* `$\\text{Max} = 2 \\cdot (\\text{Age - 7})$`",
+            "* `$\\text{Minimum age} \\le \\text{Your age} \\le \\text{Maximum age}$`",
+        }, "\n"))
+        assert.equals(table.concat({
+            "* `Min = Age/2 + 7`",
+            "* `Max = 2 · (Age - 7)`",
+            "* `Minimum age ≤ Your age ≤ Maximum age`",
+        }, "\n"), out)
+        assert.equals("`x²`", markdown.from_html("`$x^2$`"))
     end)
 end)
