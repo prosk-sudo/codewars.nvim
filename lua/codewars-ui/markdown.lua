@@ -118,6 +118,12 @@ end
 ---@param text string?
 ---@return string
 function M.from_html(text)
+    -- The stash sentinels are built on \1, which no HTML page legitimately
+    -- contains. Dropping any that arrive in the input means a page cannot
+    -- forge a sentinel that restore() would expand into itself forever.
+    if type(text) == "string" then
+        text = text:gsub("\1", "")
+    end
     if type(text) ~= "string" or text == "" then
         return text or ""
     end

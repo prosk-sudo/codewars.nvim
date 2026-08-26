@@ -179,16 +179,18 @@ function cmd.train(options)
     local lang_explicit = false
     -- A title is typed as bare words (:CW train Unique In Order python), so
     -- the language is whichever trailing word names one. With exactly two
-    -- words and a slug/url first, the second can only be a language: reject
-    -- an unknown one here instead of letting Kata:path assert on it later.
+    -- words the second is taken as a language and an unknown one is
+    -- rejected here (with the quoting hint) instead of being folded into the
+    -- slug or reaching Kata:path's assert; a two-word title is quoted.
     if #pos >= 2 then
         local last = pos[#pos]
         if utils.get_lang(last) then
             lang = last
             lang_explicit = true
             pos[#pos] = nil
-        elseif #pos == 2 and pos[1]:find("[/-]") then
-            return utils.resolve_lang_arg(last)
+        elseif #pos == 2 then
+            utils.resolve_lang_arg(last)
+            return log.info(('If "%s %s" is a kata title, quote it: :CW train "%s %s"'):format(pos[1], last, pos[1], last))
         end
     end
     local slug = utils.parse_slug(table.concat(pos, " "))
@@ -1093,7 +1095,12 @@ end
 ---@param args string
 ---@return string[], string[]
 function cmd.parse(args)
-    local parts = vim.split(vim.trim(args), "%s+")
+    -- Same tokenizer as exec, so completion sees a quoted title as one
+    -- argument too and offers the language at the right position.
+    local parts = cmd.tokenize(args)
+    if #parts == 0 then
+        parts = { "" }
+    end
     if args:sub(-1) == " " then
         parts[#parts + 1] = ""
     end

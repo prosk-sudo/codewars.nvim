@@ -15,6 +15,7 @@ for _, t in ipairs({
     "p", "div", "span", "a", "b", "i", "em", "strong", "u", "s", "del", "ins", "code", "pre", "kbd",
     "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "img", "sup", "sub",
     "small", "table", "thead", "tbody", "tr", "td", "th", "details", "summary",
+    "strike", "font", "center", "mark", "abbr", "cite", "dl", "dt", "dd", "q", "tt", "var", "samp",
 }) do
     HTML_TAGS[t] = true
 end
