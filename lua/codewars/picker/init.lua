@@ -533,7 +533,7 @@ function picker.problems(opts)
     local single_rank = opts.rank and #opts.rank == 1 and opts.rank[1] or nil
     local initial = { sort_key = opts.sort_key, rank_filter = single_rank or false }
     local function by_rank(items)
-        if not opts.rank or single_rank then return items end
+        if not opts.rank or #opts.rank == 0 or single_rank then return items end
         local rank_set = {}
         for _, r in ipairs(opts.rank) do rank_set[r] = true end
         return vim.tbl_filter(function(item)
