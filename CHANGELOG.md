@@ -5,6 +5,14 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- `:CW submit` is only unlocked by a real `:CW attempt`. A passing `:CW test`
+  runs against the editable test-cases pane, so it no longer counts; submit
+  waits until Codewars has registered the attempt instead of finalizing a
+  moment too early; and an attempt whose reply arrives after you switched
+  language is credited to the session it ran on, not the new one. If a
+  language switch fails half-way, every session field (ids, fixtures,
+  file) is put back and the previous buffer is shown again, instead of
+  leaving a mix of the old buffer and the new session.
 - Kumite editing follows its state machine everywhere. Buffers lock while a
   save or publish is in flight and unlock again afterwards; `:CW kumite run`
   refuses to run mid-save; `:CW kumite convert` refuses someone else's kumite

@@ -471,7 +471,6 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
         return log.info("Already using " .. new_lang)
     end
 
-    local prev_lang = self.lang
     local prev_bufnr = self.bufnr
 
     -- Generation counter: two switches in flight resolve in network order,
@@ -497,6 +496,18 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
             if not (self.winid and vim.api.nvim_win_is_valid(self.winid)) then
                 return log.debug("language switch arrived after the kata closed")
             end
+
+            -- Everything the switch rewrites, so a failure part-way can put
+            -- the whole previous session back, not just lang and bufnr:
+            -- half a session (old buffer, new solution id) would attempt
+            -- against the wrong trainer session.
+            local SESSION_FIELDS = {
+                "lang", "bufnr", "project_id", "solution_id", "setup_code", "example_fixture",
+                "fixture", "package", "test_framework", "language_version", "last_attempt_success",
+                "finalized", "file",
+            }
+            local before = {}
+            for _, k in ipairs(SESSION_FIELDS) do before[k] = self[k] end
 
             local ok, change_err = pcall(function()
                 self.lang = new_lang
@@ -547,8 +558,13 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
 
             if not ok then
                 log.error("Failed to change language\n" .. tostring(change_err))
-                self.lang = prev_lang
-                self.bufnr = prev_bufnr
+                for _, k in ipairs(SESSION_FIELDS) do self[k] = before[k] end
+                if prev_bufnr and vim.api.nvim_buf_is_valid(prev_bufnr) then
+                    pcall(ui_utils.buf_set_opts, prev_bufnr, { buflisted = true })
+                    if self.winid and vim.api.nvim_win_is_valid(self.winid) then
+                        pcall(ui_utils.win_set_buf, self.winid, prev_bufnr, true)
+                    end
+                end
             end
         end)
     end)
