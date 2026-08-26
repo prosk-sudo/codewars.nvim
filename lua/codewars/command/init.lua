@@ -1262,8 +1262,9 @@ function cmd.exec(args)
 end
 
 function cmd.setup()
+    -- No `bar`: with -bar a double quote starts an Ex comment, so
+    -- `:CW train "Unique In Order"` reached exec as just `train`.
     api.nvim_create_user_command("CW", cmd.exec, {
-        bar = true,
         bang = true,
         nargs = "*",
         desc = "Codewars",

@@ -5,6 +5,10 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- `:CW train "remove first and last character"` works: the `:CW` command was
+  registered with `-bar`, under which a double quote starts an Ex comment, so
+  everything from the quote on was thrown away before the plugin saw it.
+  `:CW` can no longer be chained with `|`; quote a title instead.
 - Smaller fixes across the UI: the kata list's "language unavailable" warning
   judges each kata against the language you are filtering by, not the default;
   kumite ages in the list are computed in UTC (they were off by your timezone);

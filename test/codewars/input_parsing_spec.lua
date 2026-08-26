@@ -74,9 +74,14 @@ end)
 
 describe(":CW list difficulty", function()
     it("reports a non-numeric difficulty instead of raising", function()
+        -- list checks the cookie first; CI has none, so stand in for it.
+        local utils = require("codewars.utils")
+        local real_guard = utils.auth_guard
+        utils.auth_guard = function() end
         local errors, restore = capture_errors()
         local ok = pcall(cmd.list, { difficulty = { "abc" } })
         restore()
+        utils.auth_guard = real_guard
         assert.is_true(ok)
         assert.truthy(errors[1]:find("Invalid difficulty: abc", 1, true))
     end)
