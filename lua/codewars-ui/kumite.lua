@@ -192,16 +192,16 @@ end
 --- cannot leave the buffers writable during an in-flight request.
 ---@param next_state string
 function Kumite:set_state(next_state)
-    local was_editable = kstate.is_editable(self.state)
     self.state = next_state
     -- Locked for every state that is not editable, not just the in-flight
     -- ones: `published` is not editable either, and unlocking it left the
     -- buffers writable while is_dirty() said "clean" -- edits typed after
     -- publishing were silently dropped on close.
     self:set_buffers_locked(not kstate.is_editable(next_state))
-    if was_editable and not kstate.is_editable(next_state) and not kstate.is_locked(next_state) then
-        -- Entering a read-only resting state from an editable one: put the
-        -- insert-key guard back so a keypress explains itself.
+    if not kstate.is_editable(next_state) and not kstate.is_locked(next_state) then
+        -- Entering a read-only resting state (from editing, or from an
+        -- in-flight publish): put the insert-key guard back so a keypress
+        -- explains itself instead of Vim's E21. Idempotent.
         self:apply_readonly_guard()
     end
 end
@@ -241,6 +241,11 @@ function Kumite:fork()
         local test_ft = require("codewars.languages.filetypes").test(self.lang, self.snippet.test_language)
         ui_utils.buf_set_opts(self.fixture_split.bufnr, { modifiable = true, filetype = test_ft or "" })
         vim.bo[self.fixture_split.bufnr].modified = false
+        -- autocmds() ran at mount with only the code buffer; re-run it so
+        -- the new pane gets the same :w hint and dirty-title marker (the
+        -- augroup is cleared and rebuilt, so nothing is registered twice).
+        vim.bo[self.fixture_split.bufnr].buftype = "acwrite"
+        self:autocmds()
     end
 
     if self.description then
@@ -487,6 +492,11 @@ function Kumite:_do_convert()
     local id = self:server_id()
     if not id then
         return log.warn("Save the kumite first (:CW kumite save), then convert.")
+    end
+    -- Rechecked here, not only in convert(): the confirmation popup gives
+    -- the user time to type, and the server converts the SAVED snippet.
+    if self:is_dirty() then
+        return log.warn("You have unsaved edits — :CW kumite save before converting.")
     end
     kumite_api.convert_to_kata(id, function(url, err)
             if err then
