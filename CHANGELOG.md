@@ -4,6 +4,17 @@ All notable changes to codewars.nvim are documented here.
 
 ## [Unreleased]
 
+### Added
+- Math in kata descriptions is rendered as readable text instead of raw
+  LaTeX. `$…$`, `$$…$$` and ```` ```math ```` blocks (what Codewars typesets
+  with KaTeX) are translated: `\frac{x_A + x_B + x_C}{3}` → `(x_A + x_B + x_C)/3`,
+  `x^2` → `x²`, `a_{i+1}` → `aᵢ₊₁`, `\sqrt{n}` → `√n`, Greek letters,
+  `\le \ne \cdot \times \sum \infty \in \to …` → `≤ ≠ · × ∑ ∞ ∈ →`,
+  `\mathbb{N}` → `ℕ`, and `\\` starts a new line. Inline math becomes a code
+  span and block math a fenced block, so markdown never mangles it; anything
+  the translator does not know is kept as written. A `$` inside code, or a
+  price like `$5`, is left alone.
+
 ### Fixed
 - `:CW list difficulty=` and `order=` behave like the picker's own menus.
   `<Tab>` after `difficulty=` or `order=` completes the value without erasing
