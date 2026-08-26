@@ -2,13 +2,6 @@
 
 All notable changes to codewars.nvim are documented here.
 
-## [Unreleased]
-
-### Fixed
-- Math that an author wrote inside a code span (`` `$\text{Min} = \dfrac{\text{Age}}{2} + 7$` ``,
-  which Codewars renders too) is now translated like bare `$…$`; a code span
-  that is not entirely a formula (`` `$HOME` ``) is still left as code.
-
 ## [0.3.3] - 2026-08-26
 
 ### Added
@@ -33,6 +26,9 @@ All notable changes to codewars.nvim are documented here.
   `cache.update_interval` to shorten that, move the value to the new option.
 
 ### Fixed
+- Math that an author wrote inside a code span (`` `$\text{Min} = \dfrac{\text{Age}}{2} + 7$` ``,
+  which Codewars renders too) is now translated like bare `$…$`; a code span
+  that is not entirely a formula (`` `$HOME` ``) is still left as code.
 - `:CW list difficulty=` and `order=` behave like the picker's own menus.
   `<Tab>` after `difficulty=` or `order=` completes the value without erasing
   what you typed (`difficulty=8,` offers `difficulty=8,7`, …). `difficulty=`
