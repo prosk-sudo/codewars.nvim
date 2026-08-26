@@ -1194,9 +1194,11 @@ function cmd.tokenize(s)
             else
                 buf = buf .. c
             end
-        elseif c == '"' or c == "'" then
+        elseif (c == '"' or c == "'") and buf == nil then
+            -- A quote only opens a group at the start of a token, so an
+            -- apostrophe inside a word (it's-a-title) is ordinary text.
             quote = c
-            buf = buf or ""
+            buf = ""
         elseif c:match("%s") then
             if buf then
                 parts[#parts + 1] = buf
@@ -1205,6 +1207,11 @@ function cmd.tokenize(s)
         else
             buf = (buf or "") .. c
         end
+    end
+    if quote then
+        -- Never closed: the quote was ordinary text, so fall back to the
+        -- plain whitespace split rather than swallowing the rest of the line.
+        return vim.split(vim.trim(s), "%s+", { trimempty = true })
     end
     if buf then
         parts[#parts + 1] = buf

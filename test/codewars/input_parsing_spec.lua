@@ -21,6 +21,9 @@ describe("cmd.tokenize", function()
         assert.same({ "train", "it's", "x" }, cmd.tokenize("train \"it's\" x"))
         assert.same({ "list", "difficulty=8,7" }, cmd.tokenize("  list   difficulty=8,7 "))
         assert.same({}, cmd.tokenize(""))
+        -- a quote inside a word, or one that never closes, is ordinary text
+        assert.same({ "train", "it's-a-title", "python" }, cmd.tokenize("train it's-a-title python"))
+        assert.same({ "train", "'oops", "python" }, cmd.tokenize("train 'oops python"))
     end)
 end)
 
@@ -74,7 +77,7 @@ end)
 describe("page.unescape", function()
     it("decodes numeric and hex entities alongside named ones", function()
         assert.equals("Tom’s <clan> & co ©", page.unescape("Tom&#8217;s &lt;clan&gt; &amp; co &#xA9;"))
-        assert.equals("&bogus; &#;", page.unescape("&bogus; &#;"))
+        assert.equals("&bogus; &#; &#55296;", page.unescape("&bogus; &#; &#55296;"))
     end)
 end)
 

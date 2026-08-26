@@ -6,7 +6,7 @@ Run `:CW help` inside Neovim for a quick reference.
 
 | Command | Description |
 |---|---|
-| `:CW train <title\|slug\|url> [language]` | Open a kata by title (as the site shows it, e.g. "Unique In Order"), slug, or URL |
+| `:CW train <title\|slug\|url> [language]` | Open a kata by title (as the site shows it, e.g. "Unique In Order"), slug, or URL. A trailing word that names a language is the language; quote the title (`"Learn Python"`) when its last word is one |
 | `:CW random [language]` | Open a random kata |
 | `:CW focus [language] [category]` | Choose Today's Focus. `fundamentals`, `rank_up`, `practice_and_repeat`, `beta` use the server-side trainer; `random` picks locally from the cached problem list. No args opens the pickers; re-running returns the same kata until you solve or skip it |
 | `:CW focus skip` | Skip the current focus kata and open the next one (uses the last `:CW focus` language + category) |
