@@ -98,12 +98,32 @@ describe(":CW list order", function()
         package.loaded["codewars.picker"] = real_picker
     end)
 
-    it("maps order= to a picker sort mode and difficulty= to ranks", function()
-        cmd.list({ order = { "hardest" }, difficulty = { "8", "7" } })
+    it("maps order= to a picker sort mode and difficulty= to deduplicated ranks", function()
+        cmd.list({ order = { "hardest" }, difficulty = { "8", "7", "8" } })
         assert.equals("hardest", got.sort_key)
         assert.same({ -8, -7 }, got.rank)
         cmd.list({ order = { "shuffle" } })
         assert.equals("shuffle", got.sort_key)
+    end)
+
+    it("rejects an empty or doubled order=", function()
+        local errors, restore = capture_errors()
+        cmd.list({ order = {} })
+        cmd.list({ order = { "hardest", "name" } })
+        restore()
+        assert.is_nil(got)
+        assert.truthy(errors[1]:find("order= needs a value", 1, true))
+        assert.truthy(errors[2]:find("order= takes one value", 1, true))
+    end)
+
+    it("offers no comma continuation for the single-valued order=", function()
+        assert.same({}, cmd.complete(nil, "CW list order=hardest,"))
+    end)
+
+    it("accepts exactly the picker's sort modes", function()
+        package.loaded["codewars.picker"] = real_picker
+        local keys = vim.tbl_map(function(m) return m.key end, require("codewars.picker").sort_modes)
+        assert.same(keys, require("codewars.command").arguments.list.order)
     end)
 
     it("rejects an empty difficulty= instead of filtering everything out", function()
