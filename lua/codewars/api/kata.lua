@@ -137,7 +137,9 @@ function kata.reply_error(res)
     if res.success == false then
         return msg and tostring(msg) or "Codewars rejected the request."
     end
-    if msg and res.success == nil then
+    -- Without a success flag only an explicit error/reason is a refusal: a
+    -- bare `message` can be a plain acknowledgement ("Saved").
+    if res.success == nil and (res.error ~= nil or res.reason ~= nil) then
         return tostring(msg)
     end
     return nil
@@ -225,10 +227,10 @@ function kata.unpublish(id, cb)
             if err then
                 return cb(err)
             end
-            if type(res) == "table" and res.success == false then
-                return cb({ msg = "Codewars rejected the unpublish." })
-            end
             local why = kata.render_error(res)
+            if not why and type(res) == "table" and res.success == false then
+                why = "Codewars rejected the unpublish."
+            end
             if why then
                 return cb({ msg = why })
             end

@@ -137,6 +137,8 @@ describe("kata.render_error", function()
     it("a bare error message without a success flag is still a refusal", function()
         assert.are.equal("nope", kata.render_error({ error = "nope" }))
         assert.is_nil(kata.render_error({ success = true, message = "ok" }))
+        -- a bare acknowledgement is not a refusal
+        assert.is_nil(kata.render_error({ message = "Saved" }))
     end)
 end)
 
