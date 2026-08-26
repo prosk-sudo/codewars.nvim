@@ -5,6 +5,17 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Solution templates round-trip exactly. A function template that builds
+  its text from `ctx.starter` is now recognised by `:CW template on/off`
+  (it used to be reported as having no `{{starter}}`); blank lines at the end
+  of your code survive `on` → `off`; whitespace-only lines come back with
+  their spaces; and a template that is nothing but `{{starter}}` never claims
+  to match a buffer, so `:CW template off` cannot cut lines from it.
+- The seeded NASM kumite fixture compiles: it is a C (criterion) file and now
+  starts with a C comment instead of a NASM `;` comment.
+- `lang = false` in `setup()` is treated as "not set" instead of becoming the
+  default language; a kata whose API reply carries `testLanguage = ""` gets
+  the test pane's proper filetype (NASM/SQL/etc. map to their test language).
 - Saving a fetched **private** kumite no longer flips it public: the snippet's
   `secret` flag is read from the API and re-sent on save, as the save code
   always claimed it was. A kata save that Codewars answers with a JSON

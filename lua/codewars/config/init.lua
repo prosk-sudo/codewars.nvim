@@ -74,6 +74,11 @@ function config.validate()
     -- validate() before it assigns config.lang from config.user.lang, so
     -- reading config.lang here only ever re-checked the module default
     -- ("python") and let a typo'd `lang` through silently.
+    -- `lang = false` survives tbl_deep_extend (false is a value, not nil)
+    -- and would become the default language; treat it as unset.
+    if config.user.lang == false then
+        config.user.lang = nil
+    end
     local lang = config.user.lang or config.lang
 
     local utils = require("codewars.utils")
