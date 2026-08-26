@@ -35,6 +35,13 @@ describe("template wrap/strip round trip", function()
         assert.equals("x\n\n", templates.strip("python", wrapped))
     end)
 
+    it("keeps trailing blank lines inside a template that has a suffix", function()
+        with_template("H\n  {{starter}}\nF\n")
+        local wrapped = templates.wrap("python", "x\n\n")
+        assert.equals("H\n  x\n\n\nF", wrapped)
+        assert.equals("x\n\n", templates.strip("python", wrapped))
+    end)
+
     it("hands whitespace-only lines back untouched", function()
         with_template("def f():\n    {{starter}}\n")
         local wrapped = templates.wrap("python", "a\n  \nb")
