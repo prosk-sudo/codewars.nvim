@@ -48,14 +48,29 @@ describe("Runner submit eligibility", function()
         Runner:init(k):handle("attempt")
         pending.submit.cb({ result = { completed = true }, token = "t" })
         assert.is_true(k.last_attempt_success)
-        assert.is_true(k._notify_pending)
+        assert.equals(1, k._notify_pending)
 
         Runner.running = false
         Runner:init(k):handle("submit")
         assert.truthy(warnings[#warnings]:find("Still registering", 1, true))
 
         pending.notify.cb({ success = true })
-        assert.is_false(k._notify_pending)
+        assert.equals(0, k._notify_pending)
+    end)
+
+    it("a quick test's notify neither blocks submit nor revokes an earlier attempt", function()
+        local k = kata()
+        Runner:init(k):handle("attempt")
+        pending.submit.cb({ result = { completed = true }, token = "t" })
+        pending.notify.cb({ success = true })
+        assert.is_true(k.last_attempt_success)
+
+        Runner.running = false
+        Runner:init(k):handle("test")
+        pending.submit.cb({ result = { completed = false }, token = "t2" })
+        assert.equals(0, k._notify_pending)
+        pending.notify.cb(nil, { msg = "boom" })
+        assert.is_true(k.last_attempt_success)
     end)
 
     it("notifies the session the run was submitted with, not the one current at reply time", function()

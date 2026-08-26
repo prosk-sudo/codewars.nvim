@@ -124,7 +124,7 @@ function Runner:handle(mode)
             self:stop()
             return log.warn("Cannot submit: last attempt was not successful")
         end
-        if kata._notify_pending then
+        if (kata._notify_pending or 0) > 0 then
             self:stop()
             return log.warn("Still registering your last attempt with Codewars — try :CW submit again in a moment.")
         end
@@ -296,9 +296,15 @@ function Runner:handle(mode)
                     -- notify makes the later finalize complete nothing, so a
                     -- failure here must revoke submit eligibility.
                     if res.token and project_id then
-                        -- Submit is refused while this is set: finalize
-                        -- before the notify lands completes nothing.
-                        kata._notify_pending = true
+                        -- Only an attempt's registration gates submit: a
+                        -- quick test is notified too, but it neither unlocks
+                        -- nor may revoke an earlier attempt. A counter, not a
+                        -- flag: stop() has already freed the runner, so two
+                        -- notifies can overlap.
+                        local gates_submit = mode == "attempt" and same_session
+                        if gates_submit then
+                            kata._notify_pending = (kata._notify_pending or 0) + 1
+                        end
                         attempt_api.notify(project_id, solution_id, {
                             code = code_str,
                             fixture = fixture,
@@ -306,9 +312,11 @@ function Runner:handle(mode)
                             testFramework = kata.test_framework or "cw-2",
                             token = res.token,
                         }, function(nres, nerr)
-                            kata._notify_pending = false
+                            if gates_submit then
+                                kata._notify_pending = math.max(0, (kata._notify_pending or 1) - 1)
+                            end
                             local not_registered = nerr ~= nil or (nres and nres.success == false)
-                            if not_registered and kata.last_attempt_success and same_session then
+                            if not_registered and gates_submit and completed then
                                 kata.last_attempt_success = false
                                 log.warn("Codewars did not register this attempt"
                                     .. (nerr and nerr.msg and (" (" .. tostring(nerr.msg):gsub("\n.*", "") .. ")") or "")
