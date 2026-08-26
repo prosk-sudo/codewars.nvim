@@ -124,7 +124,7 @@ function ResultPopup:handle(res)
 end
 
 function ResultPopup:handle_error(err)
-    if not self.bufnr then return end
+    if not (self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr)) then return end
 
     local lines = { "== ERROR ==", "" }
     for line in (err.msg or "Unknown error"):gmatch("[^\r\n]+") do

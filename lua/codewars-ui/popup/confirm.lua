@@ -45,8 +45,15 @@ local function wrap(text, width)
                         lines[#lines + 1] = line
                         line = ""
                     end
-                    lines[#lines + 1] = vim.fn.strcharpart(word, 0, width)
-                    word = vim.fn.strcharpart(word, width)
+                    -- Cut by display cells, not characters: a run of CJK or
+                    -- emoji is two cells per character.
+                    local n = 0
+                    while vim.fn.strdisplaywidth(vim.fn.strcharpart(word, 0, n + 1)) <= width do
+                        n = n + 1
+                    end
+                    n = math.max(n, 1)
+                    lines[#lines + 1] = vim.fn.strcharpart(word, 0, n)
+                    word = vim.fn.strcharpart(word, n)
                 end
                 local candidate = line == "" and word or (line .. " " .. word)
                 if vim.fn.strdisplaywidth(candidate) > width and line ~= "" then

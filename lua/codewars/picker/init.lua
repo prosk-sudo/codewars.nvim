@@ -661,10 +661,16 @@ local function kumite_age(iso)
     if not y then return "" end
     -- The timestamp is UTC (trailing Z) but os.time reads the fields as
     -- local time; shift by the local offset so ages are not off by it.
+    -- Both os.time calls read their fields with the CURRENT DST flag, so the
+    -- offset and the target agree even while daylight saving is in effect
+    -- (os.date("!*t") reports isdst=false, which would drop an hour).
     local now = os.time()
-    local utc_offset = os.difftime(now, os.time(os.date("!*t", now)))
+    local isdst = os.date("*t", now).isdst
+    local utc_now = os.date("!*t", now)
+    utc_now.isdst = isdst
+    local utc_offset = os.difftime(now, os.time(utc_now))
     local then_t = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d),
-        hour = tonumber(h), min = tonumber(mi) }) + utc_offset
+        hour = tonumber(h), min = tonumber(mi), isdst = isdst }) + utc_offset
     local diff = math.max(0, now - then_t)
     if diff < 3600 then return math.floor(diff / 60) .. "m" end
     if diff < 86400 then return math.floor(diff / 3600) .. "h" end

@@ -57,6 +57,10 @@ function ConsoleLayout:run(mode)
 
     if config.user.console.open_on_runcode then
         self:show()
+    elseif not self.result then
+        -- Unmounted console with the auto-open off: rebuild it quietly so
+        -- the result has somewhere to land.
+        self:mount()
     end
 
     self.result:focus()
