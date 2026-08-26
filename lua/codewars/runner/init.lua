@@ -124,6 +124,10 @@ function Runner:handle(mode)
             self:stop()
             return log.warn("Cannot submit: last attempt was not successful")
         end
+        if (kata._notify_pending or 0) > 0 then
+            self:stop()
+            return log.warn("Still registering your last attempt with Codewars — try :CW submit again in a moment.")
+        end
 
         local api_utils = require("codewars.api.utils")
         local urls = require("codewars.api.urls")
@@ -211,12 +215,16 @@ function Runner:handle(mode)
             log.info("Running tests...")
         end
 
+        -- The ids this run is submitted with. Read again at callback time
+        -- they may already belong to another language's session.
+        local project_id, solution_id = kata.project_id, kata.solution_id
+
         attempt_api.submit(
             code_str,
             kata.lang,
             fixture,
             kata.test_framework or "cw-2",
-            kata.solution_id,
+            solution_id,
             kata.language_version,
             opts,
             function(res, err)
@@ -247,7 +255,18 @@ function Runner:handle(mode)
                     local passed = r.passed or 0
                     local failed = r.failed or 0
                     local errors = r.errors or 0
-                    kata.last_attempt_success = r.completed == true
+                    local completed = r.completed == true
+                    -- Only a full attempt (the kata's real fixture) can
+                    -- unlock submit; a quick test runs against a fixture
+                    -- the user can edit, so its pass proves nothing to
+                    -- Codewars and finalize would complete nothing.
+                    -- A run whose session ids changed underneath it (a
+                    -- language switch mid-run) belongs to the old session
+                    -- and must not unlock the new one.
+                    local same_session = kata.project_id == project_id and kata.solution_id == solution_id
+                    if mode == "attempt" and same_session then
+                        kata.last_attempt_success = completed
+                    end
 
                     local output = Runner.build_output(res)
 
@@ -257,7 +276,7 @@ function Runner:handle(mode)
                     end
 
                     local result = {
-                        valid = kata.last_attempt_success,
+                        valid = completed,
                         summary = {
                             passed = passed,
                             failed = failed,
@@ -276,23 +295,39 @@ function Runner:handle(mode)
                     -- Codewars only counts attempts it is notified of; a lost
                     -- notify makes the later finalize complete nothing, so a
                     -- failure here must revoke submit eligibility.
-                    if res.token and kata.project_id then
-                        attempt_api.notify(kata.project_id, kata.solution_id, {
+                    if res.token and project_id then
+                        -- Only an attempt's registration gates submit: a
+                        -- quick test is notified too, but it neither unlocks
+                        -- nor may revoke an earlier attempt. A counter, not a
+                        -- flag: stop() has already freed the runner, so two
+                        -- notifies can overlap.
+                        local gates_submit = mode == "attempt" and same_session
+                        if gates_submit then
+                            kata._notify_pending = (kata._notify_pending or 0) + 1
+                        end
+                        attempt_api.notify(project_id, solution_id, {
                             code = code_str,
                             fixture = fixture,
                             languageVersion = kata.language_version or "",
                             testFramework = kata.test_framework or "cw-2",
                             token = res.token,
                         }, function(nres, nerr)
+                            if gates_submit then
+                                kata._notify_pending = math.max(0, (kata._notify_pending or 1) - 1)
+                            end
                             local not_registered = nerr ~= nil or (nres and nres.success == false)
-                            if not_registered and kata.last_attempt_success then
+                            -- Rechecked at reply time: a switch to another
+                            -- language meanwhile means this notify belongs to
+                            -- a session that is no longer the kata's.
+                            local still_same = kata.project_id == project_id and kata.solution_id == solution_id
+                            if not_registered and gates_submit and completed and still_same then
                                 kata.last_attempt_success = false
                                 log.warn("Codewars did not register this attempt"
                                     .. (nerr and nerr.msg and (" (" .. tostring(nerr.msg):gsub("\n.*", "") .. ")") or "")
                                     .. " — run :CW attempt again before submitting.")
                             end
                         end)
-                    elseif kata.last_attempt_success then
+                    elseif mode == "attempt" and completed and same_session then
                         kata.last_attempt_success = false
                         log.warn("Missing runner token or project id — this attempt can't be registered on codewars.com. Run :CW attempt again.")
                     end
