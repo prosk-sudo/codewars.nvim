@@ -534,8 +534,13 @@ function picker.completed()
 
     if vim.tbl_isempty(items) then
         log.info("Fetching completed kata...")
-        completed_cache.update(function(data)
+        completed_cache.update(function(data, err)
             if vim.tbl_isempty(data) then
+                if err then
+                    -- The refresh failed; an empty list says nothing about
+                    -- the account, so do not blame the username.
+                    return log.warn("Could not fetch your completed kata: " .. tostring(err.msg or "request failed"))
+                end
                 return log.warn("No completed kata found. Is your username configured?")
             end
             show_enriched(data)
