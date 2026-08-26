@@ -243,9 +243,12 @@ function picker._show_kata_list(items, title, completed_set)
         local hl = rank_hl_from_id(rid)
         local slug = item.slug or item.id
 
+        -- Judged against the language you are filtering by, not the default:
+        -- a kata valid for the selected filter is not "unavailable".
         local lang_available = true
-        if item.languages and #item.languages > 0 then
-            lang_available = vim.tbl_contains(item.languages, config.lang)
+        local judge_lang = current_lang_filter or config.lang
+        if item.languages and #item.languages > 0 and judge_lang then
+            lang_available = vim.tbl_contains(item.languages, judge_lang)
         end
         local warn_icon = lang_available and " " or "\u{f0205}"
 
@@ -656,9 +659,13 @@ local function kumite_age(iso)
     if type(iso) ~= "string" then return "" end
     local y, mo, d, h, mi = iso:match("^(%d+)%-(%d+)%-(%d+)T(%d+):(%d+)")
     if not y then return "" end
+    -- The timestamp is UTC (trailing Z) but os.time reads the fields as
+    -- local time; shift by the local offset so ages are not off by it.
+    local now = os.time()
+    local utc_offset = os.difftime(now, os.time(os.date("!*t", now)))
     local then_t = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d),
-        hour = tonumber(h), min = tonumber(mi) })
-    local diff = math.max(0, os.time() - then_t)
+        hour = tonumber(h), min = tonumber(mi) }) + utc_offset
+    local diff = math.max(0, now - then_t)
     if diff < 3600 then return math.floor(diff / 60) .. "m" end
     if diff < 86400 then return math.floor(diff / 3600) .. "h" end
     if diff < 86400 * 365 then return math.floor(diff / 86400) .. "d" end

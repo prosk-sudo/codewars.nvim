@@ -40,6 +40,11 @@ end
 ---@param bufnr number
 ---@param force? boolean
 function utils.win_set_buf(winid, bufnr, force)
+    -- A remembered window can outlive its buffer (the menu after :bwipeout):
+    -- nvim_win_set_buf would throw, and callers treat this as best-effort.
+    if not (winid and vim.api.nvim_win_is_valid(winid) and bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+        return
+    end
     if vim.fn.has("nvim-0.10.0") == 1 then
         local ok, wfb = pcall(vim.api.nvim_get_option_value, "winfixbuf", { win = winid })
 

@@ -38,6 +38,16 @@ local function wrap(text, width)
         else
             local line = ""
             for word in paragraph:gmatch("%S+") do
+                -- A single token wider than the popup (a URL, a slug) is
+                -- split hard; it can never fit and would overflow the box.
+                while vim.fn.strdisplaywidth(word) > width and width > 0 do
+                    if line ~= "" then
+                        lines[#lines + 1] = line
+                        line = ""
+                    end
+                    lines[#lines + 1] = vim.fn.strcharpart(word, 0, width)
+                    word = vim.fn.strcharpart(word, width)
+                end
                 local candidate = line == "" and word or (line .. " " .. word)
                 if vim.fn.strdisplaywidth(candidate) > width and line ~= "" then
                     lines[#lines + 1] = line

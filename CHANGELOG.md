@@ -5,6 +5,18 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Smaller fixes across the UI: the kata list's "language unavailable" warning
+  judges each kata against the language you are filtering by, not the default;
+  kumite ages in the list are computed in UTC (they were off by your timezone);
+  a runner reply arriving after the console was closed is ignored instead of
+  raising; a passing result with an empty `reason` no longer shows an empty
+  "Error" section; a confirmation prompt containing a token wider than the box
+  (a URL) is wrapped instead of overflowing; `:CW` no longer errors when the
+  remembered menu buffer is gone but its window is not; and closing a kata no
+  longer leaves a stray scratch buffer behind.
+- `:CW doctor` checks more of what the parsers return: the kumite-list check
+  now verifies id, author, language and pagination, and the kata-edit check
+  verifies the test fixture is extracted.
 - The completed-kata cache can no longer be quietly wrong. Solving a kata
   while the cache is missing or expired records it without stamping a
   one-item list as a complete, fresh cache; a refresh that gets a reply it
