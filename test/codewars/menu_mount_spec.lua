@@ -47,7 +47,9 @@ describe("Menu:mount buffer choice", function()
 
         local menu = mount_here()
         assert.are_not.equal(file_buf, menu.bufnr)
-        assert.are.equal(path, vim.api.nvim_buf_get_name(file_buf))
+        -- resolve() both sides: on macOS tempname() returns the /var/folders
+        -- symlink while the buffer name comes back as /private/var/folders.
+        assert.are.equal(vim.fn.resolve(path), vim.fn.resolve(vim.api.nvim_buf_get_name(file_buf)))
         vim.cmd("tabclose!")
     end)
 
