@@ -92,8 +92,12 @@ function codewars.setup(cfg)
     local cmd = require("codewars.command")
     cmd.setup()
 
-    -- VimEnter hook for standalone dashboard mode (nvim codewars.nvim)
+    -- VimEnter hook for standalone dashboard mode (nvim codewars.nvim).
+    -- Grouped so a second setup() -- a reload, or a config that calls it
+    -- again -- replaces this hook instead of stacking another copy on it.
+    local group = vim.api.nvim_create_augroup("codewars_setup", { clear = true })
     vim.api.nvim_create_autocmd("VimEnter", {
+        group = group,
         pattern = "*",
         nested = true,
         callback = function()

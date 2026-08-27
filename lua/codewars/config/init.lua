@@ -1,7 +1,11 @@
 local template = require("codewars.config.template")
 local P = require("plenary.path")
 
-_Cw_state = {
+-- Deliberately preserved across a reload. Clearing `package.loaded` re-runs
+-- this file, and a fresh table here would strand every mounted kata and menu:
+-- their buffers, windows and augroups outlive the reload, but nothing could
+-- reach them again -- not even `codewars.stop()`.
+_Cw_state = _Cw_state or {
     menu = nil, ---@type cw.ui.Menu?
     katas = {}, ---@type cw.ui.Kata[]
 }
