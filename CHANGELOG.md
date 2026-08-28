@@ -2,6 +2,16 @@
 
 All notable changes to codewars.nvim are documented here.
 
+## [Unreleased]
+
+### Changed
+- `:CW cookie` asks for the two values one box at a time — the `CSRF-TOKEN`
+  value, then the `_session_id` value — instead of making you splice them
+  into a single `CSRF-TOKEN=...; _session_id=...` header. Each box trims a
+  pasted cookie name, a trailing `;` and surrounding whitespace, so copying a
+  whole row out of the DevTools cookie table works. Pasting the full header
+  into the first box still works and skips the second.
+
 ## [0.3.3] - 2026-08-26
 
 ### Added

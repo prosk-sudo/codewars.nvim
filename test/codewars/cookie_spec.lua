@@ -99,6 +99,28 @@ describe("Cookie identity change", function()
             assert.are.equal("", config.user.username)
         end)
 
+        -- The mirror of the above, and the one that is easy to lose: a
+        -- rejected value must leave the signed-in identity exactly as it
+        -- was. Wiping on a typo would sign the user out of a session they
+        -- never asked to leave, and the caches cannot be rebuilt without it.
+        it("not on a value it refuses", function()
+            for _, bad in ipairs({
+                { "ab;c", "xyz" },                                          -- separator
+                { "abc", "x\ny" },                                          -- control character
+                { "", "xyz" },                                              -- empty field
+                { "TYPED", "CSRF-TOKEN=OTHER; _session_id=xyz" },           -- contradicting header
+                { "abc", "Expected: CSRF-TOKEN=...; _session_id=...;" },    -- prose, not a cookie
+            }) do
+                assert.truthy(Cookie.set_parts(bad[1], bad[2]),
+                    ("expected %q / %q to be refused"):format(bad[1], bad[2]))
+            end
+
+            assert.are.same({ { id = "k1", slug = "k1" } }, (completed.get()))
+            assert.are.same({ k1 = { rank = -8 } }, completed.get_details())
+            assert.are.equal("alice-sol", session.get("some-kata", "python").solutionId)
+            assert.are.equal("alice", config.user.username)
+        end)
+
         it("keeps going when one hook fails", function()
             package.loaded["codewars.picker"] = { invalidate_completed_cache = function() error("boom") end }
             Cookie.delete()

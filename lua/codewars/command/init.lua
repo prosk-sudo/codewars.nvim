@@ -1031,14 +1031,19 @@ function cmd.open()
     end
 end
 
-function cmd.cookie_prompt(cb)
-    -- cb may be the options table when called from :CW cookie command
-    if type(cb) ~= "function" then cb = nil end
-
+--- One input box. nui calls on_submit only after the popup has unmounted, so
+--- the next box can be mounted straight from it.
+---
+--- On `cmd` rather than a local so the prompt flow can be driven in tests
+--- without a live prompt buffer; nothing outside this file calls it.
+---@param title string
+---@param on_value fun(value: string)
+---@param on_cancel fun()
+function cmd._ask_cookie_value(title, on_value, on_cancel)
     local NuiInput = require("nui.input")
     local event = require("nui.utils.autocmd").event
 
-    local popup_options = {
+    local input = NuiInput({
         relative = "editor",
         position = {
             row = "50%",
@@ -1048,31 +1053,17 @@ function cmd.cookie_prompt(cb)
         border = {
             style = "rounded",
             text = {
-                top = " Enter cookie (CSRF-TOKEN=...; _session_id=...) ",
+                top = title,
                 top_align = "left",
             },
         },
         win_options = {
             winhighlight = "Normal:Normal",
         },
-    }
-
-    local input = NuiInput(popup_options, {
+    }, {
         prompt = " > ",
-        on_submit = function(value)
-            local cookie = require("codewars.cache.cookie")
-            local err = cookie.set(value)
-
-            if not err then
-                log.info("Sign-in successful")
-            else
-                log.error("Sign-in failed: " .. err)
-            end
-
-            if cb then
-                pcall(cb, not err)
-            end
-        end,
+        on_submit = on_value,
+        on_close = on_cancel,
     })
 
     input:mount()
@@ -1084,6 +1075,56 @@ function cmd.cookie_prompt(cb)
     input:on(event.BufLeave, function()
         input:unmount()
     end)
+end
+
+--- Ask for the two cookie values one box at a time. DevTools shows them as
+--- separate rows, so this asks for them the way they are read rather than
+--- making the user splice them into one header.
+function cmd.cookie_prompt(cb)
+    -- cb may be the options table when called from :CW cookie command
+    if type(cb) ~= "function" then cb = nil end
+
+    local cookie = require("codewars.cache.cookie")
+
+    local function finish(err)
+        if not err then
+            log.info("Sign-in successful")
+        else
+            log.error("Sign-in failed: " .. err)
+        end
+
+        if cb then
+            pcall(cb, not err)
+        end
+    end
+
+    local function cancelled()
+        if cb then
+            pcall(cb, false)
+        end
+    end
+
+    cmd._ask_cookie_value(" Sign in (1/2): paste the CSRF-TOKEN value ", function(csrf)
+        -- Pasting the whole `CSRF-TOKEN=...; _session_id=...` header still
+        -- works: it already carries both values, so there is nothing to ask.
+        -- parse_header, not parse: the latter finds its markers inside any
+        -- prose carrying them, this plugin's own hint text included.
+        local header_csrf, header_session = cookie.parse_header(csrf)
+        if header_csrf then
+            return finish(cookie.set_parts(header_csrf, header_session))
+        end
+
+        -- An empty first box cannot become a cookie whatever the second one
+        -- holds, so say so now instead of asking for a value we cannot use
+        -- and then blaming the box before it. set_parts owns the wording.
+        if cookie.clean_value(csrf, "CSRF-TOKEN") == "" then
+            return finish(cookie.set_parts(csrf, nil))
+        end
+
+        cmd._ask_cookie_value(" Sign in (2/2): paste the _session_id value ", function(session)
+            finish(cookie.set_parts(csrf, session))
+        end, cancelled)
+    end, cancelled)
 end
 
 function cmd.sign_out()

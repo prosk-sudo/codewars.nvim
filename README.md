@@ -67,11 +67,15 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
 3. Find these two cookies for `www.codewars.com`:
    - `CSRF-TOKEN`
    - `_session_id`
-4. Run `:CW cookie` in Neovim and paste them in this format:
+4. Run `:CW cookie` in Neovim. It asks for one value at a time — paste the
+   `CSRF-TOKEN` value into the first box, then the `_session_id` value into
+   the second.
 
-```
-CSRF-TOKEN=your_csrf_value; _session_id=your_session_value
-```
+Copying a whole row out of the cookie table is fine: a leading `CSRF-TOKEN=`
+or `_session_id=`, a trailing `;`, and surrounding whitespace are all trimmed
+for you. If you already have the full header on your clipboard, pasting
+`CSRF-TOKEN=...; _session_id=...` into the first box still works and skips
+the second.
 
 Your cookies are stored locally at `~/.cache/nvim/codewars/cookie`.
 
