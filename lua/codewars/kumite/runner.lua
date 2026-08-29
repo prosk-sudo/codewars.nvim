@@ -2,7 +2,7 @@ local attempt_api = require("codewars.api.attempt")
 local Runner = require("codewars.runner")
 local log = require("codewars.logger")
 
---- Kumite run wrapper (design §2.3, T11). Unlike kata, kumite has no
+--- Kumite run wrapper. Unlike kata, kumite has no
 --- attempt/submit eligibility, no notify, and no finalize — running a
 --- snippet against its fixture is a pure, side-effect-free runner call.
 --- Reads live buffer content at call time (T9), never a stale model.

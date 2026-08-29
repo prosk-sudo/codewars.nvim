@@ -1,6 +1,6 @@
 local state_machine = require("codewars.state_machine")
 
---- Kata-authoring states (design KP2). Data only — the step/is_editable/
+--- Kata-authoring states. Data only — the step/is_editable/
 --- is_locked/label engine lives in codewars.state_machine, shared with the
 --- kumite machine so a fix to it cannot miss one of them.
 ---

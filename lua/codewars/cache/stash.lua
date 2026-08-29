@@ -1,7 +1,6 @@
 local cache_utils = require("codewars.cache.utils")
 
---- On-disk stash for unsaved workspace edits (design §3.6 / eng D10 safety
---- net). Kumite and kata both need one; only the filename prefix and the entry
+--- On-disk stash for unsaved workspace edits. Kumite and kata both need one; only the filename prefix and the entry
 --- shape differ, so the mechanism lives here once.
 ---
 --- The contract that matters: save() returns a path ONLY when the bytes

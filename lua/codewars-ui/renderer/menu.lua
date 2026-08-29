@@ -432,12 +432,11 @@ function Menu:draw()
 
     -- Vertically centre the block.
     --
-    -- This used to be a fixed 4-line pad plus a `zz` at the end. `zz` only
-    -- repositions by scrolling, so on a window TALLER than the block there
-    -- is nothing to scroll and it does nothing: the menu sat at the top with
-    -- all the slack dumped below it, and the gap grew on pages with fewer
-    -- buttons. Pad from the real window height instead, and leave `zz` to
-    -- handle the opposite case, where the block overflows a short window.
+    -- Padded from the real window height, not a fixed pad plus `zz`. `zz`
+    -- repositions only by scrolling, so on a window TALLER than the block it
+    -- does nothing at all and the menu sits at the top with every bit of slack
+    -- below it. `zz` still handles the opposite case, a block overflowing a
+    -- short window.
     --
     -- TOP_PAD_MIN is a FLOOR: the centred pad is never allowed below it, so
     -- the block moves monotonically as the window grows. Taking the centred
@@ -600,9 +599,8 @@ function Menu:autocmds()
             local valid = self.winid and api.nvim_win_is_valid(self.winid)
             if not valid then return end
             local w = valid and api.nvim_win_get_width(self.winid) or 0
-            -- Height matters now that the block is centred vertically: a
-            -- height-only resize used to skip the redraw and leave the menu
-            -- centred for the OLD height.
+            -- Height counts too, now the block is centred vertically:
+            -- ignoring it leaves the menu centred for the previous height.
             local h = valid and api.nvim_win_get_height(self.winid) or 0
             if w == self._last_width and h == self._last_height then return end
             self._last_width = w

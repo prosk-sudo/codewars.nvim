@@ -7,7 +7,7 @@ local ui_utils = require("codewars-ui.utils")
 local log = require("codewars.logger")
 local api = vim.api
 
---- Kumite workspace (design §3.3). Opens read-only (`published_view`);
+--- Kumite workspace. Opens read-only (`published_view`);
 --- `:CW kumite fork` turns it into an editable `local_fork` you can run.
 --- Editing and running are side-effect-free; `:CW kumite save`, `publish`,
 --- `unpublish` and `convert` are the commands that reach codewars.com.
@@ -214,7 +214,7 @@ function Kumite:clear_readonly_guard()
     pcall(vim.keymap.del, "n", "q", { buffer = self.bufnr })
 end
 
---- Fork this kumite into an editable local copy (design §3.4). Pure local
+--- Fork this kumite into an editable local copy. Pure local
 --- transition — nothing is created on codewars.com. A second fork of an
 --- already-editable buffer is a no-op with a state-aware message.
 function Kumite:fork()
@@ -255,7 +255,7 @@ function Kumite:fork()
     log.info("Forked — edit the code/fixture, run :CW test, and :CW kumite save when ready.")
 end
 
---- Save the workspace as a draft on codewars.com (design §2.4, P3). Create for
+--- Save the workspace as a draft on codewars.com. Create for
 --- an unsaved local_new/local_fork (POST /kumite, adopting the returned id);
 --- update for an existing server_draft (PUT /kumite/{id}). Branch on STATE, not
 --- snippet.id — a fork's snippet.id is still the PARENT's id until first save.
@@ -325,7 +325,7 @@ function Kumite:save(on_done)
     end)
 end
 
---- Publish the current kumite publicly (design §2.4, P3). Requires a saved,
+--- Publish the current kumite publicly. Requires a saved,
 --- non-dirty server draft and passing tests; confirms first because it is
 --- public and cannot be casually undone.
 function Kumite:publish()
@@ -413,7 +413,7 @@ function Kumite:server_id()
     return require("codewars.api.kumite").is_server_id(self.snippet.id) and self.snippet.id or nil
 end
 
---- Unpublish (hide) this kumite (design §2.4, P3). Owner action; reversible by
+--- Unpublish (hide) this kumite. Owner action; reversible by
 --- publishing again. Only meaningful once it exists on codewars.com.
 function Kumite:unpublish()
     local kumite_api = require("codewars.api.kumite")
@@ -443,7 +443,7 @@ function Kumite:unpublish()
     end)
 end
 
---- Convert this kumite into a new kata (design §2.4, P3). Creates a kata from
+--- Convert this kumite into a new kata. Creates a kata from
 --- the kumite data and hides the kumite; confirms first. Reports the kata's
 --- edit URL — finishing the kata (discipline/rank/description/publish) is done
 --- on codewars.com for now.
@@ -601,7 +601,7 @@ function Kumite:mount()
 
     -- Syntax highlighting for every codewars language via the real Neovim
     -- filetype (not the file extension). Unknown/grammarless languages
-    -- (eng D13) stay plain text.
+    -- stay plain text.
     local ft = require("codewars.languages.filetypes").code(self.lang) or ""
 
     ui_utils.buf_set_opts(self.bufnr, {
@@ -722,8 +722,8 @@ function Kumite:_unmount()
 
     local rescued = false
 
-    -- Safety net (eng D10): unsaved fork edits are stashed to the cache so a
-    -- close never silently loses work. Recovery UI lands with My Drafts (P3);
+    -- Safety net: unsaved fork edits are stashed to the cache so a
+    -- close never silently loses work. Recovery UI lands with My Drafts;
     -- until then the stash file + this message are the guarantee.
     if self:is_dirty() then
         local path = kstash.save({
@@ -763,11 +763,11 @@ end
 
 --- Initial state for a fetched snippet.
 ---
---- Every open used to default to published_view, so opening your OWN kumite
---- made it read-only and any save was refused with "this is someone else's
---- kumite" -- which also broke convert's rename retry, since that retry saves.
---- Ownership is decided by author, which fetch_snippet returns; the signed-out
---- list fallback has no author and correctly stays read-only.
+--- Ownership decides this, from the author fetch_snippet returns. Defaulting
+--- every open to published_view makes your own kumite read-only, so saves are
+--- refused as someone else's -- which also breaks convert's rename retry,
+--- since that retry saves. The signed-out list fallback has no author and
+--- correctly stays read-only.
 ---@param snippet cw.KumiteSnippet
 ---@return string
 local function initial_state(snippet)

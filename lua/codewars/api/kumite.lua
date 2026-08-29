@@ -65,7 +65,7 @@ function kumite.parse_ref(input)
     return trimmed:match("/kumite/(" .. HEX24 .. ")")
 end
 
---- Parse a kumite browse page (design §2.1; verified live 2026-07-24).
+--- Parse a kumite browse page (verified live 2026-07-24).
 --- Items are `div.code-snippet-list-item` blocks; each carries exactly one
 --- Fork link `/kumite/new?parent={id}` naming the snippet id.
 ---@param html string
@@ -129,7 +129,7 @@ end
 
 --- Fetch one browse page. Public — no auth required.
 --- Distinguishes drift (page lost its kumite markup entirely) from a
---- legitimately empty page (design §3.6).
+--- legitimately empty page.
 ---@param lang string? language slug; nil = all languages
 ---@param page_num integer? defaults to 1
 ---@param cb fun(result: { entries: cw.KumiteListEntry[], current_page: integer, last_page: integer }?, err: cw.err?)
@@ -160,7 +160,7 @@ function kumite.fetch_list(lang, page_num, cb)
 end
 
 --- Public-view snippet built from browse-list data — the signed-out
---- fallback shape (design §3.6). Owns the cw.KumiteSnippet field list the
+--- fallback shape. Owns the cw.KumiteSnippet field list the
 --- same way fetch_snippet owns the full-JSON mapping.
 ---@param entry cw.KumiteListEntry
 ---@return cw.KumiteSnippet
@@ -182,7 +182,7 @@ function kumite.snippet_from_list_entry(entry)
     }
 end
 
---- Fetch one snippet's full JSON (cookie auth; design §2.2).
+--- Fetch one snippet's full JSON (cookie auth).
 ---@param id string
 ---@param cb fun(snippet: cw.KumiteSnippet?, err: cw.err?)
 function kumite.fetch_snippet(id, cb)
@@ -277,7 +277,7 @@ local function first_field_error(res)
     return nil
 end
 
---- Save a kumite draft (design §2.4, P3). Create (`POST /kumite`) when `id` is
+--- Save a kumite draft. Create (`POST /kumite`) when `id` is
 --- nil or a local id; update (`PUT /kumite/{id}`) for an existing server draft.
 --- Both send JSON `{ code_snippet = {...} }` and return
 --- `{ success, id?, url?, fields }`. No server side effects beyond the draft.

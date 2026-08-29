@@ -161,20 +161,16 @@ end
 
 --- Put the cursor on the code the user came to write.
 ---
---- The top of a templated buffer is their own boilerplate -- imports and
---- helpers they already have. What they opened the kata to write is below it,
---- so landing on line 1 means scrolling past their preamble every time.
+--- The top of a templated buffer is their own boilerplate, so landing on line 1
+--- means scrolling past it every time.
 ---
---- A position something else already claimed is left alone. `$tabe` fires
---- BufReadPost, so a restore-last-position autocmd (LazyVim and friends ship
---- one) has run by now; anything other than {1, 0} means it claimed one, and
---- moving would fight the user's own config. The exception is a claim inside
---- the template's preamble, which is generated boilerplate rather than
---- somewhere they chose to be.
+--- A position something else already claimed is left alone: `$tabe` fires
+--- BufReadPost, so a restore-last-position autocmd has already run, and
+--- anything but {1, 0} is its claim. The exception is a claim inside the
+--- template's preamble -- generated boilerplate, not somewhere chosen.
 ---
---- `force` skips the claim check entirely, for the three callers that just
---- REWROTE the buffer -- `:CW template on`, `:CW template off`, `:CW reset`.
---- After a rewrite the old position describes a buffer that no longer exists.
+--- `force` skips that check, for callers that just rewrote the buffer and left
+--- the old position describing one that no longer exists.
 ---@param force boolean?
 function Kata:_cursor_to_end(force)
     if not (self.winid and vim.api.nvim_win_is_valid(self.winid)) then

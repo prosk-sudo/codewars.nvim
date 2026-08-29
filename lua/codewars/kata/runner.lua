@@ -2,7 +2,7 @@ local attempt_api = require("codewars.api.attempt")
 local Runner = require("codewars.runner")
 local log = require("codewars.logger")
 
---- Kata "Validate Solution" (design KP2). The editor's Validate button is an
+--- Kata "Validate Solution". The editor's Validate button is an
 --- ordinary runner call — the same path as `:CW test` — so this reuses the run
 --- machinery instead of adding a second one. Pure and side-effect-free: it
 --- proves the solution passes its own fixture before you ask the server to

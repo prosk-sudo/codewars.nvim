@@ -157,18 +157,15 @@ function Cookie.set(str)
     return nil
 end
 
---- Drop EVERYTHING that belongs to the signed-in identity. Called when the
---- cookie is set or deleted. The review traced what survived an account
---- switch when only the solutions cache was dropped: Bob's :CW attempt
---- ran against Alice's cached project/solution ids, the picker marked
---- Alice's completed kata as Bob's (and the trainer dequeued them), the
---- menu kept saying "Signed in as: alice", and :CW focus skip acted on
---- Alice's remembered kata. Each of those lives in a different module, so
---- this is the one place that enumerates them.
+--- Drop everything belonging to the signed-in identity, on sign-in and
+--- sign-out. Anything missed here is served to the next account as if it were
+--- theirs: cached solution ids, someone else's completed kata, a stale
+--- username. Each lives in a different module, so this is the one place that
+--- enumerates them.
 ---
---- Every hook is a pcall'd lazy require: the cookie module must not pull
---- the UI/picker chain in at load time, and a module that fails to load
---- must not stop the others from being cleared.
+--- Every hook is a pcall'd lazy require: this module must not pull the
+--- UI/picker chain in at load time, and one that fails to load must not stop
+--- the rest from being cleared.
 function Cookie.identity_changed()
     local function with(mod, fn)
         local ok, m = pcall(require, mod)

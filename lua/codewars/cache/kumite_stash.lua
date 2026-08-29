@@ -1,4 +1,4 @@
---- Local stash for unsaved kumite edits (design §3.6 / eng D10 safety net).
+--- Local stash for unsaved kumite edits.
 --- On a dirty-close the workspace writes one JSON file per snippet, so edits
 --- that were never sent to codewars.com survive the close. Nothing reads them
 --- back yet — the My Drafts picker will; until then they are a durable

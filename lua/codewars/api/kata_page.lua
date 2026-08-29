@@ -1,6 +1,6 @@
 local page = require("codewars.api.page")
 
---- Kata editor LOAD (design KP1b; contract live-captured 2026-07-25 from
+--- Kata editor LOAD (contract live-captured 2026-07-25 from
 --- `/kata/{id}/edit/{lang}`). The editor ships its model in two places:
 ---
 ---   * the code + per-language ids live in an embedded JS blob,

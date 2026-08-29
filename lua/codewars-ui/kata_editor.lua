@@ -6,7 +6,7 @@ local ui_utils = require("codewars-ui.utils")
 local log = require("codewars.logger")
 local api = vim.api
 
---- Kata authoring workspace (design KP2). Mirrors the kumite workspace, but a
+--- Kata authoring workspace. Mirrors the kumite workspace, but a
 --- kata has five text fields instead of two, so the main window is a PANE
 --- SWITCHER: every field gets its own buffer, all live at once, and `g1`…`g5`
 --- (or `:CW kata pane <name>`) swaps which one the window shows. Edits persist
@@ -668,7 +668,7 @@ function KataEditor:validate()
     self.console:run("test")
 end
 
---- Publish the kata (design KP1/KP2). Outward-facing and slow to undo, so it
+--- Publish the kata. Outward-facing and slow to undo, so it
 --- confirms first and refuses to publish content the server has not seen.
 function KataEditor:publish()
     local _, err = kstate.step(self.state, "publish")

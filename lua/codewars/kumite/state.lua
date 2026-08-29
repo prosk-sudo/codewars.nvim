@@ -1,6 +1,6 @@
 local state_machine = require("codewars.state_machine")
 
---- Kumite workspace states (design §3.4, eng review D3/D16). Data only — the
+--- Kumite workspace states. Data only — the
 --- step/is_editable/is_locked/label engine lives in codewars.state_machine,
 --- shared with the kata machine so a fix to it cannot miss one of them.
 ---

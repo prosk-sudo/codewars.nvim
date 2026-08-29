@@ -716,13 +716,13 @@ function picker.leaderboard_category(cb)
     })
 end
 
--- Kumite browser (design §3.2): server-paged (5 items/page on the site),
+-- Kumite browser: server-paged (5 items/page on the site),
 -- page number in the prompt title, language+page persisted across reopens.
 local _kumite_lang = nil ---@type string? nil = all languages
 local _kumite_page = 1
 local _kumite_last = 1
 -- Generation guard: rapid page/language changes must not let a slow, stale
--- response open the wrong picker (eng review D14).
+-- response open the wrong picker.
 local _kumite_gen = 0
 
 ---@param iso string? ISO 8601 timestamp
@@ -752,7 +752,7 @@ end
 
 --- Open the snippet under the cursor. Signed out, the JSON API is
 --- unavailable — fall back to the code-only public view built from list
---- data (design §3.6).
+--- data.
 ---@param entry cw.KumiteListEntry
 ---@param entry cw.KumiteListEntry
 ---@param and_fork boolean? fork the workspace immediately after opening
@@ -950,7 +950,7 @@ function picker._show_kumite_list(entries)
                     on_select = function(v)
                         _kumite_lang = v.slug or nil
                         -- Language switch resets to page 1: a persisted deep
-                        -- page rarely exists in the new language (eng D15).
+                        -- page rarely exists in the new language.
                         _kumite_page = 1
                         kumite_fetch_and_show()
                     end,

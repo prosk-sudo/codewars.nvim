@@ -254,19 +254,15 @@ function M.end_of(text)
 end
 
 --- Replace every token occurrence with `starter`, re-indented to match, and
---- report where the LAST one landed.
+--- report how many were replaced -- `wrapper` and `render` both need that count
+--- and would otherwise each re-scan for it.
 ---
---- Hand-rolled rather than gsub because both of gsub's replacement forms are
---- wrong here. As a string it would treat `%` in the injected code as an escape
---- — `%1` expands to the whole match and `%%` collapses to `%` — which silently
---- mangles real starter code (erlang and prolog use `%` for comments). As a
---- function it cannot see where its match started, and the indent depends on
---- that position. Walking the string gives both: verbatim injection, and a
---- per-occurrence indent. Scanning resumes past the injected text, so a
+--- Hand-rolled rather than gsub: as a replacement string, `%` in the injected
+--- code is an escape -- `%1` expands to the whole match, `%%` collapses to `%`
+--- -- which mangles starter code in languages that comment with `%`. As a
+--- replacement function it cannot see where its match started, and the indent
+--- depends on that. Scanning resumes past the injected text, so a
 --- `{{starter}}` inside it is never rescanned.
----
---- Also reports how many occurrences it replaced, which `wrapper` and
---- `render` both want to know and would otherwise each re-scan for.
 ---@param template string
 ---@param starter string
 ---@return string text, integer occurrences
@@ -464,13 +460,12 @@ function M.strip(lang, text, ctx)
     return unindent(inner, w.indent)
 end
 
---- Where the starter sits inside text that is ALREADY wrapped -- a solution
---- file being reopened, rather than one being rendered.
+--- Where the starter sits in text that is already wrapped.
 ---
---- render() reports this for the buffer it just produced, which is no use on
---- the second visit: the file is read from disk, and its rows reflect whatever
---- the user has since written. The template's prefix and suffix are known, so
---- the starter is what lies between them.
+--- Answered from the text itself, never from the render that produced it: a
+--- solution file is read back from disk on every visit after the first, and
+--- its rows reflect whatever has been written since. The template's prefix and
+--- suffix are known, so the starter is what lies between them.
 ---@param lang string
 ---@param text string
 ---@param ctx table?

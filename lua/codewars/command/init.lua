@@ -213,8 +213,7 @@ function cmd.train(options)
 end
 
 --- Run `action` now if signed in, otherwise prompt for a cookie and resume
---- it on success (design §3.6 auth-resume; T12 — a closure through the
---- existing cookie_prompt, no pending-action store). Cancel drops it.
+--- it on success. Cancel drops it.
 ---@param action fun()
 function cmd.with_auth(action)
     if require("codewars.cache.cookie").get() then
@@ -304,7 +303,7 @@ function cmd.kumite()
     require("codewars.picker").kumite_browse()
 end
 
---- :CW kumite open <id|url> — open a kumite directly (design §3.2).
+--- :CW kumite open <id|url> — open a kumite directly.
 function cmd.kumite_open(options)
     local ref = options._positional and options._positional[1]
     local id = require("codewars.api.kumite").parse_ref(ref)
@@ -435,7 +434,7 @@ local function curr_kata_editor(verb)
 end
 
 --- :CW kata open <id|url> [lang] — open a kata you author in the editor
---- (design KP1b/KP2). Needs auth: the edit page is yours, not public. With no
+---. Needs auth: the edit page is yours, not public. With no
 --- language, Codewars redirects to the kata's own default.
 function cmd.kata_open(options)
     local positional = options._positional or {}

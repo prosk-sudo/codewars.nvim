@@ -22,7 +22,7 @@ trainer.STRATEGIES = {
     practice_and_repeat = "retrain_workout",
     beta = "beta_workout",
     -- "random" is intentionally absent: Focus→Random resolves client-side
-    -- via problemlist_utils.random_for_lang (eng review decision #7).
+    -- via problemlist_utils.random_for_lang.
     -- (A server-side "random" token also exists if that ever changes.)
 }
 

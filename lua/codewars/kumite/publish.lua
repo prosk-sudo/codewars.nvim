@@ -1,7 +1,7 @@
 local attempt = require("codewars.api.attempt")
 local api_utils = require("codewars.api.utils")
 
---- Kumite publish flow (design §2.4, P3; contract live-captured 2026-07-24).
+--- Kumite publish flow (contract live-captured 2026-07-24).
 --- Two steps: (1) run the saved code+fixture on the runner with relayId = the
 --- snippet id to obtain a signed "coderunner" token proving the tests pass,
 --- then (2) POST /kumite/{id}/publish with {token, run_result}. Publishing
