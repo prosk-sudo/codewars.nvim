@@ -84,27 +84,17 @@ function Kata:retemplate(op)
     local templates = require("codewars.templates")
     local apply = op == "wrap" and templates.wrap or templates.strip
 
-    local text, reason_or_pos = apply(self.lang, self:_buffer_text(), self:_template_ctx())
+    local text, reason = apply(self.lang, self:_buffer_text(), self:_template_ctx())
     if not text then
-        log.info(reason_or_pos)
+        log.info(reason)
         return false
     end
 
     self:_set_code(text)
-    -- Wrapping moved the user's code and left the cursor pointing into the
-    -- template's preamble; put it at the END OF THE STARTER (wrap returns
-    -- that position) — not EOF, which is the template's suffix when there
-    -- is content after {{starter}}. Unconditional: the rewrite invalidated
-    -- the old position, so the open-path guard against overriding a
-    -- restored position does not apply here.
-    if op == "wrap" then
-        local pos = type(reason_or_pos) == "table" and reason_or_pos or nil
-        if pos and self.winid and vim.api.nvim_win_is_valid(self.winid) then
-            pcall(vim.api.nvim_win_set_cursor, self.winid, pos)
-        else
-            self:_cursor_to_end(true)
-        end
-    end
+    -- Forced: the rewrite moved the user's code, so wherever the cursor was
+    -- describes a buffer that no longer exists. Both directions end up at the
+    -- same question -- where is the code now -- and the buffer answers it.
+    self:_cursor_to_end(true)
     return true
 end
 
@@ -146,37 +136,115 @@ function Kata:create_buffer()
     self:_cursor_to_end()
 end
 
---- Put the cursor at the end of the solution buffer.
+--- Where the starter sits in THIS buffer, right now.
 ---
---- The top of a templated buffer is the user's own boilerplate — imports and
---- helpers they already wrote. The code they opened the kata to write is at the
---- bottom, so landing on line 1 means scrolling past their own preamble every
---- time.
+--- Deliberately not cached from the render that seeded the file. That value is
+--- only produced on the first visit, and a language switch onto a file that
+--- already exists never refreshes it -- so a cached position outlives the
+--- buffer it described and then wins over looking. The buffer is the one thing
+--- that is always current.
+---@return cw.templates.Pos?
+function Kata:_locate_starter()
+    local ok, pos = pcall(function()
+        return require("codewars.templates").locate(self.lang, self:_buffer_text(), self:_template_ctx())
+    end)
+    -- locate() declining is ordinary and stays quiet: editing your own
+    -- preamble is enough to stop the buffer matching the template, and the
+    -- cursor simply falls back. An error inside it is not ordinary, and
+    -- collapsing the two into the same silence hides it.
+    if not ok then
+        log.debug("kata could not locate the starter: " .. tostring(pos))
+        return nil
+    end
+    return pos
+end
+
+--- Put the cursor on the code the user came to write.
 ---
---- Skipped unless the cursor is still on line 1. `$tabe` fires BufReadPost, so
---- a restore-last-position autocmd (LazyVim and friends ship one) has already
---- run by now; line 1 means nothing claimed a position, or there was none to
---- restore. Moving anyway would fight the user's own config.
+--- The top of a templated buffer is their own boilerplate -- imports and
+--- helpers they already have. What they opened the kata to write is below it,
+--- so landing on line 1 means scrolling past their preamble every time.
 ---
---- `force` skips that guard, for callers that just REWROTE the buffer
---- (`:CW template on`): the old position points into the template's
---- preamble, so there is nothing worth preserving.
+--- A position something else already claimed is left alone. `$tabe` fires
+--- BufReadPost, so a restore-last-position autocmd (LazyVim and friends ship
+--- one) has run by now; anything other than {1, 0} means it claimed one, and
+--- moving would fight the user's own config. The exception is a claim inside
+--- the template's preamble, which is generated boilerplate rather than
+--- somewhere they chose to be.
+---
+--- `force` skips the claim check entirely, for the three callers that just
+--- REWROTE the buffer -- `:CW template on`, `:CW template off`, `:CW reset`.
+--- After a rewrite the old position describes a buffer that no longer exists.
 ---@param force boolean?
 function Kata:_cursor_to_end(force)
     if not (self.winid and vim.api.nvim_win_is_valid(self.winid)) then
         return
     end
 
-    -- The buffer's untouched position is {1, 0}. Testing the row alone would
-    -- override a restore to {1, 12}, which is every bit as much a claim.
     local ok, pos = pcall(vim.api.nvim_win_get_cursor, self.winid)
-    if not ok or (not force and (pos[1] ~= 1 or pos[2] ~= 0)) then
+    if not ok then
         return
     end
 
-    local last = vim.api.nvim_buf_line_count(self.bufnr)
-    local text = vim.api.nvim_buf_get_lines(self.bufnr, last - 1, last, false)[1] or ""
-    pcall(vim.api.nvim_win_set_cursor, self.winid, { last, #text })
+    local target = self:_locate_starter()
+    -- Testing the row alone would override a restore to {1, 12}, which is
+    -- every bit as much a claim as one on another line.
+    local claimed = pos[1] ~= 1 or pos[2] ~= 0
+    local in_preamble = target
+        and (pos[1] < target.start_row
+            or (pos[1] == target.start_row and pos[2] < target.start_col))
+    if not force and claimed and not in_preamble then
+        return
+    end
+
+    local row, col
+    if target then
+        row, col = target.row, target.col
+    else
+        -- No template to measure against, so the code is the whole buffer.
+        -- end_of applies the same rule the templated path uses: trailing blank
+        -- lines are not the last thing the user wrote, and the column lands on
+        -- a character rather than inside a multibyte one.
+        row, col = require("codewars.templates").end_of(self:_buffer_text())
+    end
+
+    pcall(vim.api.nvim_win_set_cursor, self.winid, { row, col })
+    self:_show_around_cursor()
+end
+
+--- Put the cursor back on the starter once the panels have taken their space.
+---
+--- Re-placed only when the starter can actually be found: on a buffer that no
+--- longer matches the template there is nothing to aim at, and whatever
+--- position it already had is better than a guess. The view is squared up
+--- either way, since the resize is what moved it.
+function Kata:_settle_cursor()
+    if not (self.winid and vim.api.nvim_win_is_valid(self.winid)) then
+        return
+    end
+
+    local target = self:_locate_starter()
+    if target and target.row then
+        pcall(vim.api.nvim_win_set_cursor, self.winid, { target.row, target.col })
+    end
+    self:_show_around_cursor()
+end
+
+--- Fill the panel with the lines leading up to the cursor.
+---
+--- Moving the cursor scrolls DOWN to reveal it, never back up. A rewrite that
+--- shrinks the buffer -- `:CW template off` dropping a long preamble -- leaves
+--- the window parked at a top line that is now near the end, so the panel
+--- shows the last line or two of the file and nothing else.
+function Kata:_show_around_cursor()
+    if not (self.winid and vim.api.nvim_win_is_valid(self.winid)) then
+        return
+    end
+    -- `zb` rather than `zz`: at the end of a buffer, centring would waste half
+    -- the panel on the blank space past it.
+    pcall(vim.api.nvim_win_call, self.winid, function()
+        vim.cmd("normal! zb")
+    end)
 end
 
 --- Give up on this mount: no window will ever exist, so drop the one-shot
@@ -366,6 +434,15 @@ function Kata:handle_mount()
         if not ok then log.debug("kata on_mounted hook failed: " .. tostring(err)) end
     end
 
+    -- Last, and scheduled: create_buffer placed the cursor against a
+    -- full-height window, and everything since -- both splits, the console
+    -- layout, the autocmds, the caller's own hook -- has taken space from it
+    -- or moved through it. A position measured before all that leaves the
+    -- panel scrolled somewhere the starter is not.
+    vim.schedule(function()
+        self:_settle_cursor()
+    end)
+
     utils.exec_hooks("kata_enter", self)
 end
 
@@ -458,6 +535,9 @@ end
 function Kata:reset_code()
     if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
         self:_set_code(self:_starter_code())
+        -- Forced: the rewrite moved the user's code out from under wherever
+        -- they were standing, so the old position is not a claim on anything.
+        self:_cursor_to_end(true)
         log.info("Code reset to template")
     end
 end

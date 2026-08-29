@@ -12,6 +12,25 @@ All notable changes to codewars.nvim are documented here.
   whole row out of the DevTools cookie table works. Pasting the full header
   into the first box still works and skips the second.
 
+## [Unreleased]
+
+### Fixed
+- Opening a kata puts the cursor on your starter code instead of at the top of
+  your template. It follows the starter wherever the template puts it, so a
+  template with a main guard or helpers after `{{starter}}` no longer lands you
+  in its own suffix, and one like `return {{starter}};` leaves you on your last
+  character rather than its semicolon. A position restored from a previous
+  visit is kept when it is inside your code and overridden when it is in the
+  template's boilerplate.
+- `:CW reset` moves the cursor to the starter, rather than leaving it wherever
+  it was before the buffer was rewritten.
+
+### Changed
+- A solution template carrying more than one `{{starter}}` now warns once per
+  language. It renders — your code goes in the last one — but `:CW template
+  off` cannot tell which is yours, so it would refuse a buffer that opened
+  without complaint.
+
 ## [0.3.3] - 2026-08-26
 
 ### Added

@@ -372,4 +372,101 @@ describe("templates.render", function()
             assert.are.equal("# Multiply\ncode", templates.wrap("python", "code", { name = "Multiply" }))
         end)
     end)
+
+    -- Opening a kata has to put the cursor where the user came to write, and
+    -- with a long template that is neither end of the buffer. wrap() already
+    -- reports this for `:CW template on`; render() is the path taken when a
+    -- kata is first opened and needs to report the same thing.
+    describe("starter position", function()
+        -- Through locate(), because that is what production reads: render()
+        -- reports no position, and the buffer is the only source the cursor
+        -- is ever placed from.
+        local function pos_for(template, starter)
+            solution({ python = template })
+            return templates.locate("python", templates.render("python", { starter = starter }),
+                { starter = starter })
+        end
+
+        -- ON the last character, not one past it: a template may put its own
+        -- text after the starter on that same line.
+        it("reports where the starter ends", function()
+            local pos = pos_for("import x\n\n" .. TOKEN .. "\n", "def f():\n    return 1")
+            assert.are.same({ 4, #"    return 1" - 1, 3, 0 },
+                { pos.row, pos.col, pos.start_row, pos.start_col })
+        end)
+
+        it("stays on the user's last character when the template continues on that line", function()
+            local pos = pos_for("return " .. TOKEN .. ";\n", "a + b")
+            assert.are.same({ 1, #"return a + b" - 1, 1, #"return " },
+                { pos.row, pos.col, pos.start_row, pos.start_col }) -- the "b", not the ";"
+        end)
+
+        -- A row alone cannot separate preamble from code when the template
+        -- puts both on one line.
+        -- The whole reason this cannot just be "end of buffer".
+        it("points at the starter, not EOF, when the template continues after it", function()
+            local pos = pos_for("head\n" .. TOKEN .. "\nmain()\n", "def f():\n    return 1")
+            assert.are.equal(3, pos.row)
+            assert.are.equal(2, pos.start_row)
+        end)
+
+        it("accounts for indentation applied to the starter", function()
+            local pos = pos_for("class C:\n    " .. TOKEN .. "\n", "def f():\n    return 1")
+            assert.are.equal(3, pos.row)
+            assert.are.equal(#"        return 1" - 1, pos.col)
+        end)
+
+        -- wrap/strip refuse a duplicated token outright ("no single place your
+        -- code lives"), so a template that opens fine would then refuse
+        -- `:CW template off`. Say so at the point it is written, not later.
+        it("warns once when the template has more than one token", function()
+            solution({ python = TOKEN .. "\n---\n" .. TOKEN })
+            templates.render("python", { starter = "code" })
+            assert.are.equal(1, #warnings)
+            assert.truthy(warnings[1]:find("more than one", 1, true))
+
+            templates.render("python", { starter = "code" })
+            assert.are.equal(1, #warnings) -- once per language per session
+        end)
+
+        it("does not warn about a single token", function()
+            solution({ python = "import x\n" .. TOKEN })
+            templates.render("python", { starter = "code" })
+            assert.are.equal(0, #warnings)
+        end)
+
+        -- Trailing newlines separate the starter from what follows; they are
+        -- not the last thing the user wrote. Measuring past them lands on the
+        -- template's next character, which is the whole thing to avoid.
+        it("ends on the last character the user wrote, not past a trailing newline", function()
+            for _, case in ipairs({
+                { "{" .. "{starter}};", "return 1\n", 1, "1", "trailing newline before a suffix" },
+                { "PRE\n" .. TOKEN .. "POST", "def f():\n    return 1\n\n\n", 3, "1", "several blank lines" },
+                { "PRE\n" .. TOKEN, "code\n\n", 2, "e", "blank lines, no suffix" },
+            }) do
+                solution({ python = case[1] })
+                local text = templates.render("python", { starter = case[2] })
+                local pos = templates.locate("python", text, { starter = case[2] })
+                local line = vim.split(text, "\n", { plain = true })[pos.row]
+
+                assert.are.equal(case[3], pos.row, case[5])
+                assert.are.equal(case[4], line:sub(pos.col + 1, pos.col + 1), case[5])
+            end
+        end)
+
+        -- The column is a byte offset, so stepping back one byte from the end
+        -- lands inside the last character rather than on it.
+        it("puts the end on the first byte of a multibyte character", function()
+            local pos = pos_for("    return " .. TOKEN, "caf\xc3\xa9")
+            local line = "    return caf\xc3\xa9"
+            assert.are.equal(0xC3, line:byte(pos.col + 1))
+        end)
+
+        it("has no position when no template applies", function()
+            solution({})
+            local text = templates.render("python", { starter = "def f(): pass" })
+            assert.are.equal("def f(): pass", text)
+            assert.is_nil(templates.locate("python", text, { starter = "def f(): pass" }))
+        end)
+    end)
 end)

@@ -17,12 +17,16 @@ M.STARTER_TOKEN = "{{starter}}"
 
 --- Languages already warned about this session, so the dropped-signature
 --- warning is a nudge on first open rather than noise on every kata.
-local warned = {}
+--- Languages already warned about, per kind of warning. One table so
+--- `_reset_warned` clears every kind without having to know their names.
+local warned = { dropped_signature = {}, duplicate_token = {} }
 
 --- Test seam: the warning is once-per-session by design, which makes it
 --- unobservable across cases without a reset.
 function M._reset_warned()
-    warned = {}
+    for kind in pairs(warned) do
+        warned[kind] = {}
+    end
 end
 
 --- Marker file whose presence means "off", or nil before config.setup() has
@@ -189,7 +193,68 @@ local function reindent(starter, indent)
     end)
 end
 
---- Replace every token occurrence with `starter`, re-indented to match.
+---@class cw.templates.Pos
+---@field row integer 1-indexed line the spliced starter ends on
+---@field col integer byte column of the end of that line
+---@field start_row integer 1-indexed line the spliced starter begins on
+---@field start_col integer 0-indexed byte column it begins at on that line
+
+--- Where the NEXT byte after `text` would sit: 1-indexed row, 0-indexed byte
+--- column. This is the start of whatever follows it.
+---@param text string
+---@return integer row, integer col
+local function start_of(text)
+    return select(2, text:gsub("\n", "")) + 1, #(text:match("[^\n]*$") or "")
+end
+
+--- The cursor position ON the last character of `text`, in the form
+--- nvim_win_set_cursor takes: 1-indexed row, 0-indexed byte column.
+---
+--- On the last character, not one past it. Where the starter is the last thing
+--- on its line the two land in the same place -- normal mode clamps an
+--- out-of-bounds column back to the final character -- which is why one-past
+--- looked correct. A template that puts its own text after the starter on the
+--- SAME line, `return {{starter}};`, makes that column a real one, and the
+--- cursor sits on the template's semicolon instead of the user's code.
+---@param text string
+---@return integer row, integer col
+local function end_of(text)
+    -- Trailing newlines are separators, not content: the last character is on
+    -- the line before them. Measuring past them reports row N+1, column 0 --
+    -- which is the FIRST character of whatever the template puts next, the
+    -- very thing this position exists to avoid landing on.
+    local row, col = start_of((text:gsub("\n+$", "")))
+    if col == 0 then
+        return row, 0
+    end
+
+    -- One byte back is one character back only in ASCII. Step over UTF-8
+    -- continuation bytes (0x80-0xBF) so the column names the character's first
+    -- byte rather than a point inside it -- a starter can end in an accented
+    -- identifier, a non-English comment, or an emoji.
+    local line = text:gsub("\n+$", ""):match("[^\n]*$") or ""
+    col = col - 1
+    while col > 0 do
+        local byte = line:byte(col + 1)
+        if not byte or byte < 0x80 or byte > 0xBF then
+            break
+        end
+        col = col - 1
+    end
+    return row, col
+end
+
+--- Where a run of text ends, as a cursor position. Exposed so callers holding
+--- buffer text rather than a template answer the question the same way -- two
+--- conventions for "the last character" disagree the moment it is multibyte.
+---@param text string
+---@return integer row, integer col
+function M.end_of(text)
+    return end_of(text)
+end
+
+--- Replace every token occurrence with `starter`, re-indented to match, and
+--- report where the LAST one landed.
 ---
 --- Hand-rolled rather than gsub because both of gsub's replacement forms are
 --- wrong here. As a string it would treat `%` in the injected code as an escape
@@ -199,21 +264,26 @@ end
 --- that position. Walking the string gives both: verbatim injection, and a
 --- per-occurrence indent. Scanning resumes past the injected text, so a
 --- `{{starter}}` inside it is never rescanned.
+---
+--- Also reports how many occurrences it replaced, which `wrapper` and
+--- `render` both want to know and would otherwise each re-scan for.
 ---@param template string
 ---@param starter string
----@return string
+---@return string text, integer occurrences
 local function substitute(template, starter)
-    local out, pos = {}, 1
+    local out, pos, seen = {}, 1, 0
     while true do
         -- plain find: braces are not Lua pattern metacharacters, but the token
         -- is matched literally regardless of what it is ever changed to.
         local first, last = template:find(M.STARTER_TOKEN, pos, true)
         if not first then
             out[#out + 1] = template:sub(pos)
-            return table.concat(out)
+            return table.concat(out), seen
         end
+
         out[#out + 1] = template:sub(pos, first - 1)
         out[#out + 1] = reindent(starter, indent_before(template, first))
+        seen = seen + 1
         pos = last + 1
     end
 end
@@ -277,6 +347,9 @@ local function wrapper(lang, ctx)
         return nil, ("Your %s template produced nothing to wrap with."):format(lang)
     end
 
+    -- Scanned for in the RENDERED text rather than counted from substitute():
+    -- a function template can splice ctx.starter itself, placing the sentinel
+    -- without the token ever appearing, and counting replacements misses it.
     local rendered = substitute(template, SENTINEL)
     local first, last = rendered:find(SENTINEL, 1, true)
     if not first then
@@ -343,15 +416,31 @@ function M.wrap(lang, text, ctx)
     -- and must survive so strip() can hand them back.
     local wrapped = w.prefix .. reindent(text, w.indent) .. chomp(w.suffix)
 
-    -- Where the starter ENDS in the wrapped text, as a {row, col} cursor
-    -- position: with content after {{starter}} the end of the buffer is the
-    -- template's suffix, not the user's code, so callers placing the cursor
-    -- need this, not EOF. reindent(chomp(text)) is a prefix of the wrapped
-    -- text by construction (reindent leaves trailing blank lines alone).
-    local upto = chomp(w.prefix .. reindent(chomp(text), w.indent))
-    local row = select(2, upto:gsub("\n", "")) + 1
-    local last_line = upto:match("[^\n]*$") or ""
-    return wrapped, { row, #last_line }
+    return wrapped
+end
+
+--- Match `text` against the language's template, for the two callers that
+--- need to know where the template ends and the user's code begins.
+---
+--- Returns the wrapper, the chomped body both callers slice, and the chomped
+--- suffix -- `""` when the template ends at the token, which both callers
+--- treat as "the buffer's trailing blank lines are the user's own code" and so
+--- must read from the UNCHOMPED text instead.
+---@param lang string
+---@param text string
+---@param ctx table?
+---@return table? wrapper, string body, string suffix, string? reason
+local function resolve_wrapped(lang, text, ctx)
+    local w, reason = wrapper(lang, ctx)
+    if not w then
+        return nil, "", "", reason
+    end
+
+    local body = chomp(text)
+    if not is_wrapped(body, w) then
+        return nil, "", "", ("This buffer no longer matches your %s template."):format(lang)
+    end
+    return w, body, chomp(w.suffix)
 end
 
 --- Take `text` back out of the language's template.
@@ -364,30 +453,70 @@ end
 ---@param ctx table? kata metadata for function templates
 ---@return string? stripped, string? reason
 function M.strip(lang, text, ctx)
-    local w, reason = wrapper(lang, ctx)
+    local w, body, suffix, reason = resolve_wrapped(lang, text, ctx)
     if not w then
-        return nil, reason
-    end
-    local body = chomp(text)
-    if not is_wrapped(body, w) then
-        return nil, ("This buffer no longer matches your %s template, so nothing was removed."):format(lang)
+        -- Unlike locate(), which quietly declines, this one was asked to
+        -- change the buffer: say that it did not.
+        return nil, reason .. " Nothing was removed."
     end
 
-    local suffix = chomp(w.suffix)
-    -- With no suffix the buffer's trailing blank lines belong to the user's
-    -- code (wrap left them in place), so take them from the unchomped text.
     local inner = suffix == "" and text:sub(#w.prefix + 1) or body:sub(#w.prefix + 1, #body - #suffix)
     return unindent(inner, w.indent)
 end
 
+--- Where the starter sits inside text that is ALREADY wrapped -- a solution
+--- file being reopened, rather than one being rendered.
+---
+--- render() reports this for the buffer it just produced, which is no use on
+--- the second visit: the file is read from disk, and its rows reflect whatever
+--- the user has since written. The template's prefix and suffix are known, so
+--- the starter is what lies between them.
+---@param lang string
+---@param text string
+---@param ctx table?
+---@return cw.templates.Pos? position, string? reason
+function M.locate(lang, text, ctx)
+    local w, body, suffix, reason = resolve_wrapped(lang, text, ctx)
+    if not w then
+        return nil, reason
+    end
+
+    local row, col = end_of(suffix == "" and text or body:sub(1, #body - #suffix))
+    local start_row, start_col = start_of(w.prefix)
+    return { row = row, col = col, start_row = start_row, start_col = start_col }
+end
+
 ---@param lang string
 ---@param ctx table starter code plus kata metadata; see cw.TemplateCtx
-local function warn_dropped_signature(lang, ctx)
-    if warned[lang] then
+--- Say something about a language's template at most once a session. These
+--- fire from render(), which runs on every kata open, so repeating would turn
+--- one misconfiguration into a message per kata.
+---@param kind string
+---@param lang string
+---@param message string
+local function warn_once(kind, lang, message)
+    local seen = warned[kind]
+    if seen[lang] then
         return
     end
-    warned[lang] = true
-    require("codewars.logger").warn(
+    seen[lang] = true
+    require("codewars.logger").warn(message)
+end
+
+--- A duplicated token renders fine -- the cursor goes to the last one -- but
+--- wrapper() refuses it, so `:CW template off` would then decline on a buffer
+--- that opened without complaint. Say it where the template is written.
+---@param lang string
+local function warn_duplicate_token(lang)
+    warn_once("duplicate_token", lang,
+        ("Your %s template has more than one %s. Your code goes in the last one, "
+            .. "and `:CW template off` cannot tell which is yours.")
+            :format(lang, M.STARTER_TOKEN)
+    )
+end
+
+local function warn_dropped_signature(lang, ctx)
+    warn_once("dropped_signature", lang,
         ("Your %s template has no %s — this kata's signature was dropped. "
             .. "You probably want %s where it should go.")
             :format(lang, M.STARTER_TOKEN, M.STARTER_TOKEN)
@@ -445,7 +574,11 @@ function M.render(lang, ctx)
         return template
     end
 
-    return substitute(template, starter)
+    local text, occurrences = substitute(template, starter)
+    if occurrences > 1 then
+        warn_duplicate_token(lang)
+    end
+    return text
 end
 
 return M
