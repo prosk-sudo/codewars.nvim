@@ -2,7 +2,7 @@
 
 All notable changes to codewars.nvim are documented here.
 
-## [Unreleased]
+## [0.3.4] - 2026-08-29
 
 ### Changed
 - `:CW cookie` asks for the two values one box at a time — the `CSRF-TOKEN`
@@ -11,8 +11,10 @@ All notable changes to codewars.nvim are documented here.
   pasted cookie name, a trailing `;` and surrounding whitespace, so copying a
   whole row out of the DevTools cookie table works. Pasting the full header
   into the first box still works and skips the second.
-
-## [Unreleased]
+- A solution template carrying more than one `{{starter}}` now warns once per
+  language. It renders — your code goes in the last one — but `:CW template
+  off` cannot tell which is yours, so it would refuse a buffer that opened
+  without complaint.
 
 ### Fixed
 - Opening a kata puts the cursor on your starter code instead of at the top of
@@ -24,12 +26,6 @@ All notable changes to codewars.nvim are documented here.
   template's boilerplate.
 - `:CW reset` moves the cursor to the starter, rather than leaving it wherever
   it was before the buffer was rewritten.
-
-### Changed
-- A solution template carrying more than one `{{starter}}` now warns once per
-  language. It renders — your code goes in the last one — but `:CW template
-  off` cannot tell which is yours, so it would refuse a buffer that opened
-  without complaint.
 
 ## [0.3.3] - 2026-08-26
 
