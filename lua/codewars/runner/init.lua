@@ -69,7 +69,11 @@ function Runner.format_output(output)
     ---@param cont string? leads every line after it (defaults to prefix)
     local function put(prefix, text, cont)
         cont = cont or prefix
-        for i, line in ipairs(vim.split(text or "", "\n", { plain = true })) do
+        -- tostring, because the old `..` coerced a number and vim.split
+        -- raises on one. Nothing between vim.json.decode and here guarantees
+        -- the server sent a string, and the throw would land in a scheduled
+        -- callback with no pcall around it, losing the whole run's output.
+        for i, line in ipairs(vim.split(tostring(text or ""), "\n", { plain = true })) do
             -- A blank continuation stays blank rather than becoming padding.
             -- Codewars spaces its message blocks with a lone " ", which would
             -- otherwise render as a line of trailing whitespace.

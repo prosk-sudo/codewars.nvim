@@ -195,6 +195,19 @@ describe("Runner.format_output", function()
             assert.are.equal("  body", lines[3])
         end)
 
+        -- `..` coerced a number; vim.split raises on one. Nothing between
+        -- vim.json.decode and here enforces that `v` is a string, and the
+        -- throw would land in an unprotected scheduled callback, losing the
+        -- whole run's output rather than one line.
+        it("renders a non-string value instead of raising", function()
+            for _, t in ipairs({ "log", "error", "passed", "failed" }) do
+                local ok, lines = pcall(Runner.format_output, { { t = t, v = 42 } })
+                assert.is_true(ok, ("a numeric value raised for t=%q"):format(t))
+                assert.truthy(lines[1]:find("42", 1, true),
+                    ("t=%q dropped the value: %q"):format(t, lines[1]))
+            end
+        end)
+
         it("never leaves a newline inside a single entry", function()
             local lines = Runner.format_output({
                 { t = "describe", v = "suite", p = false, items = {
