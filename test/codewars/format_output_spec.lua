@@ -139,4 +139,78 @@ describe("Runner.format_output", function()
         end
         assert.truthy(found)
     end)
+
+    -- Codewars sends a multi-line message as ONE item: a C assertion carries
+    -- the whole submitted array, and a loop that logs per iteration arrives as
+    -- one blob. Prefixing the blob indented only its first physical line and
+    -- dropped the rest to column zero -- and left embedded newlines inside
+    -- single list entries, which is not what a list of lines means.
+    describe("multi-line values", function()
+        it("indents every line of a log, not just the first", function()
+            local lines = Runner.format_output({
+                { t = "describe", v = "suite", p = true, items = {
+                    { t = "log", v = "one\ntwo\nthree" },
+                }},
+            })
+
+            local got = {}
+            for _, l in ipairs(lines) do
+                if l:find("one") or l:find("two") or l:find("three") then
+                    table.insert(got, l)
+                end
+            end
+            assert.are.equal(3, #got)
+            for _, l in ipairs(got) do
+                assert.are.equal("  ", l:match("^(%s*)"),
+                    ("every line keeps the nesting indent, got %q"):format(l))
+            end
+        end)
+
+        it("aligns a failure message under its icon", function()
+            local lines = Runner.format_output({
+                { t = "failed", v = "< Incorrect Result >\n\n2048 is not between 1 and 2" },
+            })
+
+            assert.are.equal("F < Incorrect Result >", lines[1])
+            -- Continuations line up past "F ", so the block reads as one unit.
+            assert.are.equal("  2048 is not between 1 and 2", lines[3])
+        end)
+
+        it("aligns an error message under its label", function()
+            local lines = Runner.format_output({
+                { t = "error", v = "SyntaxError\n  at line 3" },
+            })
+
+            assert.are.equal("ERROR: SyntaxError", lines[1])
+            assert.are.equal("         at line 3", lines[2])
+        end)
+
+        it("renders a whitespace-only separator as a blank line", function()
+            -- Codewars separates the parts of a C assertion message with a
+            -- lone space, which padding would turn into trailing whitespace.
+            local lines = Runner.format_output({
+                { t = "failed", v = "header\n \nbody" },
+            })
+            assert.are.equal("", lines[2])
+            assert.are.equal("  body", lines[3])
+        end)
+
+        it("never leaves a newline inside a single entry", function()
+            local lines = Runner.format_output({
+                { t = "describe", v = "suite", p = false, items = {
+                    { t = "it", v = "case", p = false, items = {
+                        { t = "log", v = "a\nb" },
+                        { t = "failed", v = "x\ny" },
+                        { t = "passed", v = "p\nq" },
+                        { t = "error", v = "e\nf" },
+                    }},
+                }},
+            })
+
+            for i, l in ipairs(lines) do
+                assert.is_nil(l:find("\n", 1, true),
+                    ("entry %d still holds a newline: %q"):format(i, l))
+            end
+        end)
+    end)
 end)
