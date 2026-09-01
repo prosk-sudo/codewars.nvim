@@ -2,6 +2,23 @@
 
 All notable changes to codewars.nvim are documented here.
 
+## [Unreleased]
+
+### Changed
+- The dashboard header no longer waits on a network round trip to show who you
+  are. Your username, rank, honor and completed count are remembered between
+  launches, so the menu paints them immediately instead of sitting on a bare
+  "Signed in" first. Discovering the username meant fetching the Codewars
+  dashboard — a large, per-user HTML page whose response time ranged from
+  under a second to fifteen — and nothing could be drawn until it answered.
+  That request still runs, but in the background, and only to confirm the
+  cached identity, refresh your auto-detected language and notice an expired
+  session.
+
+### Fixed
+- The menu no longer jumps as the stats arrive: the row is reserved from the
+  first draw rather than appearing and pushing the block down.
+
 ## [0.3.4] - 2026-08-29
 
 ### Changed

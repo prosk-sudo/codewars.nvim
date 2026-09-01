@@ -184,6 +184,8 @@ function Cookie.identity_changed()
     with("codewars.command", function(m) m.forget_focus() end)
     -- Detected from the old dashboard; the menu re-detects when empty.
     with("codewars.config", function(m) m.user.username = "" end)
+    -- The same name persisted for next launch, plus that account's stats.
+    with("codewars.cache.profile", function(m) m.clear() end)
 end
 
 ---@return boolean
