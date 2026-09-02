@@ -157,6 +157,22 @@ function cmd._help_lines()
     return lines, highlights
 end
 
+--- Wide enough to hold the widest row.
+---
+--- The width was pinned at 75 while a third of the table already ran past it,
+--- and the popup sets no `wrap`, so whether those rows wrapped or were cut off
+--- depended on the reader's own 'wrap' setting. Capped to the editor so a
+--- narrow window still gets a popup that fits.
+---@param lines string[]
+---@return integer
+function cmd._help_width(lines)
+    local width = 75
+    for _, l in ipairs(lines) do
+        width = math.max(width, vim.fn.strdisplaywidth(l))
+    end
+    return math.min(width + 2, math.max(40, vim.o.columns - 4))
+end
+
 function cmd.help()
     local NuiPopup = require("nui.popup")
     local ui_utils = require("codewars-ui.utils")
@@ -168,7 +184,10 @@ function cmd.help()
         focusable = true,
         relative = "editor",
         position = "50%",
-        size = { width = 75, height = math.min(#lines + 2, math.floor(vim.o.lines * 0.8)) },
+        size = {
+            width = cmd._help_width(lines),
+            height = math.min(#lines + 2, math.floor(vim.o.lines * 0.8)),
+        },
         border = {
             style = "rounded",
             text = { top = " Help ", top_align = "center" },

@@ -53,6 +53,19 @@ describe("Command help", function()
 
     -- "g1 … g5" is 7 columns but 9 bytes; padding by byte length left its
     -- description two columns left of every other row.
+    -- The width was fixed at 75 while 13 rows rendered wider, so whether they
+    -- wrapped or were cut off came down to the reader's 'wrap' setting.
+    it("is wide enough for every row it renders", function()
+        local ls = lines()
+        local width = cmd._help_width(ls)
+        local columns = math.max(40, vim.o.columns - 4)
+        for _, l in ipairs(ls) do
+            local w = vim.fn.strdisplaywidth(l)
+            assert.is_true(w <= width or width == columns,
+                ("row of %d columns does not fit a %d wide popup: %s"):format(w, width, l))
+        end
+    end)
+
     it("aligns descriptions by display width", function()
         local col, checked = nil, 0
         for _, l in ipairs(lines()) do
