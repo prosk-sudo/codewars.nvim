@@ -35,10 +35,18 @@ local multi_value = { difficulty = true }
 local cmd = {}
 cmd.arguments = arguments
 
-function cmd.help()
-    local NuiPopup = require("nui.popup")
-    local ui_utils = require("codewars-ui.utils")
+-- Column the descriptions line up on, measured from the start of the entry
+-- (past the four-space indent every row shares).
+-- At least two columns wider than the widest rendered entry, or the padding
+-- clamps to a single space and that row's description sits past the column --
+-- the very drift this is here to prevent. ":CW kata open <id|url> [lang]" is
+-- the current maximum at 29.
+local DESC_COL = 31
 
+--- The help screen's text, split out so it can be asserted on without
+--- mounting a popup.
+---@return string[] lines, table[] highlights
+function cmd._help_lines()
     local help = {
         { "TRAINING",       "" },
         { "train <slug> [lang]", "Open a kata by title, slug or URL" },
@@ -77,7 +85,6 @@ function cmd.help()
         { "kata publish",   "Publish the kata publicly (confirms first)" },
         { "kata unpublish", "Take a published kata back to a draft" },
         { "kata delete",    "Delete the kata for good (confirms first)" },
-        { "g1 … g5",        "Switch panes inside the kata editor" },
         { "",               "" },
         { "UI TOGGLES",     "" },
         { "desc",           "Toggle description split" },
@@ -106,37 +113,81 @@ function cmd.help()
         { "Ctrl-l",         "Filter by language" },
         { "Ctrl-d",         "Filter by difficulty" },
         { "Ctrl-r",         "Reset all filters" },
+        { "",               "" },
+        { "KATA EDITOR KEYS", "" },
+        { "g1 … g5",        table.concat(kata_pane_keys, ", ") },
+        -- Bound in the kumite workspace too, so do not let the heading imply
+        -- it is editor-only; that is the inaccuracy this section exists to fix.
+        { "g?",             "Show this help (kumite workspace too)" },
     }
 
     local lines = {}
     local highlights = {}
 
+    -- Rows under a "… KEYS" heading are normal-mode maps, not subcommands, so
+    -- they are shown bare. Keyed off the heading rather than the row's own
+    -- name, which only worked while every such key happened to start "Ctrl".
+    local bare = false
+
     table.insert(lines, "")
     for _, entry in ipairs(help) do
         local cmd_name, desc = entry[1], entry[2]
         if desc == "" and cmd_name ~= "" then
+            bare = cmd_name:match("KEYS$") ~= nil
             table.insert(lines, "  " .. cmd_name)
             table.insert(highlights, { #lines - 1, 0, -1, "Title" })
         elseif cmd_name == "" then
             table.insert(lines, "")
         else
-            local padding = string.rep(" ", math.max(1, 24 - #cmd_name))
-            local line = "    :CW " .. cmd_name .. padding .. desc
-            if cmd_name:match("^Ctrl") then
-                line = "    " .. cmd_name .. padding .. desc
-            end
-            table.insert(lines, line)
-            table.insert(highlights, { #lines - 1, 4, 4 + #cmd_name + 4, "codewars_shortcut" })
+            local lead = bare and "" or ":CW "
+            -- Pad to a column, not to a name width: bare key rows carry no
+            -- ":CW " and so used to sit four columns left of every command,
+            -- giving the screen two description columns. Display width, not
+            -- byte length -- "g1 … g5" is 7 columns but 9 bytes.
+            local written = #lead + vim.fn.strdisplaywidth(cmd_name)
+            local padding = string.rep(" ", math.max(1, DESC_COL - written))
+            table.insert(lines, "    " .. lead .. cmd_name .. padding .. desc)
+            -- Spans exactly what was written, so a bare key no longer
+            -- highlights four columns of the padding after it.
+            table.insert(highlights, { #lines - 1, 4, 4 + #lead + #cmd_name, "codewars_shortcut" })
         end
     end
     table.insert(lines, "")
+
+    return lines, highlights
+end
+
+--- Wide enough to hold the widest row.
+---
+--- The width was pinned at 75 while a third of the table already ran past it,
+--- and the popup sets no `wrap`, so whether those rows wrapped or were cut off
+--- depended on the reader's own 'wrap' setting. Capped to the editor so a
+--- narrow window still gets a popup that fits.
+---@param lines string[]
+---@return integer
+function cmd._help_width(lines)
+    local width = 75
+    for _, l in ipairs(lines) do
+        width = math.max(width, vim.fn.strdisplaywidth(l))
+    end
+    return math.min(width + 2, math.max(40, vim.o.columns - 4))
+end
+
+function cmd.help()
+    local NuiPopup = require("nui.popup")
+    local ui_utils = require("codewars-ui.utils")
+
+    local lines, highlights = cmd._help_lines()
 
     local popup = NuiPopup({
         enter = true,
         focusable = true,
         relative = "editor",
         position = "50%",
-        size = { width = 75, height = math.min(#lines + 2, math.floor(vim.o.lines * 0.8)) },
+        size = {
+            width = cmd._help_width(lines),
+            height = math.min(#lines + 2, math.floor(vim.o.lines * 0.8)),
+        },
         border = {
             style = "rounded",
             text = { top = " Help ", top_align = "center" },
