@@ -97,9 +97,32 @@ local function fetch_user_data(menu, cb, opts)
     end
 
     local detect
-    -- One dashboard scrape at a time. On a renamed account the 404 self-heal
-    -- and verify both reach for it, which doubles the slowest request here.
-    local detecting = false
+
+    --- One /dashboard scrape at a time, shared by detect() and verify().
+    ---
+    --- Both want the same answer -- who this cookie belongs to -- and on a
+    --- renamed account both reach for it at once: verify() is issued at mount
+    --- and the 404 heal fires a moment later. A flag consulted by only one of
+    --- them deduplicates nothing, so this wraps the request itself.
+    ---
+    --- Returns false when a scrape is already out, which is the caller's cue
+    --- that somebody else will deliver the name.
+    ---@param on_reply fun(profile: table?, err: table?)
+    ---@return boolean issued
+    local scraping = false
+    local function scrape(on_reply)
+        if scraping then
+            return false
+        end
+        scraping = true
+        local ours = still_current()
+        user_api.get_current(function(profile, err)
+            scraping = false
+            if not ours() then return end
+            on_reply(profile, err)
+        end)
+        return true
+    end
 
     --- Public endpoint: it answers for a signed-out user too, which is why it
     --- cannot double as a session check.
@@ -130,12 +153,7 @@ local function fetch_user_data(menu, cb, opts)
     end
 
     detect = function()
-        if detecting then return end
-        detecting = true
-        local ours = still_current()
-        user_api.get_current(function(profile, err)
-            detecting = false
-            if not ours() then return end
+        scrape(function(profile, err)
             if err or not profile or not profile.username then
                 -- Swallowing this left a menu that looks signed in, has no
                 -- username, and explains nothing -- while every feature
@@ -160,14 +178,15 @@ local function fetch_user_data(menu, cb, opts)
     --- auto-detected language, and surface an expired cookie -- none of which
     --- the stats call can do, being public.
     local function verify()
-        local ours = still_current()
-        user_api.get_current(function(profile, err)
-            if not ours() then return end
+        scrape(function(profile, err)
             if err or not profile or not profile.username then
                 if err then
                     log.warn(("Signed in, but could not confirm your account: %s")
                         :format(err.msg or "unknown error"))
                 end
+                -- A heal deferred to this scrape and still has no name, so
+                -- somebody has to go and get one.
+                if config.user.username == "" then detect() end
                 return
             end
             apply_lang(profile.current_language)
@@ -176,11 +195,21 @@ local function fetch_user_data(menu, cb, opts)
             -- 404 self-heal may have corrected it already, and re-running the
             -- identity purge would drop id-keyed state that is still valid.
             --
-            -- "" means that heal is still in flight -- it blanks the name
-            -- before re-detecting. Reading that as a different account purges
-            -- the session ids and focus kata of the account detect() is about
-            -- to restore, so leave it to finish.
-            if config.user.username == "" or profile.username == config.user.username then
+            -- "" means the 404 heal blanked the name and deferred to this
+            -- scrape. Same account, being re-detected: adopt the name rather
+            -- than reading it as a stranger, which would purge the session ids
+            -- and focus kata a rename leaves perfectly valid.
+            if config.user.username == "" then
+                config.user.username = profile.username
+                profile_cache.update({
+                    username = profile.username,
+                    lang = profile.current_language,
+                })
+                menu._stats = nil
+                return fetch_stats(profile.username, false)
+            end
+
+            if profile.username == config.user.username then
                 profile_cache.update({ lang = profile.current_language })
                 return
             end

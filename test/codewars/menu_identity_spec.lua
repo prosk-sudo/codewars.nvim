@@ -287,6 +287,67 @@ describe("Menu identity", function()
         end)
     end)
 
+    -- The 404 heal and verify() both want /dashboard -- the slowest request
+    -- here. detect() had a single-flight flag, but verify() never consulted it,
+    -- so the pair the flag existed for was never actually deduplicated.
+    describe("a heal racing a verification", function()
+        --- Both requests go out at mount and the 404 lands afterwards, which
+        --- is the real ordering: the stats API answers in ~0.3s and the
+        --- dashboard in 0.85-15s. Replying synchronously would invert it --
+        --- the heal would fire before verify() was even called, and the test
+        --- would pass while exercising the opposite path.
+        local function race(verify_reply)
+            local scrapes, land_verify, land_404 = 0, nil, nil
+            api_stub.get_current = function(cb)
+                scrapes = scrapes + 1
+                if scrapes == 1 then
+                    land_verify = function() cb(verify_reply()) end
+                else
+                    cb({ username = "new-name", current_language = "rust" })
+                end
+            end
+            api_stub.get = function(u, cb)
+                table.insert(calls, "get:" .. u)
+                if u == "old-name" then
+                    land_404 = function() cb(nil, { status = 404, msg = "nf" }) end
+                else
+                    cb(api_stub.profile, nil)
+                end
+            end
+            stored = { fp = "alice-session", username = "old-name", honor = 851 }
+
+            Menu._fetch_user_data({ _stats = nil }, nil, { verify = true })
+            vim.wait(50, function() return false end)
+            assert.are.equal(1, scrapes, "verify should have issued the only scrape so far")
+
+            land_404()
+            vim.wait(50, function() return false end)
+            local at_404 = scrapes
+
+            land_verify()
+            vim.wait(50, function() return false end)
+            return at_404, scrapes
+        end
+
+        it("scrapes the dashboard once, not twice", function()
+            local at_404, total = race(function()
+                return { username = "new-name", current_language = "rust" }
+            end)
+            assert.are.equal(1, at_404, "the heal must not start a second scrape")
+            assert.are.equal(1, total)
+            assert.are.equal("new-name", config.user.username,
+                "the verification must finish the heal it absorbed")
+        end)
+
+        -- If the scrape the heal deferred to comes back empty, the name is
+        -- still missing and something has to go and get it.
+        it("falls back to detecting when that scrape fails", function()
+            local _, total = race(function() return nil, { msg = "boom" } end)
+            assert.are.equal(2, total, "a failed verification must not strand the heal")
+            assert.are.equal("new-name", config.user.username)
+        end)
+    end)
+
     describe("the reserved stats row", function()
         local function render_lines(stats)
             vim.cmd("tabnew")
