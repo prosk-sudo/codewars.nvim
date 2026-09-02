@@ -217,6 +217,96 @@ end
 --- Fork this kumite into an editable local copy. Pure local
 --- transition — nothing is created on codewars.com. A second fork of an
 --- already-editable buffer is a no-op with a state-aware message.
+--- The code buffer's live text.
+---@return string
+function Kumite:_buffer_text()
+    return table.concat(api.nvim_buf_get_lines(self.bufnr, 0, -1, false), "\n")
+end
+
+--- Kumite metadata a template function can branch on.
+---@return table
+function Kumite:_template_ctx()
+    return {
+        lang = self.lang,
+        name = self.snippet.title,
+        starter = self:_buffer_text(),
+    }
+end
+
+--- Rewrite the code buffer through one of the template operations.
+---
+--- Only for code that is yours -- a fork, or one you started. The template is
+--- not removed before save/publish (the kata path submits its wrapper too,
+--- which is why a template has to be valid standalone code), so wrapping a
+--- kumite you are only reading would put your preamble into whatever you
+--- published from it.
+---
+--- One set_lines call, so the rewrite is a single undo entry. Both operations
+--- refuse rather than guess when the buffer no longer matches, and the reason
+--- is surfaced -- "nothing happened" on its own reads as a broken command.
+---@param op "wrap"|"strip"
+---@return boolean changed
+function Kumite:retemplate(op)
+    assert(op == "wrap" or op == "strip", "unknown template op: " .. tostring(op))
+    if not (self.bufnr and api.nvim_buf_is_valid(self.bufnr)) then
+        return false
+    end
+    if not kstate.is_editable(self.state) then
+        -- Said out loud: every other refusal here explains itself, and a
+        -- command that silently does nothing reads as broken. Worded per
+        -- direction: set_templates reaches this for `off` too, where
+        -- "fork to apply your template" is advice for the opposite thing.
+        log.info(op == "wrap"
+            and "This kumite is read-only — :CW kumite fork to apply your template."
+            or "This kumite is read-only — there is no template here to remove.")
+        return false
+    end
+
+    local templates = require("codewars.templates")
+    local apply = op == "wrap" and templates.wrap or templates.strip
+
+    local text, reason = apply(self.lang, self:_buffer_text(), self:_template_ctx())
+    if not text then
+        log.info(reason)
+        return false
+    end
+
+    api.nvim_buf_set_lines(self.bufnr, 0, -1, false, vim.split(text, "\n"))
+    self:_settle_cursor()
+    return true
+end
+
+--- Put the cursor back on your code after a rewrite.
+---
+--- Every line moved, so wherever the cursor was describes a buffer that no
+--- longer exists: after a wrap it is stranded at the top of the preamble, and
+--- after a strip it is wherever a preamble used to be. The buffer is correct
+--- and the screen is not, which reads as the command having done nothing --
+--- or, once you run the other direction, as a second copy of the template.
+function Kumite:_settle_cursor()
+    if not (self.winid and api.nvim_win_is_valid(self.winid)) then
+        return
+    end
+
+    local templates = require("codewars.templates")
+    local text = self:_buffer_text()
+    local ok, pos = pcall(templates.locate, self.lang, text, self:_template_ctx())
+
+    local row, col
+    if ok and pos then
+        row, col = pos.row, pos.col
+    else
+        -- Not wrapped (a strip, or a buffer that drifted): the code is all
+        -- there is, so its end is where the cursor belongs.
+        row, col = templates.end_of(text)
+    end
+
+    pcall(api.nvim_win_set_cursor, self.winid, { row, col })
+    -- Setting the cursor scrolls down to reveal but never back up, so a
+    -- rewrite that shortened the text above it leaves the view stale.
+    pcall(api.nvim_win_call, self.winid, function() vim.cmd("normal! zb") end)
+end
+
 function Kumite:fork()
     local next_state, err = kstate.step(self.state, "fork")
     if err then
@@ -250,6 +340,20 @@ function Kumite:fork()
 
     if self.description then
         self.description:populate()
+    end
+    -- The copy is yours now, so it gets your template -- the same point
+    -- `:CW kumite new` applies one.
+    --
+    -- Gated here rather than inside retemplate: wrap() deliberately ignores
+    -- the enabled switch because `:CW template on` calls it the instant the
+    -- switch goes on. fork() is the one caller that is not a switch flip, so
+    -- without this it would apply a template the user had turned off -- and
+    -- nothing removes it again before save or publish. is_configured keeps the
+    -- common case quiet: retemplate reports every refusal, which is right when
+    -- the user asked and noise when forking asked on their behalf.
+    local templates = require("codewars.templates")
+    if templates.is_enabled() and templates.is_configured(self.lang) then
+        self:retemplate("wrap")
     end
     self:refresh_title()
     log.info("Forked — edit the code/fixture, run :CW test, and :CW kumite save when ready.")
