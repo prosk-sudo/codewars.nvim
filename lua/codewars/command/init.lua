@@ -973,10 +973,12 @@ local function set_templates(on)
     local was = templates.is_enabled()
     templates.set_enabled(on)
 
-    -- kata_in_tab, not curr_kata: this is a global setting, and running it from
-    -- the dashboard is ordinary, not an error worth logging.
-    local k = require("codewars.utils").kata_in_tab()
-    local changed = k and k:retemplate(on and "wrap" or "strip")
+    -- kata_in_tab / curr_kumite, not curr_kata: this is a global setting, and
+    -- running it from the dashboard is ordinary, not an error worth logging.
+    -- A kumite only retemplates when the code is yours; see Kumite:retemplate.
+    local utils = require("codewars.utils")
+    local here = utils.kata_in_tab() or utils.curr_kumite()
+    local changed = here and here:retemplate(on and "wrap" or "strip")
 
     if was == on and not changed then
         return log.info(("Templates are already %s."):format(on and "on" or "off"))
@@ -996,11 +998,12 @@ function cmd.template_status()
     local templates = require("codewars.templates")
     local parts = { ("Templates are %s."):format(templates.is_enabled() and "on" or "off") }
 
-    local k = require("codewars.utils").kata_in_tab()
-    if k then
-        parts[#parts + 1] = templates.is_configured(k.lang)
-            and ("A %s template is configured."):format(k.lang)
-            or ("No %s template is configured."):format(k.lang)
+    local utils = require("codewars.utils")
+    local here = utils.kata_in_tab() or utils.curr_kumite()
+    if here then
+        parts[#parts + 1] = templates.is_configured(here.lang)
+            and ("A %s template is configured."):format(here.lang)
+            or ("No %s template is configured."):format(here.lang)
     end
 
     log.info(table.concat(parts, " "))

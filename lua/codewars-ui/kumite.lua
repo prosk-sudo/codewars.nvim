@@ -217,6 +217,57 @@ end
 --- Fork this kumite into an editable local copy. Pure local
 --- transition — nothing is created on codewars.com. A second fork of an
 --- already-editable buffer is a no-op with a state-aware message.
+--- The code buffer's live text.
+---@return string
+function Kumite:_buffer_text()
+    return table.concat(api.nvim_buf_get_lines(self.bufnr, 0, -1, false), "\n")
+end
+
+--- Kumite metadata a template function can branch on.
+---@return table
+function Kumite:_template_ctx()
+    return {
+        lang = self.lang,
+        name = self.snippet.title,
+        starter = self:_buffer_text(),
+    }
+end
+
+--- Rewrite the code buffer through one of the template operations.
+---
+--- Only for code that is yours -- a fork, or one you started. The template is
+--- not removed before save/publish (the kata path submits its wrapper too,
+--- which is why a template has to be valid standalone code), so wrapping a
+--- kumite you are only reading would put your preamble into whatever you
+--- published from it.
+---
+--- One set_lines call, so the rewrite is a single undo entry. Both operations
+--- refuse rather than guess when the buffer no longer matches, and the reason
+--- is surfaced -- "nothing happened" on its own reads as a broken command.
+---@param op "wrap"|"strip"
+---@return boolean changed
+function Kumite:retemplate(op)
+    if not (self.bufnr and api.nvim_buf_is_valid(self.bufnr)) then
+        return false
+    end
+    if not kstate.is_editable(self.state) then
+        return false
+    end
+
+    assert(op == "wrap" or op == "strip", "unknown template op: " .. tostring(op))
+    local templates = require("codewars.templates")
+    local apply = op == "wrap" and templates.wrap or templates.strip
+
+    local text, reason = apply(self.lang, self:_buffer_text(), self:_template_ctx())
+    if not text then
+        log.info(reason)
+        return false
+    end
+
+    api.nvim_buf_set_lines(self.bufnr, 0, -1, false, vim.split(text, "\n"))
+    return true
+end
+
 function Kumite:fork()
     local next_state, err = kstate.step(self.state, "fork")
     if err then
@@ -251,6 +302,10 @@ function Kumite:fork()
     if self.description then
         self.description:populate()
     end
+    -- The copy is yours now, so it gets your template -- the same point
+    -- `:CW kumite new` applies one. Silent when there is no template
+    -- configured or templates are off; retemplate reports anything else.
+    self:retemplate("wrap")
     self:refresh_title()
     log.info("Forked — edit the code/fixture, run :CW test, and :CW kumite save when ready.")
 end
