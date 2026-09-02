@@ -247,17 +247,21 @@ end
 ---@param op "wrap"|"strip"
 ---@return boolean changed
 function Kumite:retemplate(op)
+    assert(op == "wrap" or op == "strip", "unknown template op: " .. tostring(op))
     if not (self.bufnr and api.nvim_buf_is_valid(self.bufnr)) then
         return false
     end
     if not kstate.is_editable(self.state) then
         -- Said out loud: every other refusal here explains itself, and a
-        -- command that silently does nothing reads as broken.
-        log.info("This kumite is read-only — :CW kumite fork to apply your template.")
+        -- command that silently does nothing reads as broken. Worded per
+        -- direction: set_templates reaches this for `off` too, where
+        -- "fork to apply your template" is advice for the opposite thing.
+        log.info(op == "wrap"
+            and "This kumite is read-only — :CW kumite fork to apply your template."
+            or "This kumite is read-only — there is no template here to remove.")
         return false
     end
 
-    assert(op == "wrap" or op == "strip", "unknown template op: " .. tostring(op))
     local templates = require("codewars.templates")
     local apply = op == "wrap" and templates.wrap or templates.strip
 

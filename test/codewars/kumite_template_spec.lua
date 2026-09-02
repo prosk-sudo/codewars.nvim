@@ -69,6 +69,25 @@ describe("Kumite templates", function()
         -- The template is not removed before save/publish, so wrapping code
         -- you cannot edit would put your preamble into someone else's kumite
         -- the moment you forked or converted it.
+        -- set_templates reaches this for `off` as well, where advice to fork
+        -- and apply a template answers the opposite question.
+        it("words the read-only refusal for the direction asked", function()
+            local w = workspace("published_view", "print(1)")
+            local said = {}
+            local log = require("codewars.logger")
+            local real = log.info
+            log.info = function(m) said[#said + 1] = tostring(m) end
+
+            w:retemplate("wrap")
+            w:retemplate("strip")
+            log.info = real
+
+            assert.are.equal(2, #said)
+            assert.truthy(said[1]:find("fork to apply", 1, true), said[1])
+            assert.is_nil(said[2]:find("fork to apply", 1, true),
+                "the strip refusal must not advise applying one: " .. said[2])
+        end)
+
         it("refuses a kumite that is not yours", function()
             local w = workspace("published_view", "print(1)")
             assert.is_false(w:retemplate("wrap"))
