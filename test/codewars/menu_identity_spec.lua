@@ -24,6 +24,7 @@ describe("Menu identity", function()
     _Cw_state = _Cw_state or {}
 
     local calls, stored, api_stub, profile_stub
+    local fp -- fingerprint of the live cookie
 
     -- A profile payload as /api/v1/users returns it.
     local function payload(honor, completed, rank)
@@ -35,7 +36,7 @@ describe("Menu identity", function()
     end
 
     before_each(function()
-        calls, stored = {}, nil
+        calls, stored, fp = {}, nil, "alice-session"
         config.user.username = ""
         config.lang = "python"
         config.user.lang = "python"
@@ -56,12 +57,22 @@ describe("Menu identity", function()
                 cb(api_stub.current)
             end,
         }
+        -- Mirrors the real module: a save binds the record to whatever cookie
+        -- is live AT WRITE TIME, and a record bound to another one reads as
+        -- absent. Getting that ordering right is what makes the stale-reply
+        -- tests below meaningful.
         profile_stub = {
-            get = function() return stored and vim.deepcopy(stored) end,
-            save = function(d) stored = vim.deepcopy(d); return true end,
-            update = function(f)
-                stored = vim.tbl_extend("force", stored or {}, f)
+            fingerprint = function() return fp end,
+            get = function()
+                if stored and stored.fp == fp then return vim.deepcopy(stored) end
+                return nil
+            end,
+            save = function(d)
+                stored = vim.tbl_extend("force", vim.deepcopy(d), { fp = fp })
                 return true
+            end,
+            update = function(f)
+                return profile_stub.save(vim.tbl_extend("force", profile_stub.get() or {}, f))
             end,
             clear = function() stored = nil; return true end,
         }
@@ -86,7 +97,7 @@ describe("Menu identity", function()
 
     describe("a cached identity", function()
         it("paints the numbers without touching the dashboard", function()
-            stored = { username = "prosk", lang = "rust", honor = 851,
+            stored = { fp = "alice-session", username = "prosk", lang = "rust", honor = 851,
                 rank_name = "4 kyu", completed = 215 }
 
             local m = fetch()
@@ -99,7 +110,7 @@ describe("Menu identity", function()
         end)
 
         it("re-applies the auto-detected language, which is never persisted", function()
-            stored = { username = "prosk", lang = "rust", honor = 1 }
+            stored = { fp = "alice-session", username = "prosk", lang = "rust", honor = 1 }
             fetch()
             assert.are.equal("rust", config.lang)
         end)
@@ -107,7 +118,7 @@ describe("Menu identity", function()
         it("leaves a language the user chose alone", function()
             config.lang_persisted = true
             config.lang = "python"
-            stored = { username = "prosk", lang = "rust", honor = 1 }
+            stored = { fp = "alice-session", username = "prosk", lang = "rust", honor = 1 }
             fetch()
             assert.are.equal("python", config.lang)
         end)
@@ -131,7 +142,7 @@ describe("Menu identity", function()
     -- it: the public endpoint 404s and the row would stay empty for good.
     describe("a cached name that stopped resolving", function()
         it("drops the cache and re-detects from the session", function()
-            stored = { username = "old-name", honor = 851 }
+            stored = { fp = "alice-session", username = "old-name", honor = 851 }
             local real_get = api_stub.get
             api_stub.get = function(username, cb)
                 -- Only the stale name 404s; the re-detected one works.
@@ -151,13 +162,74 @@ describe("Menu identity", function()
         end)
 
         it("keeps a cached name that failed for any other reason", function()
-            stored = { username = "prosk", honor = 851 }
+            stored = { fp = "alice-session", username = "prosk", honor = 851 }
             api_stub.err = { status = 500, msg = "server error" }
 
             fetch()
 
             assert.are.same({ "get:prosk" }, calls, "a 500 is not a rename")
             assert.are.equal("prosk", stored.username)
+        end)
+    end)
+
+    -- profile.save() stamps a record with whatever cookie is live when it
+    -- LANDS, while the request closed over the username it was ISSUED for.
+    -- A reply that outlives its identity therefore rebinds the old account to
+    -- the new session -- the exact ccb634e hazard the fingerprint exists to
+    -- prevent, reached through a path it does not cover.
+    describe("a reply that outlived its session", function()
+        --- Issue a stats request but hold its reply until the test lands it.
+        local function hold(for_name)
+            local land
+            local real = api_stub.get
+            api_stub.get = function(username, cb)
+                table.insert(calls, "get:" .. username)
+                if username == for_name then
+                    land = function() cb(api_stub.profile, nil) end
+                else
+                    return real(username, cb)
+                end
+            end
+            return function() land() ; vim.wait(50, function() return false end) end
+        end
+
+        it("is dropped when the cookie changed under it", function()
+            stored = { fp = "alice-session", username = "alice", lang = "rust",
+                honor = 851, rank_name = "4 kyu", completed = 215 }
+            local land = hold("alice")
+
+            fetch()
+
+            -- Signed in as somebody else while alice's stats were outstanding.
+            profile_stub.clear()
+            config.user.username = ""
+            fp = "bob-session"
+
+            land()
+
+            assert.is_nil(stored,
+                "alice must not be cached under bob's fingerprint")
+            assert.are.equal("", config.user.username)
+        end)
+
+        -- The cookie never changes here, so the fingerprint cannot catch it:
+        -- an account renamed under a live session, healed while the old name's
+        -- stats were still in flight.
+        it("is dropped when the name is no longer ours", function()
+            stored = { fp = "alice-session", username = "old-name",
+                honor = 851, rank_name = "4 kyu", completed = 215 }
+            local land = hold("old-name")
+
+            fetch()
+
+            config.user.username = "new-name"
+            profile_stub.update({ username = "new-name", honor = 10 })
+
+            land()
+
+            assert.are.equal("new-name", stored.username,
+                "a reply for the old name must not overwrite the healed record")
+            assert.are.equal(10, stored.honor)
         end)
     end)
 
@@ -196,7 +268,7 @@ describe("Menu identity", function()
     -- must never reach disk: a failed refetch would bake it in permanently.
     describe("the optimistic count after a submit", function()
         it("is shown but not persisted", function()
-            stored = { username = "prosk", lang = "rust", honor = 851,
+            stored = { fp = "alice-session", username = "prosk", lang = "rust", honor = 851,
                 rank_name = "4 kyu", completed = 215 }
             api_stub.err = { status = 500, msg = "server error" }
 
@@ -207,7 +279,7 @@ describe("Menu identity", function()
         end)
 
         it("survives the cache seeding that follows it", function()
-            stored = { username = "prosk", honor = 851, rank_name = "4 kyu", completed = 215 }
+            stored = { fp = "alice-session", username = "prosk", honor = 851, rank_name = "4 kyu", completed = 215 }
             api_stub.err = { status = 500, msg = "server error" }
 
             local m = fetch({ _stats = { rank_name = "4 kyu", honor = 851, completed = 215 } })

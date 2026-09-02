@@ -70,13 +70,44 @@ local function fetch_user_data(menu, cb, opts)
         config.user.lang = lang
     end
 
+    --- A reply is only allowed to write if the identity it was issued under is
+    --- still the current one.
+    ---
+    --- profile.save() stamps a record with whatever cookie is live when the
+    --- reply LANDS, while the request closed over the name it was ISSUED for.
+    --- Without this, signing into another account while a stats call is in
+    --- flight rebinds the old name to the new session's fingerprint -- the
+    --- ccb634e hazard, reached through the one path the fingerprint cannot
+    --- see. The name is checked too: a rename healed mid-flight keeps the
+    --- cookie, so the fingerprint alone would not notice.
+    ---@param name string? the username the request was issued for
+    local function still_current(name)
+        local at_issue = profile_cache.fingerprint()
+        return function()
+            if profile_cache.fingerprint() ~= at_issue then
+                log.debug("dropping a reply from a previous session")
+                return false
+            end
+            if name and config.user.username ~= name then
+                log.debug("dropping a reply for a name that is no longer ours")
+                return false
+            end
+            return true
+        end
+    end
+
     local detect
+    -- One dashboard scrape at a time. On a renamed account the 404 self-heal
+    -- and verify both reach for it, which doubles the slowest request here.
+    local detecting = false
 
     --- Public endpoint: it answers for a signed-out user too, which is why it
     --- cannot double as a session check.
     ---@param cached boolean did this name come off disk rather than the dashboard
     local function fetch_stats(username, cached)
+        local ours = still_current(username)
         user_api.get(username, function(data, err)
+            if not ours() then return end
             if err then
                 -- A cached name that stopped resolving means the account was
                 -- renamed under an unchanged cookie. Nothing else notices:
@@ -99,7 +130,12 @@ local function fetch_user_data(menu, cb, opts)
     end
 
     detect = function()
+        if detecting then return end
+        detecting = true
+        local ours = still_current()
         user_api.get_current(function(profile, err)
+            detecting = false
+            if not ours() then return end
             if err or not profile or not profile.username then
                 -- Swallowing this left a menu that looks signed in, has no
                 -- username, and explains nothing -- while every feature
@@ -123,8 +159,10 @@ local function fetch_user_data(menu, cb, opts)
     --- Confirm the cached identity still belongs to this session, refresh the
     --- auto-detected language, and surface an expired cookie -- none of which
     --- the stats call can do, being public.
-    local function verify(known)
+    local function verify()
+        local ours = still_current()
         user_api.get_current(function(profile, err)
+            if not ours() then return end
             if err or not profile or not profile.username then
                 if err then
                     log.warn(("Signed in, but could not confirm your account: %s")
@@ -134,7 +172,10 @@ local function fetch_user_data(menu, cb, opts)
             end
             apply_lang(profile.current_language)
 
-            if profile.username == known then
+            -- Against the LIVE name, not the one verify was started with: the
+            -- 404 self-heal may have corrected it already, and re-running the
+            -- identity purge would drop id-keyed state that is still valid.
+            if profile.username == config.user.username then
                 profile_cache.update({ lang = profile.current_language })
                 return
             end
@@ -175,7 +216,7 @@ local function fetch_user_data(menu, cb, opts)
 
     fetch_stats(cached.username, true)
     if opts and opts.verify then
-        verify(cached.username)
+        verify()
     end
 end
 
