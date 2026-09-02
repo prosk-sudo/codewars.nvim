@@ -28,34 +28,133 @@ Menu.__index = Menu
 -- Page definitions: each page is a list of buttons (I is resolved at init time)
 local I = {}
 
---- Fetch user data and call cb when done.
---- If username is not configured, auto-detect from dashboard first.
-local function fetch_user_data(menu, cb)
-    local user_api = require("codewars.api.user")
+--- The header numbers, flattened out of an /api/v1/users payload so that the
+--- disk cache and the API agree on one shape.
+---@param data table
+---@return table
+local function stats_of(data)
+    return {
+        rank_name = data.ranks and data.ranks.overall and data.ranks.overall.name or "",
+        honor = data.honor or 0,
+        completed = data.codeChallenges and data.codeChallenges.totalCompleted or 0,
+    }
+end
 
-    local function fetch_by_username(username)
-        user_api.get(username, function(data, err)
-            if not err and data then
-                menu._user_data = data
+--- Fill the menu header, cheapest source first, calling cb on each improvement.
+---
+--- Identity used to be rediscovered on every launch by scraping /dashboard --
+--- ~112KB of session-rendered HTML, for a name that cannot change while the
+--- session lasts -- and nothing could be drawn until it returned. That request
+--- is the menu's worst case by an order of magnitude (0.85s to 15.2s observed,
+--- against 0.3s for the API call behind it). A cached identity now paints at
+--- once, and the dashboard only verifies, off the critical path.
+---@param opts? { verify?: boolean } verify costs a dashboard request; mount only
+local function fetch_user_data(menu, cb, opts)
+    local user_api = require("codewars.api.user")
+    local profile_cache = require("codewars.cache.profile")
+
+    -- cb redraws, so calling it per update is how progressively better data
+    -- reaches the screen.
+    local function done()
+        if cb then vim.schedule(cb) end
+    end
+
+    --- Only when the user has not chosen one themselves. Auto-detection is
+    --- never persisted, so it has to be re-applied on every launch -- which
+    --- is why the cache carries the language and not just the name.
+    local function apply_lang(lang)
+        if config.lang_persisted or type(lang) ~= "string" or lang == "" then
+            return
+        end
+        config.lang = lang
+        config.user.lang = lang
+    end
+
+    --- A reply is only allowed to write if the identity it was issued under is
+    --- still the current one.
+    ---
+    --- profile.save() stamps a record with whatever cookie is live when the
+    --- reply LANDS, while the request closed over the name it was ISSUED for.
+    --- Without this, signing into another account while a stats call is in
+    --- flight rebinds the old name to the new session's fingerprint -- the
+    --- ccb634e hazard, reached through the one path the fingerprint cannot
+    --- see. The name is checked too: a rename healed mid-flight keeps the
+    --- cookie, so the fingerprint alone would not notice.
+    ---@param name string? the username the request was issued for
+    local function still_current(name)
+        local at_issue = profile_cache.fingerprint()
+        return function()
+            if profile_cache.fingerprint() ~= at_issue then
+                log.debug("dropping a reply from a previous session")
+                return false
             end
-            if cb then vim.schedule(cb) end
+            if name and config.user.username ~= name then
+                log.debug("dropping a reply for a name that is no longer ours")
+                return false
+            end
+            return true
+        end
+    end
+
+    local detect
+
+    --- One /dashboard scrape at a time, shared by detect() and verify().
+    ---
+    --- Both want the same answer -- who this cookie belongs to -- and on a
+    --- renamed account both reach for it at once: verify() is issued at mount
+    --- and the 404 heal fires a moment later. A flag consulted by only one of
+    --- them deduplicates nothing, so this wraps the request itself.
+    ---
+    --- Returns false when a scrape is already out, which is the caller's cue
+    --- that somebody else will deliver the name.
+    ---@param on_reply fun(profile: table?, err: table?)
+    ---@return boolean issued
+    local scraping = false
+    local function scrape(on_reply)
+        if scraping then
+            return false
+        end
+        scraping = true
+        local ours = still_current()
+        user_api.get_current(function(profile, err)
+            scraping = false
+            if not ours() then return end
+            on_reply(profile, err)
+        end)
+        return true
+    end
+
+    --- Public endpoint: it answers for a signed-out user too, which is why it
+    --- cannot double as a session check.
+    ---@param cached boolean did this name come off disk rather than the dashboard
+    local function fetch_stats(username, cached)
+        local ours = still_current(username)
+        user_api.get(username, function(data, err)
+            if not ours() then return end
+            if err then
+                -- A cached name that stopped resolving means the account was
+                -- renamed under an unchanged cookie. Nothing else notices:
+                -- the row would just stay empty for good.
+                if cached and err.status == 404 then
+                    log.debug("cached username no longer resolves, re-detecting")
+                    profile_cache.clear()
+                    config.user.username = ""
+                    return detect()
+                end
+                return done()
+            end
+            if data then
+                menu._stats = stats_of(data)
+                profile_cache.update(vim.tbl_extend("force",
+                    { username = username }, menu._stats))
+            end
+            done()
         end)
     end
 
-    if config.user.username ~= "" then
-        fetch_by_username(config.user.username)
-    else
-        -- Auto-detect username from dashboard
-        user_api.get_current(function(profile, err)
-            if not err and profile and profile.username then
-                config.user.username = profile.username
-                -- Auto-detect preferred language only if user hasn't explicitly set one
-                if not config.lang_persisted and profile.current_language and profile.current_language ~= "" then
-                    config.lang = profile.current_language
-                    config.user.lang = profile.current_language
-                end
-                fetch_by_username(profile.username)
-            else
+    detect = function()
+        scrape(function(profile, err)
+            if err or not profile or not profile.username then
                 -- Swallowing this left a menu that looks signed in, has no
                 -- username, and explains nothing -- while every feature
                 -- needing an identity failed separately.
@@ -63,11 +162,102 @@ local function fetch_user_data(menu, cb)
                     log.warn(("Signed in, but could not detect your username: %s")
                         :format(err.msg or "unknown error"))
                 end
-                if cb then vim.schedule(cb) end
+                return done()
             end
+            config.user.username = profile.username
+            apply_lang(profile.current_language)
+            profile_cache.update({
+                username = profile.username,
+                lang = profile.current_language,
+            })
+            fetch_stats(profile.username, false)
         end)
     end
+
+    --- Confirm the cached identity still belongs to this session, refresh the
+    --- auto-detected language, and surface an expired cookie -- none of which
+    --- the stats call can do, being public.
+    local function verify()
+        scrape(function(profile, err)
+            if err or not profile or not profile.username then
+                if err then
+                    log.warn(("Signed in, but could not confirm your account: %s")
+                        :format(err.msg or "unknown error"))
+                end
+                -- A heal deferred to this scrape and still has no name, so
+                -- somebody has to go and get one.
+                if config.user.username == "" then detect() end
+                return
+            end
+            apply_lang(profile.current_language)
+
+            -- Against the LIVE name, not the one verify was started with: the
+            -- 404 self-heal may have corrected it already, and re-running the
+            -- identity purge would drop id-keyed state that is still valid.
+            --
+            -- "" means the 404 heal blanked the name and deferred to this
+            -- scrape. Same account, being re-detected: adopt the name rather
+            -- than reading it as a stranger, which would purge the session ids
+            -- and focus kata a rename leaves perfectly valid.
+            if config.user.username == "" then
+                config.user.username = profile.username
+                profile_cache.update({
+                    username = profile.username,
+                    lang = profile.current_language,
+                })
+                menu._stats = nil
+                return fetch_stats(profile.username, false)
+            end
+
+            if profile.username == config.user.username then
+                profile_cache.update({ lang = profile.current_language })
+                return
+            end
+
+            -- The cookie now belongs to somebody else without the plugin ever
+            -- being told. Everything keyed to the old name has to go before it
+            -- is served as this account's.
+            log.debug("identity changed under a live cookie, refreshing")
+            require("codewars.cache.cookie").identity_changed()
+            config.user.username = profile.username
+            apply_lang(profile.current_language)
+            profile_cache.update({
+                username = profile.username,
+                lang = profile.current_language,
+            })
+            menu._stats = nil
+            fetch_stats(profile.username, false)
+        end)
+    end
+
+    local cached = profile_cache.get()
+    if not cached then
+        return detect()
+    end
+
+    config.user.username = cached.username
+    apply_lang(cached.lang)
+    -- Never over an in-memory value: refresh_stats increments the count
+    -- optimistically before refetching, and the cache still holds the old one.
+    if not menu._stats and cached.honor then
+        menu._stats = {
+            rank_name = cached.rank_name or "",
+            honor = cached.honor,
+            completed = cached.completed or 0,
+        }
+    end
+    done()
+
+    fetch_stats(cached.username, true)
+    if opts and opts.verify then
+        verify()
+    end
 end
+
+-- Test seam: verify() only runs at mount, and refresh_stats never asks for it,
+-- so the concurrency between a 404 self-heal and a verification is otherwise
+-- unreachable from a spec.
+Menu._fetch_user_data = function(...) return fetch_user_data(...) end
 
 local function build_pages(menu)
     I = require("codewars.icons").get()
@@ -170,7 +360,7 @@ local function build_pages(menu)
             { icon = I.update,  label = "Update",      sc = "u", fn = signin_fn },
             { icon = I.signout, label = "Delete / Sign Out",    sc = "d", fn = function()
                 require("codewars.command").sign_out()
-                menu._user_data = nil
+                menu._stats = nil
                 menu:set_page("signin")
             end },
             { icon = I.back,    label = "Back",        sc = "b", fn = function()
@@ -271,10 +461,12 @@ function Menu:mount()
 
     if cookie_cache.get() then
         self:set_page("main")
+        -- Mount is the one place that pays for the dashboard check: it is
+        -- what catches an expired cookie and an account swapped underneath us.
         fetch_user_data(self, function()
             self._redraw_only = true
             self:draw()
-        end)
+        end, { verify = true })
     else
         self:set_page("signin")
     end
@@ -400,25 +592,17 @@ function Menu:draw()
     table.insert(lines, "")
     table.insert(lines, "")
 
+    -- Reserved whether or not the numbers have arrived. Emitting the row only
+    -- once it was filled changed #lines, and with it the centring pad computed
+    -- below, so the whole block jumped as the fetch landed.
     local honor_row = nil
     local username = config.user.username
-    if username ~= "" then
-        local cached_data = self._user_data
-        if cached_data then
-            local rank_name = ""
-            if cached_data.ranks and cached_data.ranks.overall then
-                rank_name = cached_data.ranks.overall.name or ""
-            end
-            local honor = cached_data.honor or 0
-            local completed = 0
-            if cached_data.codeChallenges then
-                completed = cached_data.codeChallenges.totalCompleted or 0
-            end
-            local info_line = rank_name .. "  |  " .. honor .. " honor  |  " .. completed .. " kata completed"
-            honor_row = #lines
-            table.insert(lines, center(info_line))
-            table.insert(lines, "")
-        end
+    if signed_in then
+        local s = self._stats
+        honor_row = #lines
+        table.insert(lines, s and center(("%s  |  %s honor  |  %s kata completed")
+            :format(s.rank_name, s.honor, s.completed)) or "")
+        table.insert(lines, "")
     end
 
     local signin_row = #lines
@@ -681,9 +865,11 @@ function Menu.refresh_stats()
     -- for the rest of the session, and said nothing about it.
     local m = Menu._active or (_Cw_state or {}).menu
     if not m then return end
-    if m._user_data and m._user_data.codeChallenges then
-        m._user_data.codeChallenges.totalCompleted =
-            (m._user_data.codeChallenges.totalCompleted or 0) + 1
+    -- Shown at once so the count does not lag the submit. Deliberately not
+    -- persisted: the refetch below is the only thing allowed to write a
+    -- number to disk, or a failed one bakes in a wrong count.
+    if m._stats then
+        m._stats.completed = (m._stats.completed or 0) + 1
     end
     fetch_user_data(m, function()
         if m.bufnr and api.nvim_buf_is_valid(m.bufnr) then
