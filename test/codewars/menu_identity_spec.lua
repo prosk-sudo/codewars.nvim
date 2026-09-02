@@ -236,6 +236,57 @@ describe("Menu identity", function()
     -- The row used to be emitted only once the numbers arrived, which changed
     -- the line count and with it the centring pad, so the whole block jumped
     -- as the fetch landed.
+    -- The 404 self-heal blanks config.user.username before re-detecting. A
+    -- verify() reply landing inside that window compares the dashboard name
+    -- against "", reads it as a different account, and runs the full identity
+    -- purge -- dropping session ids and the focus kata belonging to the very
+    -- account it is about to restore.
+    --
+    -- Driven through _fetch_user_data because verify() only runs at mount;
+    -- refresh_stats never sets opts.verify, so the seam used elsewhere in this
+    -- file cannot reach this path at all.
+    describe("a rename healing while verify is in flight", function()
+        it("does not purge the identity it is only re-detecting", function()
+            stored = { fp = "alice-session", username = "old-name", honor = 851 }
+            local purged = 0
+            local cookie = package.loaded["codewars.cache.cookie"]
+            local real_changed = cookie.identity_changed
+            cookie.identity_changed = function() purged = purged + 1 end
+
+            local land_verify
+            local first = true
+            api_stub.get_current = function(cb)
+                table.insert(calls, "get_current")
+                if first then
+                    first = false
+                    -- verify's request: held until the heal has blanked the name
+                    land_verify = function() cb({ username = "prosk", current_language = "rust" }) end
+                else
+                    cb({ username = "prosk", current_language = "rust" })
+                end
+            end
+            api_stub.get = function(username, cb)
+                table.insert(calls, "get:" .. username)
+                if username == "old-name" then
+                    return cb(nil, { status = 404, msg = "not found" })
+                end
+                cb(api_stub.profile, nil)
+            end
+
+            local m = { _stats = nil }
+            Menu._fetch_user_data(m, nil, { verify = true })
+            vim.wait(50, function() return false end)
+
+            land_verify()
+            vim.wait(50, function() return false end)
+
+            cookie.identity_changed = real_changed
+            assert.are.equal("prosk", config.user.username)
+            assert.are.equal(0, purged,
+                "the same account was re-detected, not swapped: nothing should be purged")
+        end)
+    end)
+
     describe("the reserved stats row", function()
         local function render_lines(stats)
             vim.cmd("tabnew")

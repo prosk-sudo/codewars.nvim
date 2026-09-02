@@ -175,7 +175,12 @@ local function fetch_user_data(menu, cb, opts)
             -- Against the LIVE name, not the one verify was started with: the
             -- 404 self-heal may have corrected it already, and re-running the
             -- identity purge would drop id-keyed state that is still valid.
-            if profile.username == config.user.username then
+            --
+            -- "" means that heal is still in flight -- it blanks the name
+            -- before re-detecting. Reading that as a different account purges
+            -- the session ids and focus kata of the account detect() is about
+            -- to restore, so leave it to finish.
+            if config.user.username == "" or profile.username == config.user.username then
                 profile_cache.update({ lang = profile.current_language })
                 return
             end
@@ -219,6 +224,11 @@ local function fetch_user_data(menu, cb, opts)
         verify()
     end
 end
+
+-- Test seam: verify() only runs at mount, and refresh_stats never asks for it,
+-- so the concurrency between a 404 self-heal and a verification is otherwise
+-- unreachable from a spec.
+Menu._fetch_user_data = function(...) return fetch_user_data(...) end
 
 local function build_pages(menu)
     I = require("codewars.icons").get()
