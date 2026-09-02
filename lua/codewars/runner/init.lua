@@ -57,13 +57,49 @@ function Runner.format_output(output)
     local icons = require("codewars.icons").get()
     local lines = {}
 
+    --- Emit `text` as one entry per physical line.
+    ---
+    --- Codewars sends a multi-line message as a single value: a C assertion
+    --- carries the whole submitted array, and a function logging inside a loop
+    --- arrives as one blob. Inserting that as one entry indented only its
+    --- first line, dropped the rest to column zero, and left a newline inside
+    --- something the callers treat as a single line.
+    ---@param prefix string leads the first line
+    ---@param text string?
+    ---@param cont string? leads every line after it (defaults to prefix)
+    local function put(prefix, text, cont)
+        cont = cont or prefix
+        -- tostring, because the old `..` coerced a number and vim.split
+        -- raises on one. Nothing between vim.json.decode and here guarantees
+        -- the server sent a string, and the throw would land in a scheduled
+        -- callback with no pcall around it, losing the whole run's output.
+        for i, line in ipairs(vim.split(tostring(text or ""), "\n", { plain = true })) do
+            -- A whitespace-only continuation is passed through untouched
+            -- rather than padded: Codewars spaces its message blocks with a
+            -- lone " ", and prefixing that would make a line of trailing
+            -- whitespace. Kept verbatim rather than blanked, so the bytes
+            -- match what the old single-entry value rendered to.
+            if i > 1 and line:match("^%s*$") then
+                table.insert(lines, line)
+            else
+                table.insert(lines, (i == 1 and prefix or cont) .. line)
+            end
+        end
+    end
+
+    --- Pad as wide as a first-line label, so wrapped lines sit under the text
+    --- instead of under the icon.
+    local function align(prefix, label)
+        return prefix .. string.rep(" ", vim.fn.strdisplaywidth(label))
+    end
+
     local function walk(items, indent)
         indent = indent or 0
         local prefix = string.rep("  ", indent)
         for _, item in ipairs(items) do
             if item.t == "describe" then
                 local status = item.p and "" or " [FAILED]"
-                table.insert(lines, prefix .. (item.v or "") .. status)
+                put(prefix, (item.v or "") .. status)
                 if item.items then
                     walk(item.items, indent + 1)
                 end
@@ -78,34 +114,36 @@ function Runner.format_output(output)
                 end
                 local status = item.p and "PASSED" or "FAILED"
                 local counts = ("(%d of %d Assertions)"):format(passed, passed + failed)
-                table.insert(lines, prefix .. status .. ": " .. (item.v or "") .. " " .. counts)
+                put(prefix, status .. ": " .. (item.v or "") .. " " .. counts)
                 if item.items then
                     walk(item.items, indent + 1)
                 end
                 table.insert(lines, "")
             elseif item.t == "completedin" then
-                table.insert(lines, prefix .. "Completed in " .. (item.v or "?") .. "ms")
+                put(prefix, "Completed in " .. (item.v or "?") .. "ms")
                 table.insert(lines, "")
             elseif item.t == "passed" then
                 local val = item.v or ""
+                local label = icons.test_passed .. " "
                 if val == "" or val == "Test Passed" then
-                    table.insert(lines, prefix .. icons.test_passed .. " Test Passed")
+                    put(prefix .. label, "Test Passed", align(prefix, label))
                 else
-                    table.insert(lines, prefix .. icons.test_passed .. " " .. val)
+                    put(prefix .. label, val, align(prefix, label))
                 end
                 table.insert(lines, "")
             elseif item.t == "failed" then
                 local val = item.v or ""
+                local label = icons.test_failed .. " "
                 if val == "" or val == "Test Failed" then
-                    table.insert(lines, prefix .. icons.test_failed .. " Test Failed")
+                    put(prefix .. label, "Test Failed", align(prefix, label))
                 else
-                    table.insert(lines, prefix .. icons.test_failed .. " " .. val)
+                    put(prefix .. label, val, align(prefix, label))
                 end
                 table.insert(lines, "")
             elseif item.t == "error" then
-                table.insert(lines, prefix .. "ERROR: " .. (item.v or ""))
+                put(prefix .. "ERROR: ", item.v, align(prefix, "ERROR: "))
             elseif item.t == "log" then
-                table.insert(lines, prefix .. (item.v or ""))
+                put(prefix, item.v)
             end
         end
     end
