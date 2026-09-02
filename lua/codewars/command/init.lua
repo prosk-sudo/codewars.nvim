@@ -37,7 +37,11 @@ cmd.arguments = arguments
 
 -- Column the descriptions line up on, measured from the start of the entry
 -- (past the four-space indent every row shares).
-local DESC_COL = 28
+-- At least two columns wider than the widest rendered entry, or the padding
+-- clamps to a single space and that row's description sits past the column --
+-- the very drift this is here to prevent. ":CW kata open <id|url> [lang]" is
+-- the current maximum at 29.
+local DESC_COL = 31
 
 --- The help screen's text, split out so it can be asserted on without
 --- mounting a popup.
@@ -111,8 +115,10 @@ function cmd._help_lines()
         { "Ctrl-r",         "Reset all filters" },
         { "",               "" },
         { "KATA EDITOR KEYS", "" },
-        { "g1 … g5",        "Show a pane: " .. table.concat(kata_pane_keys, ", ") },
-        { "g?",             "Show this help" },
+        { "g1 … g5",        table.concat(kata_pane_keys, ", ") },
+        -- Bound in the kumite workspace too, so do not let the heading imply
+        -- it is editor-only; that is the inaccuracy this section exists to fix.
+        { "g?",             "Show this help (kumite workspace too)" },
     }
 
     local lines = {}

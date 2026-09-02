@@ -54,15 +54,25 @@ describe("Command help", function()
     -- "g1 … g5" is 7 columns but 9 bytes; padding by byte length left its
     -- description two columns left of every other row.
     it("aligns descriptions by display width", function()
-        local col
+        local col, checked = nil, 0
         for _, l in ipairs(lines()) do
-            local name, desc = l:match("^    (.-)%s%s+(%S.*)$")
-            if name and desc and not name:match("^%s*$") then
-                local at = vim.fn.strdisplaywidth(l:sub(1, l:find(desc, 1, true) - 1))
+            -- Entry rows only: four spaces, then content.
+            if l:match("^    %S") then
+                -- A description follows a run of two or more spaces. A row
+                -- whose padding clamped to ONE space has no such run -- and an
+                -- earlier version of this test simply skipped those, which is
+                -- exactly how the one overflowing row stayed invisible while
+                -- the test claimed to guarantee alignment.
+                local _, pad_end = l:find("%s%s+", 5)
+                assert.is_not_nil(pad_end,
+                    ("row %q has no padding run: DESC_COL is too narrow for it"):format(l))
+                local at = vim.fn.strdisplaywidth(l:sub(1, pad_end))
                 col = col or at
-                assert.are.equal(col, at, ("row %q starts its description at %d, not %d"):format(name, at, col))
+                assert.are.equal(col, at,
+                    ("row %q starts its description at column %d, not %d"):format(l, at, col))
+                checked = checked + 1
             end
         end
-        assert.is_not_nil(col, "no rows were checked")
+        assert.is_true(checked > 20, ("only %d rows were checked"):format(checked))
     end)
 end)
