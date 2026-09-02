@@ -35,10 +35,14 @@ local multi_value = { difficulty = true }
 local cmd = {}
 cmd.arguments = arguments
 
-function cmd.help()
-    local NuiPopup = require("nui.popup")
-    local ui_utils = require("codewars-ui.utils")
+-- Column the descriptions line up on, measured from the start of the entry
+-- (past the four-space indent every row shares).
+local DESC_COL = 28
 
+--- The help screen's text, split out so it can be asserted on without
+--- mounting a popup.
+---@return string[] lines, table[] highlights
+function cmd._help_lines()
     local help = {
         { "TRAINING",       "" },
         { "train <slug> [lang]", "Open a kata by title, slug or URL" },
@@ -77,7 +81,6 @@ function cmd.help()
         { "kata publish",   "Publish the kata publicly (confirms first)" },
         { "kata unpublish", "Take a published kata back to a draft" },
         { "kata delete",    "Delete the kata for good (confirms first)" },
-        { "g1 … g5",        "Switch panes inside the kata editor" },
         { "",               "" },
         { "UI TOGGLES",     "" },
         { "desc",           "Toggle description split" },
@@ -106,30 +109,53 @@ function cmd.help()
         { "Ctrl-l",         "Filter by language" },
         { "Ctrl-d",         "Filter by difficulty" },
         { "Ctrl-r",         "Reset all filters" },
+        { "",               "" },
+        { "KATA EDITOR KEYS", "" },
+        { "g1 … g5",        "Show a pane: " .. table.concat(kata_pane_keys, ", ") },
+        { "g?",             "Show this help" },
     }
 
     local lines = {}
     local highlights = {}
 
+    -- Rows under a "… KEYS" heading are normal-mode maps, not subcommands, so
+    -- they are shown bare. Keyed off the heading rather than the row's own
+    -- name, which only worked while every such key happened to start "Ctrl".
+    local bare = false
+
     table.insert(lines, "")
     for _, entry in ipairs(help) do
         local cmd_name, desc = entry[1], entry[2]
         if desc == "" and cmd_name ~= "" then
+            bare = cmd_name:match("KEYS$") ~= nil
             table.insert(lines, "  " .. cmd_name)
             table.insert(highlights, { #lines - 1, 0, -1, "Title" })
         elseif cmd_name == "" then
             table.insert(lines, "")
         else
-            local padding = string.rep(" ", math.max(1, 24 - #cmd_name))
-            local line = "    :CW " .. cmd_name .. padding .. desc
-            if cmd_name:match("^Ctrl") then
-                line = "    " .. cmd_name .. padding .. desc
-            end
-            table.insert(lines, line)
-            table.insert(highlights, { #lines - 1, 4, 4 + #cmd_name + 4, "codewars_shortcut" })
+            local lead = bare and "" or ":CW "
+            -- Pad to a column, not to a name width: bare key rows carry no
+            -- ":CW " and so used to sit four columns left of every command,
+            -- giving the screen two description columns. Display width, not
+            -- byte length -- "g1 … g5" is 7 columns but 9 bytes.
+            local written = #lead + vim.fn.strdisplaywidth(cmd_name)
+            local padding = string.rep(" ", math.max(1, DESC_COL - written))
+            table.insert(lines, "    " .. lead .. cmd_name .. padding .. desc)
+            -- Spans exactly what was written, so a bare key no longer
+            -- highlights four columns of the padding after it.
+            table.insert(highlights, { #lines - 1, 4, 4 + #lead + #cmd_name, "codewars_shortcut" })
         end
     end
     table.insert(lines, "")
+
+    return lines, highlights
+end
+
+function cmd.help()
+    local NuiPopup = require("nui.popup")
+    local ui_utils = require("codewars-ui.utils")
+
+    local lines, highlights = cmd._help_lines()
 
     local popup = NuiPopup({
         enter = true,
