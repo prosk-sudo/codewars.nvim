@@ -1,10 +1,22 @@
 local template = require("codewars.config.template")
 local P = require("plenary.path")
 
-_Cw_state = {
-    menu = nil, ---@type cw.ui.Menu?
-    katas = {}, ---@type cw.ui.Kata[]
-}
+-- Deliberately preserved across a reload. Clearing `package.loaded` re-runs
+-- this file, and a fresh table here would strand every mounted kata and menu:
+-- their buffers, windows and augroups outlive the reload, but nothing could
+-- reach them again -- not even `codewars.stop()`.
+--
+-- Merged, not short-circuited. `_Cw_state or {…}` adopted whatever was already
+-- there, so a table written by a version that did not have `katas` -- which is
+-- exactly what a reload finds -- arrived without it, and utils.kata_tabs and
+-- codewars.stop index that unguarded. "keep" leaves live handles alone and
+-- only fills in what is missing.
+---@class cw.State
+---@field menu cw.ui.Menu?
+---@field katas cw.ui.Kata[]
+_Cw_state = vim.tbl_extend("keep", _Cw_state or {}, {
+    katas = {},
+})
 
 ---@class cw.Config
 local config = {

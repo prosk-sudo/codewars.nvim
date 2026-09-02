@@ -2,6 +2,20 @@
 
 All notable changes to codewars.nvim are documented here.
 
+## [Unreleased]
+
+### Fixed
+- Reloading the plugin in a live session no longer strands your open katas.
+  `_Cw_state` survives a `package.loaded` clear, so a reload keeps its handles
+  on every mounted kata and menu instead of leaking their buffers and windows.
+- Calling `setup()` a second time replaces the standalone-dashboard `VimEnter`
+  hook rather than stacking another copy alongside it.
+- The preserved state is merged rather than adopted whole, so a table written
+  by an older version arrives with every field this one needs instead of
+  erroring on the first `:CW` after the reload.
+- The dashboard's completed count keeps updating after a reload; it used to
+  stop for the rest of the session, silently.
+
 ## [0.3.4] - 2026-08-29
 
 ### Changed
@@ -26,7 +40,6 @@ All notable changes to codewars.nvim are documented here.
   template's boilerplate.
 - `:CW reset` moves the cursor to the starter, rather than leaving it wherever
   it was before the buffer was rewritten.
-
 ## [0.3.3] - 2026-08-26
 
 ### Added
