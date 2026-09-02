@@ -87,6 +87,64 @@ describe("Kumite templates", function()
     -- buffer is right and the screen is not -- which reads as the command
     -- having done nothing, or as a second copy of the template. The kata path
     -- needed the same fix.
+    -- fork() is the one caller of wrap() that is not a switch flip. wrap()
+    -- deliberately ignores the enabled switch, because :CW template on calls
+    -- it immediately after turning templates ON -- so an unguarded fork
+    -- applies a template the user has turned off, and the template is never
+    -- removed before save or publish.
+    describe("forking", function()
+        local function forkable(code)
+            local w = workspace("published_view", code)
+            w.clear_readonly_guard = function() end
+            w.refresh_title = function() end
+            w.autocmds = function() end
+            w.fixture_split = { bufnr = vim.api.nvim_create_buf(false, true) }
+            return w
+        end
+
+        it("applies the template", function()
+            local w = forkable("print(1)")
+            w:fork()
+            assert.truthy(text_of(w):find("import logging", 1, true))
+        end)
+
+        it("does not apply one the user has turned off", function()
+            -- Stubbed rather than set_enabled(): the switch is a file under
+            -- config.storage.cache, which this harness does not create, so
+            -- is_enabled would keep answering true.
+            local real = templates.is_enabled
+            templates.is_enabled = function() return false end
+
+            local w = forkable("print(1)")
+            w:fork()
+            templates.is_enabled = real
+
+            assert.are.equal("print(1)", text_of(w),
+                "a fork must not wrap in a template that is switched off")
+        end)
+
+        -- The common case is no template at all. retemplate reports every
+        -- refusal, which is right when the user asked for one and noise when
+        -- forking asked on their behalf.
+        it("says nothing when no template is configured", function()
+            config.user.templates = { solution = {} }
+            local said = {}
+            local log = require("codewars.logger")
+            local real = log.info
+            log.info = function(m) said[#said + 1] = tostring(m) end
+
+            local w = forkable("print(1)")
+            w:fork()
+            log.info = real
+
+            for _, m in ipairs(said) do
+                assert.is_nil(m:find("template is configured", 1, true),
+                    "forking should not report a missing template: " .. m)
+            end
+            assert.are.equal("print(1)", text_of(w))
+        end)
+    end)
+
     describe("the view after a rewrite", function()
         local function windowed(state, code)
             local w = workspace(state, code)
@@ -109,22 +167,25 @@ describe("Kumite templates", function()
             vim.cmd("tabclose!")
         end)
 
+        -- A multi-line body on purpose: with a single line, nvim's own cursor
+        -- clamping lands on it anyway and the assertion holds whether or not
+        -- _settle_cursor ran at all.
         it("follows the code back down after a strip", function()
-            local w = windowed("local_fork", "print(1)")
+            local body = "a = 1\nb = 2\nprint(a + b)"
+            local w = windowed("local_fork", body)
             w:retemplate("wrap")
-            -- Park the cursor deep in the preamble, where a real edit session
-            -- would leave it, then strip everything above the code away.
+            -- Park the cursor in the preamble, where a real edit session would
+            -- leave it, then strip everything above the code away.
             vim.api.nvim_win_set_cursor(w.winid, { 2, 0 })
 
             assert.is_true(w:retemplate("strip"))
 
             local row = vim.api.nvim_win_get_cursor(w.winid)[1]
             local total = vim.api.nvim_buf_line_count(w.bufnr)
-            assert.is_true(row <= total,
+            assert.are.equal(total, row,
                 ("cursor left at row %d of a %d line buffer"):format(row, total))
-            local line = vim.api.nvim_buf_get_lines(w.bufnr, row - 1, row, false)[1]
-            assert.are.equal("print(1)", line,
-                ("cursor sat on %q, not the code"):format(line))
+            assert.are.equal("print(a + b)",
+                vim.api.nvim_buf_get_lines(w.bufnr, row - 1, row, false)[1])
             vim.cmd("tabclose!")
         end)
     end)

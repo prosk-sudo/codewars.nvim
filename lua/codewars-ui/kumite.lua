@@ -251,6 +251,9 @@ function Kumite:retemplate(op)
         return false
     end
     if not kstate.is_editable(self.state) then
+        -- Said out loud: every other refusal here explains itself, and a
+        -- command that silently does nothing reads as broken.
+        log.info("This kumite is read-only — :CW kumite fork to apply your template.")
         return false
     end
 
@@ -335,9 +338,19 @@ function Kumite:fork()
         self.description:populate()
     end
     -- The copy is yours now, so it gets your template -- the same point
-    -- `:CW kumite new` applies one. Silent when there is no template
-    -- configured or templates are off; retemplate reports anything else.
-    self:retemplate("wrap")
+    -- `:CW kumite new` applies one.
+    --
+    -- Gated here rather than inside retemplate: wrap() deliberately ignores
+    -- the enabled switch because `:CW template on` calls it the instant the
+    -- switch goes on. fork() is the one caller that is not a switch flip, so
+    -- without this it would apply a template the user had turned off -- and
+    -- nothing removes it again before save or publish. is_configured keeps the
+    -- common case quiet: retemplate reports every refusal, which is right when
+    -- the user asked and noise when forking asked on their behalf.
+    local templates = require("codewars.templates")
+    if templates.is_enabled() and templates.is_configured(self.lang) then
+        self:retemplate("wrap")
+    end
     self:refresh_title()
     log.info("Forked — edit the code/fixture, run :CW test, and :CW kumite save when ready.")
 end

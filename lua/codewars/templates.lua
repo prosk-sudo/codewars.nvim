@@ -397,7 +397,20 @@ local function is_wrapped(text, body, w)
     if text:sub(1, #w.prefix) ~= w.prefix then
         return false
     end
-    return suffix == "" or body:sub(-#suffix) == suffix
+    if suffix == "" then
+        return true
+    end
+    -- The two ends must be disjoint in the body that strip() then slices.
+    -- Matching the prefix on raw text removed the only thing that guaranteed
+    -- it: a fenced template whose suffix is also a tail of its prefix matched
+    -- both ends against the SAME bytes when the buffer held just the prefix,
+    -- and body:sub(#prefix + 1, #body - #suffix) is an inverted range, which
+    -- Lua returns as "". strip() reported success and took the user's text
+    -- with it, where refusing is the whole contract.
+    if #body < #w.prefix + #suffix then
+        return false
+    end
+    return body:sub(-#suffix) == suffix
 end
 
 --- Put `text` inside the language's template, as if it were the kata's starter.

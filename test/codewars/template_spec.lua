@@ -75,6 +75,31 @@ describe("templates.render", function()
                 "an empty starter must strip back to empty, not to template text")
         end)
 
+        -- Matching the prefix on raw text and the suffix on the chomped body
+        -- removed the only thing that guaranteed the two regions were
+        -- disjoint. A fenced template plus a buffer holding just the prefix
+        -- satisfied both checks at once, and strip sliced an inverted range --
+        -- returning "" and taking the user's lines with it, where the old code
+        -- had safely refused.
+        it("refuses a buffer too short to hold both ends of the template", function()
+            solution({ python = "from solution import *\n# ---\n{{starter}}\n# ---\n" })
+            local only_prefix = "from solution import *\n# ---\n"
+
+            local stripped, reason = templates.strip("python", only_prefix, {})
+            assert.is_nil(stripped, "strip must not delete a buffer it cannot account for")
+            assert.is_not_nil(reason)
+        end)
+
+        it("still recognises a fenced template rendered with an empty starter", function()
+            local tpl = "from solution import *\n# ---\n{{starter}}\n# ---\n"
+            solution({ python = tpl })
+            local seeded = templates.render("python", { starter = "" })
+
+            local wrapped, reason = templates.wrap("python", seeded, {})
+            assert.is_nil(wrapped, "the seeded buffer is already wrapped: " .. tostring(reason))
+            assert.is_not_nil(templates.strip("python", seeded, {}))
+        end)
+
         it("round-trips once code is written into it", function()
             solution({ python = TPL })
             local seeded = templates.render("python", { starter = "" })
