@@ -151,24 +151,25 @@ function problemlist.update(opts, cb)
                 search.fetch_page(fetch_opts, page, function(results, has_more, err)
                     if aborted then return end
 
-                    if err and err.auth then
+                    -- Every abort is partial: writing here would stamp a
+                    -- truncated list as fresh and hide every kata the
+                    -- aborted run never reached.
+                    local function abort(msg)
                         aborted = true
-                        local log = require("codewars.logger")
-                        log.error(err.msg)
-                        spinner:error("Fetch aborted: authentication error")
-                        -- Partial, same as the rate-limit abort: writing here
-                        -- would stamp a truncated list as fresh and hide every
-                        -- kata the aborted run never reached.
+                        spinner:error(msg)
                         return finish(true)
+                    end
+
+                    if err and err.auth then
+                        require("codewars.logger").error(err.msg)
+                        return abort("Fetch aborted: authentication error")
                     end
 
                     if err and err.rate_limited then
                         -- fetch_page already backed off and retried; if it is
                         -- still refusing, stop rather than grinding through
                         -- the remaining ranks earning more 429s.
-                        aborted = true
-                        spinner:error(("Rate limited by Codewars after %d kata — wait a minute and run :CW cache update again"):format(#all_results))
-                        return finish(true)
+                        return abort(("Rate limited by Codewars after %d kata — wait a minute and run :CW cache update again"):format(#all_results))
                     end
 
                     if err then

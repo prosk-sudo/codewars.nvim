@@ -268,15 +268,16 @@ function utils.handle_res(out)
         -- Rate limited. Codewars publishes no limit, so the only reliable
         -- signal is this response; carry Retry-After through so the retry
         -- waits the amount the server asked for.
+        local retry_after = utils.header_value(out.headers, "retry-after")
         err = {
             code = 0,
             status = 429,
             rate_limited = true,
-            retry_after = tonumber(utils.header_value(out.headers, "retry-after")),
+            retry_after = tonumber(retry_after),
             -- Kept even when unparseable (HTTP-date form) so the backoff can
             -- tell "server asked for a wait we could not read" apart from
             -- "server said nothing".
-            retry_after_raw = utils.header_value(out.headers, "retry-after"),
+            retry_after_raw = retry_after,
             -- This text is only ever SEEN once retrying is over (budget
             -- exhausted, or a mutating request that does not retry), so it
             -- must not promise a retry that is not coming.
