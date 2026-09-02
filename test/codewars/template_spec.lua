@@ -47,6 +47,47 @@ describe("templates.render", function()
         package.loaded["codewars.config"] = cfg
     end)
 
+    -- `:CW kumite new` seeds render(lang, { starter = "" }), so the buffer is
+    -- the template's prefix and suffix with nothing between them. chomp() then
+    -- cuts that shorter than the prefix itself, and the prefix comparison
+    -- failed: `:CW template off` refused with "no longer matches", and `on`
+    -- did not recognise the template and stacked a second copy.
+    describe("a buffer rendered with an empty starter", function()
+        local TPL = "import logging\nimport sys\n\nlog = logging.getLogger(__name__)\n\n{{starter}}\n"
+
+        it("is recognised as already wrapped", function()
+            solution({ python = TPL })
+            local seeded = templates.render("python", { starter = "" })
+
+            local wrapped, reason = templates.wrap("python", seeded, {})
+            assert.is_nil(wrapped, "wrapping it again would duplicate the template")
+            assert.truthy(reason:find("already", 1, true), reason)
+        end)
+
+        it("strips back to nothing rather than refusing", function()
+            solution({ python = TPL })
+            local seeded = templates.render("python", { starter = "" })
+
+            local stripped, reason = templates.strip("python", seeded, {})
+            assert.is_nil(reason, reason)
+            assert.is_not_nil(stripped)
+            assert.are.equal("", (stripped:gsub("%s+$", "")),
+                "an empty starter must strip back to empty, not to template text")
+        end)
+
+        it("round-trips once code is written into it", function()
+            solution({ python = TPL })
+            local seeded = templates.render("python", { starter = "" })
+            local typed = seeded .. "def f():\n    pass\n"
+
+            local stripped = templates.strip("python", typed, {})
+            assert.is_not_nil(stripped)
+            assert.truthy(stripped:find("def f():", 1, true))
+            assert.is_nil(stripped:find("import logging", 1, true),
+                "the preamble must not survive the strip")
+        end)
+    end)
+
     describe("falling through to the starter", function()
         it("returns the starter unchanged when nothing is configured", function()
             assert.are.equal("def f(): pass", templates.render("python", { starter = "def f(): pass" }))

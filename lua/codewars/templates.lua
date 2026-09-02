@@ -381,14 +381,20 @@ end
 ---@param body string chomped text
 ---@param w table
 ---@return boolean
-local function is_wrapped(body, w)
+local function is_wrapped(text, body, w)
     local suffix = chomp(w.suffix)
     -- A template that is nothing but {{starter}} matches every buffer; there
     -- is nothing to strip and nothing to prove, so never claim a match.
     if w.prefix == "" and suffix == "" then
         return false
     end
-    if body:sub(1, #w.prefix) ~= w.prefix then
+    -- The prefix is matched against the RAW text, the suffix against the
+    -- chomped body. A prefix lives at the start, so trailing newlines cannot
+    -- bear on it -- but chomping cut a buffer holding nothing but the template
+    -- (render with an empty starter, which is what `:CW kumite new` seeds)
+    -- shorter than the prefix itself, and the comparison failed. `off` then
+    -- refused as "no longer matches" and `on` stacked a second copy.
+    if text:sub(1, #w.prefix) ~= w.prefix then
         return false
     end
     return suffix == "" or body:sub(-#suffix) == suffix
@@ -404,7 +410,7 @@ function M.wrap(lang, text, ctx)
     if not w then
         return nil, reason
     end
-    if is_wrapped(chomp(text), w) then
+    if is_wrapped(text, chomp(text), w) then
         return nil, ("This buffer already starts from your %s template."):format(lang)
     end
     -- Only the template's own trailing newline is chomped (it would add a
@@ -433,7 +439,7 @@ local function resolve_wrapped(lang, text, ctx)
     end
 
     local body = chomp(text)
-    if not is_wrapped(body, w) then
+    if not is_wrapped(text, body, w) then
         return nil, "", "", ("This buffer no longer matches your %s template."):format(lang)
     end
     return w, body, chomp(w.suffix)
