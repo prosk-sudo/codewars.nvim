@@ -265,7 +265,39 @@ function Kumite:retemplate(op)
     end
 
     api.nvim_buf_set_lines(self.bufnr, 0, -1, false, vim.split(text, "\n"))
+    self:_settle_cursor()
     return true
+end
+
+--- Put the cursor back on your code after a rewrite.
+---
+--- Every line moved, so wherever the cursor was describes a buffer that no
+--- longer exists: after a wrap it is stranded at the top of the preamble, and
+--- after a strip it is wherever a preamble used to be. The buffer is correct
+--- and the screen is not, which reads as the command having done nothing --
+--- or, once you run the other direction, as a second copy of the template.
+function Kumite:_settle_cursor()
+    if not (self.winid and api.nvim_win_is_valid(self.winid)) then
+        return
+    end
+
+    local templates = require("codewars.templates")
+    local text = self:_buffer_text()
+    local ok, pos = pcall(templates.locate, self.lang, text, self:_template_ctx())
+
+    local row, col
+    if ok and pos then
+        row, col = pos.row, pos.col
+    else
+        -- Not wrapped (a strip, or a buffer that drifted): the code is all
+        -- there is, so its end is where the cursor belongs.
+        row, col = templates.end_of(text)
+    end
+
+    pcall(api.nvim_win_set_cursor, self.winid, { row, col })
+    -- Setting the cursor scrolls down to reveal but never back up, so a
+    -- rewrite that shortened the text above it leaves the view stale.
+    pcall(api.nvim_win_call, self.winid, function() vim.cmd("normal! zb") end)
 end
 
 function Kumite:fork()

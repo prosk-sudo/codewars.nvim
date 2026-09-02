@@ -82,6 +82,53 @@ describe("Kumite templates", function()
         end)
     end)
 
+    -- set_lines moves every line under the cursor. After stripping a long
+    -- preamble the window is still scrolled to where it used to be, so the
+    -- buffer is right and the screen is not -- which reads as the command
+    -- having done nothing, or as a second copy of the template. The kata path
+    -- needed the same fix.
+    describe("the view after a rewrite", function()
+        local function windowed(state, code)
+            local w = workspace(state, code)
+            vim.cmd("tabnew")
+            w.winid = vim.api.nvim_get_current_win()
+            vim.api.nvim_win_set_buf(w.winid, w.bufnr)
+            return w
+        end
+
+        it("leaves the cursor on the code after a wrap", function()
+            local w = windowed("local_fork", "print(1)")
+            vim.api.nvim_win_set_cursor(w.winid, { 1, 0 })
+
+            assert.is_true(w:retemplate("wrap"))
+
+            local row = vim.api.nvim_win_get_cursor(w.winid)[1]
+            local line = vim.api.nvim_buf_get_lines(w.bufnr, row - 1, row, false)[1]
+            assert.are.equal("print(1)", line,
+                ("cursor sat on %q, not the code"):format(line))
+            vim.cmd("tabclose!")
+        end)
+
+        it("follows the code back down after a strip", function()
+            local w = windowed("local_fork", "print(1)")
+            w:retemplate("wrap")
+            -- Park the cursor deep in the preamble, where a real edit session
+            -- would leave it, then strip everything above the code away.
+            vim.api.nvim_win_set_cursor(w.winid, { 2, 0 })
+
+            assert.is_true(w:retemplate("strip"))
+
+            local row = vim.api.nvim_win_get_cursor(w.winid)[1]
+            local total = vim.api.nvim_buf_line_count(w.bufnr)
+            assert.is_true(row <= total,
+                ("cursor left at row %d of a %d line buffer"):format(row, total))
+            local line = vim.api.nvim_buf_get_lines(w.bufnr, row - 1, row, false)[1]
+            assert.are.equal("print(1)", line,
+                ("cursor sat on %q, not the code"):format(line))
+            vim.cmd("tabclose!")
+        end)
+    end)
+
     describe(":CW template", function()
         local cmd = require("codewars.command")
 
