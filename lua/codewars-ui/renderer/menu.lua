@@ -676,7 +676,11 @@ Menu._active = nil
 --- Refresh stats from API (called after submit, etc.)
 --- Immediately increments local count, then re-fetches from API for accuracy.
 function Menu.refresh_stats()
-    local m = Menu._active
+    -- _Cw_state.menu is the handle that survives a reload; Menu._active lives
+    -- on the module table and a `package.loaded` clear takes it with the rest.
+    -- Returning early on that nil left the dashboard's completed count frozen
+    -- for the rest of the session, and said nothing about it.
+    local m = Menu._active or (_Cw_state or {}).menu
     if not m then return end
     if m._user_data and m._user_data.codeChallenges then
         m._user_data.codeChallenges.totalCompleted =
