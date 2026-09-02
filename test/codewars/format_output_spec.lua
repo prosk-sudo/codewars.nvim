@@ -185,13 +185,14 @@ describe("Runner.format_output", function()
             assert.are.equal("         at line 3", lines[2])
         end)
 
-        it("renders a whitespace-only separator as a blank line", function()
+        it("passes a whitespace-only separator through unpadded", function()
             -- Codewars separates the parts of a C assertion message with a
-            -- lone space, which padding would turn into trailing whitespace.
+            -- lone space. Padding it would make a line of trailing whitespace;
+            -- blanking it would drop a byte the old rendering kept.
             local lines = Runner.format_output({
                 { t = "failed", v = "header\n \nbody" },
             })
-            assert.are.equal("", lines[2])
+            assert.are.equal(" ", lines[2], "the separator must survive verbatim")
             assert.are.equal("  body", lines[3])
         end)
 

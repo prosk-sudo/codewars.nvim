@@ -74,11 +74,13 @@ function Runner.format_output(output)
         -- the server sent a string, and the throw would land in a scheduled
         -- callback with no pcall around it, losing the whole run's output.
         for i, line in ipairs(vim.split(tostring(text or ""), "\n", { plain = true })) do
-            -- A blank continuation stays blank rather than becoming padding.
-            -- Codewars spaces its message blocks with a lone " ", which would
-            -- otherwise render as a line of trailing whitespace.
+            -- A whitespace-only continuation is passed through untouched
+            -- rather than padded: Codewars spaces its message blocks with a
+            -- lone " ", and prefixing that would make a line of trailing
+            -- whitespace. Kept verbatim rather than blanked, so the bytes
+            -- match what the old single-entry value rendered to.
             if i > 1 and line:match("^%s*$") then
-                table.insert(lines, "")
+                table.insert(lines, line)
             else
                 table.insert(lines, (i == 1 and prefix or cont) .. line)
             end
