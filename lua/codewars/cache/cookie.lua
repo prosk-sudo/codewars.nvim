@@ -186,6 +186,8 @@ function Cookie.identity_changed()
     with("codewars.config", function(m) m.user.username = "" end)
     -- The same name persisted for next launch, plus that account's stats.
     with("codewars.cache.profile", function(m) m.clear() end)
+    -- The dashboard may be saying "session expired"; it is not, any more.
+    with("codewars-ui.renderer.menu", function(m) m.session_changed() end)
 end
 
 ---@return boolean

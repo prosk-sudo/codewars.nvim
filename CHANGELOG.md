@@ -16,6 +16,13 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- The dashboard now says when your session has expired. It used to paint
+  your name, rank and honor from the cache as if you were signed in — the
+  stats are public, so the cache refreshes with no session at all — and then
+  warn on every launch that it could not confirm your account. The header
+  now reads `Session expired — :CW cookie` and the stats row stays blank
+  until the session is confirmed again or a new cookie is set. A rate limit
+  or dropped connection still warns rather than being mistaken for expiry.
 - Reloading the plugin in a live session no longer strands your open katas.
   `_Cw_state` survives a `package.loaded` clear, so a reload keeps its handles
   on every mounted kata and menu instead of leaking their buffers and windows.

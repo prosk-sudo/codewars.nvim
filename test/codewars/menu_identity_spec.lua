@@ -348,6 +348,90 @@ describe("Menu identity", function()
         end)
     end)
 
+    -- A dead session used to produce a dashboard that painted the cached name
+    -- and stats as if signed in, plus a one-shot warning saying the opposite.
+    -- The stats are public, so the cache refreshes happily with no session at
+    -- all; the screen and the warning contradicted each other on every launch.
+    describe("an expired session", function()
+        local function verify_replies_with(err)
+            api_stub.get_current = function(cb)
+                table.insert(calls, "get_current")
+                cb(nil, err)
+            end
+        end
+
+        local function mounted_with_cache()
+            stored = { fp = "alice-session", username = "prosk", lang = "rust",
+                honor = 863, rank_name = "4 kyu", completed = 218 }
+            vim.cmd("tabnew")
+            local menu = Menu:init()
+            menu:mount()
+            vim.wait(50, function() return false end)
+            return menu
+        end
+
+        local function rendered(menu)
+            return table.concat(vim.api.nvim_buf_get_lines(menu.bufnr, 0, -1, false), "\n")
+        end
+
+        it("is shown in the header instead of being painted as signed in", function()
+            verify_replies_with({ auth = true, msg = "Could not read your profile" })
+            local menu = mounted_with_cache()
+
+            assert.is_true(menu._session_expired == true)
+            local text = rendered(menu)
+            assert.truthy(text:find("Session expired", 1, true), text)
+            assert.truthy(text:find(":CW cookie", 1, true))
+            assert.is_nil(text:find("Signed in as", 1, true),
+                "a dead session must not be painted as signed in")
+            assert.is_nil(text:find("863 honor", 1, true),
+                "cached stats must not be painted as live")
+            vim.cmd("tabclose!")
+        end)
+
+        -- A rate limit or a dropped connection says nothing about the session.
+        it("is not declared on a network failure", function()
+            verify_replies_with({ status = 429, rate_limited = true, msg = "rate limited" })
+            local menu = mounted_with_cache()
+
+            assert.is_nil(menu._session_expired)
+            assert.truthy(rendered(menu):find("Signed in as", 1, true))
+            vim.cmd("tabclose!")
+        end)
+
+        it("clears once a verification succeeds again", function()
+            verify_replies_with({ auth = true, msg = "expired" })
+            local menu = mounted_with_cache()
+            assert.is_true(menu._session_expired == true)
+
+            api_stub.get_current = function(cb)
+                cb({ username = "prosk", current_language = "rust" })
+            end
+            Menu._fetch_user_data(menu, nil, { verify = true })
+            vim.wait(50, function() return false end)
+
+            assert.is_nil(menu._session_expired)
+            vim.cmd("tabclose!")
+        end)
+
+        -- Signing in or out goes through identity_changed(), the one place that
+        -- enumerates identity-scoped state; it has to reach the menu too, or
+        -- the header keeps saying "expired" over a brand-new cookie.
+        it("clears when the identity changes", function()
+            verify_replies_with({ auth = true, msg = "expired" })
+            local menu = mounted_with_cache()
+            assert.is_true(menu._session_expired == true)
+
+            _Cw_state.menu = menu
+            Menu.session_changed()
+            vim.wait(50, function() return false end)
+
+            assert.is_nil(menu._session_expired)
+            assert.is_nil(rendered(menu):find("Session expired", 1, true))
+            vim.cmd("tabclose!")
+        end)
+    end)
+
     describe("the reserved stats row", function()
         local function render_lines(stats)
             vim.cmd("tabnew")

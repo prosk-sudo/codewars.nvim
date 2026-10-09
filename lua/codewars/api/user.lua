@@ -73,6 +73,11 @@ function user.get_current(cb, opts)
                 -- Either the markup drifted, or this is the login page
                 -- because the cookie expired. Both leave us anonymous.
                 return cb(nil, {
+                    -- Tagged like a 401: Codewars answers an unrecognised
+                    -- session with a redirect to the homepage, which is a
+                    -- 200 with no profile in it. Callers that react to auth
+                    -- failures need to see this one as one of them.
+                    auth = true,
                     msg = "Could not read your profile from the Codewars dashboard. "
                         .. "Run :CW cookie if your session expired.",
                 })

@@ -121,6 +121,18 @@ describe("Cookie identity change", function()
             assert.are.equal("alice", config.user.username)
         end)
 
+        -- The dashboard header can be in an "expired" state. A new cookie
+        -- must reach it, or it keeps saying so over a session that is fine.
+        it("tells the menu the session changed", function()
+            local told = 0
+            package.loaded["codewars-ui.renderer.menu"] = {
+                session_changed = function() told = told + 1 end,
+            }
+            assert.is_nil(Cookie.set("CSRF-TOKEN=abc; _session_id=xyz"))
+            package.loaded["codewars-ui.renderer.menu"] = nil
+            assert.are.equal(1, told, "identity_changed did not reach the menu")
+        end)
+
         it("keeps going when one hook fails", function()
             package.loaded["codewars.picker"] = { invalidate_completed_cache = function() error("boom") end }
             Cookie.delete()
