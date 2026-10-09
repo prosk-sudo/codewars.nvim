@@ -190,3 +190,43 @@ describe("markdown.from_html", function()
         assert.truthy(out:find("use `a < b` here", 1, true))
     end)
 end)
+
+-- Codewars answers an unrecognised session with a redirect to the homepage:
+-- a 200 with no profile in it. The menu tells "expired" apart from a dropped
+-- connection by this tag, so it must be on exactly this error and no other.
+describe("user.get_current", function()
+    local real_utils = package.loaded["codewars.api.utils"]
+    local subject
+
+    local function dashboard_returns(body, err)
+        package.loaded["codewars.api.utils"] = vim.tbl_extend("force", real_utils or require("codewars.api.utils"), {
+            get = function(_, opts) opts.callback(body, err) end,
+        })
+        package.loaded["codewars.api.user"] = nil
+        subject = require("codewars.api.user")
+    end
+
+    after_each(function()
+        package.loaded["codewars.api.utils"] = real_utils
+        package.loaded["codewars.api.user"] = nil
+    end)
+
+    it("tags a page with no profile in it as an auth failure", function()
+        dashboard_returns("<html><title>Codewars</title><p>homepage</p></html>")
+        local got_profile, got_err
+        subject.get_current(function(p, e) got_profile, got_err = p, e end)
+
+        assert.is_nil(got_profile)
+        assert.is_true(got_err.auth == true, vim.inspect(got_err))
+        assert.truthy(got_err.msg:find(":CW cookie", 1, true))
+    end)
+
+    it("passes a transport error through untagged", function()
+        dashboard_returns(nil, { status = 429, rate_limited = true, msg = "rate limited" })
+        local got_err
+        subject.get_current(function(_, e) got_err = e end)
+
+        assert.is_nil(got_err.auth, "a rate limit is not an expired session")
+        assert.are.equal(429, got_err.status)
+    end)
+end)

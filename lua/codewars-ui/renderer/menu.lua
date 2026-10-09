@@ -180,6 +180,16 @@ local function fetch_user_data(menu, cb, opts)
     local function verify()
         scrape(function(profile, err)
             if err or not profile or not profile.username then
+                if err and err.auth then
+                    -- The dashboard bounced the session. Said in the header,
+                    -- where it stays, rather than as a warning: the stats
+                    -- are public and the cache refreshes them happily with
+                    -- no session at all, so a warning was contradicted by
+                    -- the rest of the screen on every launch. detect() would
+                    -- hit the same wall, so it is not tried.
+                    menu._session_expired = true
+                    return done()
+                end
                 if err then
                     log.warn(("Signed in, but could not confirm your account: %s")
                         :format(err.msg or "unknown error"))
@@ -190,6 +200,11 @@ local function fetch_user_data(menu, cb, opts)
                 return
             end
             apply_lang(profile.current_language)
+            -- Confirmed live again; the branches below redraw via
+            -- fetch_stats, except the same-name one, which only writes the
+            -- cache -- so it gets its own redraw when there is one to show.
+            local was_expired = menu._session_expired
+            menu._session_expired = nil
 
             -- Against the LIVE name, not the one verify was started with: the
             -- 404 self-heal may have corrected it already, and re-running the
@@ -211,6 +226,7 @@ local function fetch_user_data(menu, cb, opts)
 
             if profile.username == config.user.username then
                 profile_cache.update({ lang = profile.current_language })
+                if was_expired then done() end
                 return
             end
 
@@ -597,8 +613,12 @@ function Menu:draw()
     -- below, so the whole block jumped as the fetch landed.
     local honor_row = nil
     local username = config.user.username
+    -- A session the dashboard bounced. The stats are public and still
+    -- accurate, but painting them under a signed-in header is what made this
+    -- state invisible; the row stays reserved and blank.
+    local expired = signed_in and self._session_expired
     if signed_in then
-        local s = self._stats
+        local s = not expired and self._stats
         honor_row = #lines
         table.insert(lines, s and center(("%s  |  %s honor  |  %s kata completed")
             :format(s.rank_name, s.honor, s.completed)) or "")
@@ -606,7 +626,9 @@ function Menu:draw()
     end
 
     local signin_row = #lines
-    if signed_in and username ~= "" then
+    if expired then
+        table.insert(lines, center("Session expired — :CW cookie"))
+    elseif signed_in and username ~= "" then
         table.insert(lines, center("Signed in as: " .. username))
     elseif signed_in then
         table.insert(lines, center("Signed in"))
@@ -676,7 +698,9 @@ function Menu:draw()
         api.nvim_buf_add_highlight(self.bufnr, ns, "codewars_ref", honor_row, 0, -1)
     end
 
-    if signed_in and username ~= "" then
+    if expired then
+        api.nvim_buf_add_highlight(self.bufnr, ns, "codewars_warning", signin_row, 0, -1)
+    elseif signed_in and username ~= "" then
         local signin_line = lines[signin_row + 1] or ""
         api.nvim_buf_add_highlight(self.bufnr, ns, "Comment", signin_row, 0, -1)
         local uname_start = signin_line:find(username, 1, true)
@@ -855,6 +879,21 @@ function Menu:set_keymaps()
 end
 
 Menu._active = nil
+
+--- The cookie changed under us: a sign-in or a sign-out. An "expired"
+--- header over a brand-new session is wrong, and nothing else on that path
+--- reaches the menu -- `:CW cookie` from the command line never touches it.
+--- Called from Cookie.identity_changed(), the one place that enumerates
+--- identity-scoped state.
+function Menu.session_changed()
+    local m = Menu._active or (_Cw_state or {}).menu
+    if not m or not m._session_expired then return end
+    m._session_expired = nil
+    if m.bufnr and api.nvim_buf_is_valid(m.bufnr) then
+        m._redraw_only = true
+        m:draw()
+    end
+end
 
 --- Refresh stats from API (called after submit, etc.)
 --- Immediately increments local count, then re-fetches from API for accuracy.
