@@ -4,6 +4,17 @@ All notable changes to codewars.nvim are documented here.
 
 ## [Unreleased]
 
+### Added
+- `indent` option: one indentation style per language, set in `setup()` the
+  way templates are — `indent = { python = 4, c = 4, go = "tabs" }`. Codewars'
+  starter code is not consistently indented; the same language arrives with
+  two spaces on one kata and four on the next. For a language you list, the
+  starter is converted as it is seeded (new kata, `:CW reset`, language
+  switch) and the solution buffer's indent options are set to match, after
+  any ftplugin. A starter whose indentation cannot be read with certainty is
+  left as it came, solution files already on disk are never rewritten, and a
+  language you leave out is not touched at all.
+
 ### Changed
 - The dashboard header no longer waits on a network round trip to show who you
   are. Your username, rank, honor and completed count are remembered between
