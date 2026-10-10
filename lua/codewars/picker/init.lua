@@ -1,4 +1,5 @@
 local config = require("codewars.config")
+local select = require("codewars.picker.select")
 local log = require("codewars.logger")
 local theme = require("codewars.theme")
 
@@ -131,79 +132,6 @@ local difficulty_options = {
     { rank = -1, label = "1 kyu" },
 }
 
---- Filter items by rank.
----@param items table[]
----@param rank integer? nil means all ranks
----@return table[]
---- Rank of a list item. Catalogue items carry `rank_id`; completed-kata
---- items (cache/completed.lua) carry `rank = { id, name }`. Every rank read
---- in this file goes through here so the two lists stay interchangeable.
----@param item table
----@return integer?
-local function rank_of(item)
-    return item.rank_id or (item.rank and item.rank.id)
-end
-
---- `rank` is nil (all), one rank, or a list of ranks (`:CW list
---- difficulty=8,7`); the picker's Ctrl-d menu then narrows to one of them.
----@param items table[]
----@param rank integer|integer[]|nil
-local function filter_by_rank(items, rank)
-    if not rank then return items end
-    local wanted = type(rank) == "table" and rank or { rank }
-    local set = {}
-    for _, r in ipairs(wanted) do set[r] = true end
-    return vim.tbl_filter(function(item)
-        return set[rank_of(item)] == true
-    end, items)
-end
-
----@param rank integer|integer[]|nil
----@return string
-local function rank_label(rank)
-    if not rank then return "All ranks" end
-    local ranks = type(rank) == "table" and rank or { rank }
-    return table.concat(vim.tbl_map(function(r) return tostring(math.abs(r)) end, ranks), ",") .. " kyu"
-end
-
-local function shuffle(tbl)
-    local shuffled = vim.list_slice(tbl, 1, #tbl)
-    for i = #shuffled, 2, -1 do
-        local j = math.random(i)
-        shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
-    end
-    return shuffled
-end
-
-local function sort_items(items, mode)
-    if mode == "shuffle" then return shuffle(items) end
-    local sorted = vim.list_slice(items, 1, #items)
-    if mode == "name" then
-        table.sort(sorted, function(a, b)
-            return (a.name or a.slug or "") < (b.name or b.slug or "")
-        end)
-    elseif mode == "satisfaction" then
-        table.sort(sorted, function(a, b)
-            return (a.satisfaction or 0) > (b.satisfaction or 0)
-        end)
-    elseif mode == "hardest" or mode == "easiest" then
-        -- rank_id is -8 (easiest) .. -1 (hardest); ties keep cache order,
-        -- which is the site's popularity order within a rank.
-        local sign = mode == "hardest" and -1 or 1
-        local pos = {}
-        for i, item in ipairs(sorted) do pos[item] = i end
-        table.sort(sorted, function(a, b)
-            -- Unranked (beta) kata go last either way.
-            local ra, rb = rank_of(a), rank_of(b)
-            if (ra == nil) ~= (rb == nil) then return rb == nil end
-            ra, rb = (ra or 0) * sign, (rb or 0) * sign
-            if ra ~= rb then return ra < rb end
-            return pos[a] < pos[b]
-        end)
-    end
-    return sorted
-end
-
 --- Show a telescope picker for a list of kata items.
 ---@param items table[]
 ---@param title string
@@ -252,12 +180,12 @@ function picker._show_kata_list(items, title, completed_set, initial)
 
     local function build_display_list()
         local filtered = problemlist_utils.filter_by_language(items, current_lang_filter)
-        filtered = filter_by_rank(filtered, current_rank_filter)
-        local sorted = sort_items(filtered, sort_modes[current_sort_idx].key)
+        filtered = select.filter_by_rank(filtered, current_rank_filter)
+        local sorted = select.sort_items(filtered, sort_modes[current_sort_idx].key)
 
         local lang_label = current_lang_filter or "All languages"
         local sort_label = sort_modes[current_sort_idx].label
-        local rank_text = rank_label(current_rank_filter)
+        local rank_text = select.rank_label(current_rank_filter)
 
         local controls = {
             { _control = "sort", label = ("  Sort: %s"):format(sort_label) },
@@ -361,7 +289,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
         local lang_icons = require("codewars.icons").get()
         local current_lang_idx = 0
 
-        local rank_filtered = filter_by_rank(items, current_rank_filter)
+        local rank_filtered = select.filter_by_rank(items, current_rank_filter)
         local all_prefix = current_lang_filter == nil and "● " or "  "
         table.insert(lang_entries, {
             -- value wraps the nil-able lang so on_select can distinguish "All languages"
@@ -409,7 +337,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
         -- One pass over the list for every rank's count, not one per rank.
         local per_rank = {}
         for _, item in ipairs(lang_filtered) do
-            local r = rank_of(item)
+            local r = select.rank_of(item)
             if r then per_rank[r] = (per_rank[r] or 0) + 1 end
         end
         for j, opt in ipairs(difficulty_options) do
@@ -572,7 +500,7 @@ function picker.problems(opts)
             items = items or {}
             -- Judge emptiness on what the picker will actually show for the
             -- requested ranks, not on the whole (possibly partial) catalogue.
-            local shown = filter_by_rank(items, initial.rank_filter or nil)
+            local shown = select.filter_by_rank(items, initial.rank_filter or nil)
             if #shown == 0 then
                 -- An aborted run already reported its own error.
                 if partial then return end
@@ -1061,6 +989,27 @@ function picker.language(kata)
             kata:change_lang(new_lang)
         end,
     })
+end
+
+--- What `:CW next` reads: the filters last chosen in the list menus. The
+--- picker remembers them so a reopened list looks the way it was left; next
+--- borrows the same memory, so "another one" means another of the same.
+---@return cw.picker.Selection
+function picker.current_filters()
+    local mode = sort_modes[_saved_sort_idx or 0]
+    return {
+        lang = _saved_lang_filter or config.lang,
+        rank = _saved_rank_filter,
+        sort = mode and mode.key or "shuffle",
+    }
+end
+
+--- Run `cb` with the completed set, refreshing it first when the cache is
+--- stale -- so a kata solved on the website since the last refresh is not
+--- served as "next".
+---@param cb fun(completed: table<string, boolean>)
+function picker.with_completed(cb)
+    ensure_completed_set(cb)
 end
 
 return picker

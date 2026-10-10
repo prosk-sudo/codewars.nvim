@@ -225,7 +225,7 @@ function Runner:handle(mode)
                 return
             end
 
-            log.info("Kata finalized successfully!")
+            log.info("Kata finalized successfully! :CW next for another.")
             kata.finalized = true
             local ok, mark_err = pcall(function()
                 require("codewars.cache.completed").mark(kata.kata_id, kata.slug, kata.lang)
