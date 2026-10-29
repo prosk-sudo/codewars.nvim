@@ -1,11 +1,28 @@
 -- Submit eligibility: only a full attempt, registered with Codewars, on the
 -- session it was run against, may unlock :CW submit.
 describe("Runner submit eligibility", function()
-    local warnings = {}
+    local warnings, infos = {}, {}
     package.loaded["codewars.logger"] = {
-        info = function() end, debug = function() end, err = function() end, error = function() end,
+        debug = function() end, err = function() end, error = function() end,
+        info = function(msg) infos[#infos + 1] = msg end,
         warn = function(msg) warnings[#warnings + 1] = msg end,
     }
+
+    -- Finalize goes through api.utils; count it instead of sending it, and
+    -- stub what a successful finalize touches afterwards.
+    local finalized = 0
+    package.loaded["codewars.api.utils"] = {
+        post = function(_, opts)
+            finalized = finalized + 1
+            opts.callback({ success = true })
+        end,
+    }
+    package.loaded["codewars.api.urls"] = { finalize = "/finalize/%s/%s", base = "" }
+    package.loaded["codewars.cache.completed"] = { mark = function() end }
+    package.loaded["codewars.picker"] = { invalidate_completed_cache = function() end }
+    package.loaded["codewars-ui.renderer.menu"] = { refresh_stats = function() end }
+    package.loaded["codewars.command"] = { focus_kata_completed = function() end }
+    package.loaded["codewars-ui.popup.solutions"] = { fetch_and_show = function() end }
     package.loaded["codewars.config"] = { user = { debug = false }, lang = "python" }
 
     -- Scripted transport: the spec drives every callback by hand.
@@ -31,10 +48,33 @@ describe("Runner submit eligibility", function()
     end
 
     before_each(function()
+        -- A queued submit re-enters through a scheduled call. Let anything a
+        -- previous test left scheduled run out BEFORE the counters reset, or
+        -- its finalize lands in this test's numbers.
+        vim.wait(50, function() return false end)
         pending = {}
-        warnings = {}
+        warnings, infos = {}, {}
+        finalized = 0
         Runner.running = false
     end)
+
+    --- A passing attempt whose registration is still in flight.
+    local function passed_attempt(k)
+        Runner.running = false
+        Runner:init(k):handle("attempt")
+        pending.submit.cb({ result = { completed = true }, token = "t" })
+        return pending.notify.cb
+    end
+
+    local function submit(k)
+        Runner.running = false
+        Runner:init(k):handle("submit")
+    end
+
+    -- The queued submit re-enters through Runner.run, which is scheduled.
+    local function settle()
+        vim.wait(100, function() return false end)
+    end
 
     it("a passing quick test does not unlock submit", function()
         local k = kata()
@@ -45,17 +85,105 @@ describe("Runner submit eligibility", function()
 
     it("a passing attempt unlocks submit only once Codewars has registered it", function()
         local k = kata()
-        Runner:init(k):handle("attempt")
-        pending.submit.cb({ result = { completed = true }, token = "t" })
+        local register = passed_attempt(k)
         assert.is_true(k.last_attempt_success)
         assert.equals(1, k._notify_pending)
 
-        Runner.running = false
-        Runner:init(k):handle("submit")
-        assert.truthy(warnings[#warnings]:find("Still registering", 1, true))
+        submit(k)
+        assert.equals(0, finalized, "finalized before Codewars registered the attempt")
 
-        pending.notify.cb({ success = true })
+        register({ success = true })
         assert.equals(0, k._notify_pending)
+        vim.wait(100, function() return false end)
+        assert.equals(1, finalized)
+    end)
+
+    -- Submitting inside that window used to be refused with "try again in a
+    -- moment", and the console sat on "Submitting..." while the user guessed
+    -- when to retry. The plugin knows exactly when it is safe; it waits.
+    describe("a submit made while the attempt is still registering", function()
+        it("goes through on its own once Codewars registers it", function()
+            local k = kata()
+            local register = passed_attempt(k)
+
+            submit(k)
+            assert.equals(0, finalized)
+            assert.is_nil(warnings[1], "waiting is not a warning: " .. tostring(warnings[1]))
+            assert.truthy((infos[#infos] or ""):find("Waiting for Codewars", 1, true), infos[#infos])
+
+            register({ success = true })
+            settle()
+            assert.equals(1, finalized)
+        end)
+
+        it("is not sent when Codewars does not register the attempt", function()
+            local k = kata()
+            local register = passed_attempt(k)
+            submit(k)
+
+            register(nil, { msg = "boom" })
+            settle()
+            assert.equals(0, finalized)
+            assert.truthy((warnings[#warnings] or ""):find("not sent", 1, true), vim.inspect(warnings))
+        end)
+
+        it("waits for every registration still in flight", function()
+            local k = kata()
+            local first = passed_attempt(k)
+            local second = passed_attempt(k)
+            assert.equals(2, k._notify_pending)
+            submit(k)
+
+            first({ success = true })
+            settle()
+            assert.equals(0, finalized, "submitted with a registration still in flight")
+            -- handle() would re-queue an early release safely, but the user
+            -- would read "Waiting for Codewars" twice for one command.
+            local waiting = vim.tbl_filter(function(m) return m:find("Waiting for Codewars", 1, true) end, infos)
+            assert.equals(1, #waiting, vim.inspect(infos))
+
+            second({ success = true })
+            settle()
+            assert.equals(1, finalized)
+        end)
+
+        it("is sent once however many times it was asked for", function()
+            local k = kata()
+            local register = passed_attempt(k)
+            submit(k)
+            submit(k)
+
+            register({ success = true })
+            settle()
+            assert.equals(1, finalized)
+        end)
+
+        -- Every notify reply passes through the release check, a quick test's
+        -- included. A queued submit that is not cleared once sent would go
+        -- again on the next one.
+        it("is not sent again by a later run's registration", function()
+            local k = kata()
+            local register = passed_attempt(k)
+            submit(k)
+            register({ success = true })
+            settle()
+            assert.equals(1, finalized)
+
+            Runner.running = false
+            Runner:init(k):handle("test")
+            pending.submit.cb({ result = { completed = true }, token = "t2" })
+            pending.notify.cb({ success = true })
+            settle()
+            assert.equals(1, finalized, "a quick test's registration submitted again")
+        end)
+
+        it("does nothing once the registration it waited for is answered", function()
+            local k = kata()
+            local register = passed_attempt(k)
+            register({ success = true })
+            settle()
+            assert.equals(0, finalized, "a registration with no submit waiting must not submit")
+        end)
     end)
 
     it("a quick test's notify neither blocks submit nor revokes an earlier attempt", function()

@@ -163,8 +163,14 @@ function Runner:handle(mode)
             return log.warn("Cannot submit: last attempt was not successful")
         end
         if (kata._notify_pending or 0) > 0 then
+            -- The passing attempt is still being registered, and finalizing
+            -- before it is would complete nothing. This used to refuse and
+            -- ask the user to try again "in a moment" -- a moment only the
+            -- plugin can see the end of. Wait for it instead: the notify
+            -- reply below runs this submit once nothing is in flight.
             self:stop()
-            return log.warn("Still registering your last attempt with Codewars — try :CW submit again in a moment.")
+            kata._submit_queued = true
+            return log.info("Waiting for Codewars to register your attempt — it will submit as soon as it does.")
         end
 
         local api_utils = require("codewars.api.utils")
@@ -363,6 +369,26 @@ function Runner:handle(mode)
                                 log.warn("Codewars did not register this attempt"
                                     .. (nerr and nerr.msg and (" (" .. tostring(nerr.msg):gsub("\n.*", "") .. ")") or "")
                                     .. " — run :CW attempt again before submitting.")
+                            end
+
+                            -- A :CW submit made while registrations were in
+                            -- flight was held for them. Only the last reply
+                            -- releases it, and only if what it waited for is
+                            -- still a passing attempt; a failed registration
+                            -- just revoked that above.
+                            if kata._submit_queued and (kata._notify_pending or 0) == 0 then
+                                kata._submit_queued = nil
+                                if kata.last_attempt_success then
+                                    -- Runner.run, as :CW submit itself does:
+                                    -- the same busy check and error handling.
+                                    Runner:init(kata):run("submit")
+                                else
+                                    local msg = "Your :CW submit was not sent: the attempt it was waiting on did not register as passing."
+                                    log.warn(msg)
+                                    if kata.console and kata.console.result then
+                                        kata.console.result:handle_error({ msg = msg })
+                                    end
+                                end
                             end
                         end)
                     elseif mode == "attempt" and completed and same_session then

@@ -600,6 +600,9 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 -- Any notify still in flight belongs to the old session; it
                 -- must not keep submit locked for this one.
                 self._notify_pending = 0
+                -- A submit held for the old session's registration is not a
+                -- submit of this one.
+                self._submit_queued = nil
 
                 local lang_info = utils.get_lang(new_lang)
                 assert(lang_info, "Unsupported language: " .. new_lang)
