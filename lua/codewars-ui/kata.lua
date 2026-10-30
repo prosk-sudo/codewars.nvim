@@ -132,12 +132,13 @@ function Kata:create_buffer()
     self.winid = vim.api.nvim_get_current_win()
     ui_utils.win_set_winfixbuf(self.winid)
 
-    ui_utils.buf_set_opts(self.bufnr, { buflisted = true })
-    -- After the file is open: opening it fires FileType, and an ftplugin
-    -- that sets these options would otherwise have the last word.
-    require("codewars.indent").setup_buffer(self.bufnr, self.lang)
-    ui_utils.win_set_buf(self.winid, self.bufnr, true)
+    self:_show_buffer()
+end
 
+--- Show self.bufnr, the solution file just opened, in the kata's window.
+function Kata:_show_buffer()
+    ui_utils.set_code_buffer(self.bufnr, self.lang, { buflisted = true })
+    ui_utils.win_set_buf(self.winid, self.bufnr, true)
     self:_cursor_to_end()
 end
 
@@ -626,10 +627,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 -- buffer nobody tracks leaks for the rest of the session.
                 self._old_bufnrs = self._old_bufnrs or {}
                 if prev_bufnr ~= self.bufnr then table.insert(self._old_bufnrs, prev_bufnr) end
-                ui_utils.buf_set_opts(self.bufnr, { buflisted = true })
-                require("codewars.indent").setup_buffer(self.bufnr, self.lang)
-                ui_utils.win_set_buf(self.winid, self.bufnr, true)
-                self:_cursor_to_end()
+                self:_show_buffer()
 
                 if self.testcase_split then
                     self.testcase_split:populate(self.example_fixture)

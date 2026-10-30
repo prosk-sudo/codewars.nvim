@@ -703,21 +703,14 @@ function Kumite:mount()
 
     api.nvim_buf_set_lines(self.bufnr, 0, -1, false, vim.split(self.snippet.code or "", "\n"))
 
-    -- Syntax highlighting for every codewars language via the real Neovim
-    -- filetype (not the file extension). Unknown/grammarless languages
-    -- stay plain text.
-    local ft = require("codewars.languages.filetypes").code(self.lang) or ""
-
-    ui_utils.buf_set_opts(self.bufnr, {
+    -- The code buffer only. The fixture is not always in the kumite's own
+    -- language, so neither its filetype nor its indentation is this one's.
+    ui_utils.set_code_buffer(self.bufnr, self.lang, {
         buftype = "acwrite", -- lets :w be intercepted (fork/run hints) without a real file
         swapfile = false,
         buflisted = false,
-        filetype = ft,
         modifiable = kstate.is_editable(self.state),
     })
-    -- The code buffer only. The fixture is not always in the kumite's own
-    -- language, so the language's indentation is not known to be right there.
-    require("codewars.indent").setup_buffer(self.bufnr, self.lang)
     -- Populating an acwrite buffer marks it 'modified'; clear that so a
     -- freshly-opened kumite closes with :q (and `q`) without E37.
     vim.bo[self.bufnr].modified = false
