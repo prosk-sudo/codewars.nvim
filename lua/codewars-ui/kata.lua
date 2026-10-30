@@ -585,7 +585,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
             local SESSION_FIELDS = {
                 "lang", "bufnr", "project_id", "solution_id", "setup_code", "example_fixture",
                 "fixture", "package", "test_framework", "language_version", "last_attempt_success",
-                "finalized", "file",
+                "finalized", "file", "_notify_pending", "_submit_queued",
             }
             local before = {}
             for _, k in ipairs(SESSION_FIELDS) do before[k] = self[k] end
@@ -602,9 +602,10 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 self.language_version = session.activeVersion
                 self.last_attempt_success = false
                 self.finalized = false
-                -- Any notify still in flight belongs to the old session; it
-                -- must not keep submit locked for this one.
+                -- A notify still in flight, and a submit held for one, belong
+                -- to the old session: neither may lock or submit this one.
                 self._notify_pending = 0
+                self._submit_queued = nil
 
                 local lang_info = utils.get_lang(new_lang)
                 assert(lang_info, "Unsupported language: " .. new_lang)

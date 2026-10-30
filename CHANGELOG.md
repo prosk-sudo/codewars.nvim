@@ -16,6 +16,14 @@ All notable changes to codewars.nvim are documented here.
   language you leave out is not touched at all.
 
 ### Changed
+- `:CW submit` right after a passing `:CW attempt` now waits for Codewars to
+  register the attempt and then submits on its own, instead of refusing with
+  "Still registering your last attempt — try :CW submit again in a moment".
+  The attempt's results appear before that registration has finished, so a
+  quick submit used to land inside the window and the console sat on
+  "Submitting..." while you guessed when to retry. If the registration fails,
+  or another run has started by the time it lands, nothing is submitted and
+  you are told why.
 - The dashboard header no longer waits on a network round trip to show who you
   are. Your username, rank, honor and completed count are remembered between
   launches, so the menu paints them immediately instead of sitting on a bare
@@ -27,6 +35,9 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- A language switch that failed part-way no longer forgets that the previous
+  language's attempt was still being registered, which let `:CW submit` go
+  out before Codewars had counted the attempt.
 - The dashboard now says when your session has expired. It used to paint
   your name, rank and honor from the cache as if you were signed in — the
   stats are public, so the cache refreshes with no session at all — and then

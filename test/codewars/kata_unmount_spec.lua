@@ -131,6 +131,23 @@ describe("Kata close lifecycle", function()
         wait_gone(buf)
     end)
 
+    -- A failed switch puts the previous session back whole. That includes a
+    -- submit held for that session's registration: the user was told it
+    -- would go through on its own.
+    it("keeps a waiting submit when a language switch fails part-way", function()
+        local kata = open("python")
+        kata._notify_pending, kata._submit_queued = 1, true
+        switch(kata, "no-such-language") -- fails after the session fields are rewritten
+        pending[1].cb({ solutionId = "s2", projectId = "p" })
+        vim.wait(100)
+        assert.are.equal("python", kata.lang)
+        assert.are.equal(1, kata._notify_pending)
+        assert.is_true(kata._submit_queued)
+        local buf = kata.bufnr
+        kata:unmount()
+        wait_gone(buf)
+    end)
+
     it("drops a language reply that arrives after the kata closed", function()
         local kata = open("python")
         switch(kata,"go")
