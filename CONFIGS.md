@@ -162,6 +162,46 @@ open a kata whose file already exists and a template is configured for that
 language, the plugin says so, so a skipped template never looks like a broken
 one.
 
+## Indentation
+
+One indentation style per language, for the code you write. Optional — a
+language with no entry keeps its starter exactly as Codewars sent it, and your
+editor's own settings.
+
+```lua
+indent = {
+    python = 4,      -- four spaces
+    c = 4,
+    go = "tabs",     -- real tabs
+},
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `indent` | `table<string, integer\|"tabs">` | `{}` | Keyed by language slug. A number of spaces per level from 1 to 8, or `"tabs"`. |
+
+Codewars' starter code is not consistently indented: the same language comes
+with two spaces on one kata and four on the next. For a language listed here:
+
+- **The starter is converted** to your style as it is seeded — on a new kata,
+  on `:CW reset`, and when you switch a kata's language, with or without a
+  template. Only leading whitespace changes.
+- **The solution buffer's indent options are set to match** (`expandtab`,
+  `shiftwidth`, `softtabstop`, `tabstop`), after any ftplugin, so this option
+  wins in Codewars buffers. That covers a kata's solution, a kumite's code
+  buffer and the code panes of the kata editor. Test panes keep your editor's
+  settings: a kata's tests are not always written in the kata's language.
+
+A starter is left as it came when its indentation cannot be read with
+certainty: tabs and spaces mixed, a line aligned to something rather than
+indented by whole levels, or a line more than one level deeper than the one
+before it (a comment box set one space in, over code four deep). The buffer's
+options are still set. Solution files already on disk are never rewritten;
+`:CW reset` re-seeds one.
+
+A mistake in this table is reported when `setup()` runs and names the key, for
+example `indent.pyton: unknown language`.
+
 ## Cache
 
 ```lua
@@ -318,6 +358,7 @@ require("codewars").setup({
     theme = {
         codewars_header = { fg = "#e74c3c" },
     },
+    indent = { python = 4, c = 4 },
     hooks = {
         kata_enter = {
             function(kata)

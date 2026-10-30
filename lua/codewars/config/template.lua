@@ -126,6 +126,15 @@ local M = {
         solution = {},
     },
 
+    ---@type table<string, cw.IndentSpec>
+    --- Indentation for the code you write, keyed by language slug: a number
+    --- of spaces per level, or "tabs". The starter Codewars seeds is converted
+    --- to it and the solution buffer's indent options are set to match. A
+    --- language left out keeps the starter as it came and your editor's own
+    --- settings. Example:
+    ---   indent = { python = 4, c = 4, go = "tabs" }
+    indent = {},
+
     hooks = {
         ---@type fun()[]
         ["enter"] = {},

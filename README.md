@@ -25,6 +25,9 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
   the imports and scaffolding you actually use, wrapped around the signature
   Codewars grades. `:CW template off` turns them off again, buffer and all.
   See [CONFIGS.md](CONFIGS.md#templates).
+- **Your indentation** — one style per language. Starter code that arrives in
+  another is converted as it is seeded, and the buffer is set to match.
+  See [CONFIGS.md](CONFIGS.md#indentation).
 
 ## Requirements
 

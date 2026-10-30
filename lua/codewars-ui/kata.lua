@@ -48,7 +48,9 @@ function Kata:_template_ctx()
         name = self.name,
         rank = self.rank,
         tags = self.tags,
-        starter = self.setup_code or "",
+        -- Every starter reaches a buffer through here (new kata, reset, switch,
+        -- template or not); self.setup_code stays as Codewars sent it.
+        starter = require("codewars.indent").starter(self.lang, self.setup_code or ""),
     }
 end
 
@@ -131,6 +133,9 @@ function Kata:create_buffer()
     ui_utils.win_set_winfixbuf(self.winid)
 
     ui_utils.buf_set_opts(self.bufnr, { buflisted = true })
+    -- After the file is open: opening it fires FileType, and an ftplugin
+    -- that sets these options would otherwise have the last word.
+    require("codewars.indent").setup_buffer(self.bufnr, self.lang)
     ui_utils.win_set_buf(self.winid, self.bufnr, true)
 
     self:_cursor_to_end()
@@ -621,6 +626,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 self._old_bufnrs = self._old_bufnrs or {}
                 if prev_bufnr ~= self.bufnr then table.insert(self._old_bufnrs, prev_bufnr) end
                 ui_utils.buf_set_opts(self.bufnr, { buflisted = true })
+                require("codewars.indent").setup_buffer(self.bufnr, self.lang)
                 ui_utils.win_set_buf(self.winid, self.bufnr, true)
                 self:_cursor_to_end()
 

@@ -715,6 +715,9 @@ function Kumite:mount()
         filetype = ft,
         modifiable = kstate.is_editable(self.state),
     })
+    -- The code buffer only. The fixture is not always in the kumite's own
+    -- language, so the language's indentation is not known to be right there.
+    require("codewars.indent").setup_buffer(self.bufnr, self.lang)
     -- Populating an acwrite buffer marks it 'modified'; clear that so a
     -- freshly-opened kumite closes with :q (and `q`) without E37.
     vim.bo[self.bufnr].modified = false
