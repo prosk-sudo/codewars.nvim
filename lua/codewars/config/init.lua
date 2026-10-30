@@ -118,10 +118,7 @@ function config.validate()
 
     -- A typo in `indent` has no symptom of its own -- the option just does
     -- nothing for that language -- so it is refused here, naming the key.
-    local slugs = vim.tbl_map(function(l)
-        return l.slug
-    end, config.langs)
-    local indent_err = require("codewars.indent").check_config(config.user.indent, slugs)
+    local indent_err = require("codewars.indent").check_config(config.user.indent)
     if indent_err then
         error("Invalid `indent` option — " .. indent_err)
     end

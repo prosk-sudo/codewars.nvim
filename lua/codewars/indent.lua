@@ -14,13 +14,13 @@ local M = {}
 
 ---@alias cw.IndentSpec integer|"tabs" spaces per level, or real tabs
 
-M.MAX_WIDTH = 8
+local MAX_WIDTH = 8
 
 ---@param spec any
 ---@return boolean
-function M.valid_spec(spec)
+local function valid_spec(spec)
     if spec == "tabs" then return true end
-    return type(spec) == "number" and spec >= 1 and spec <= M.MAX_WIDTH and spec % 1 == 0
+    return type(spec) == "number" and spec >= 1 and spec <= MAX_WIDTH and spec % 1 == 0
 end
 
 ---@class cw.IndentStyle
@@ -81,7 +81,7 @@ end
 ---@param spec cw.IndentSpec
 ---@return string
 function M.convert(text, spec)
-    if not M.valid_spec(spec) then return text end
+    if not valid_spec(spec) then return text end
     local from = M.detect(text)
     if not from then return text end
 
@@ -116,7 +116,7 @@ function M.spec_for(lang)
     local user = require("codewars.config").user
     local cfg = type(user) == "table" and user.indent or nil
     local spec = type(cfg) == "table" and cfg[lang] or nil
-    return M.valid_spec(spec) and spec or nil
+    return valid_spec(spec) and spec or nil
 end
 
 --- A starter as it should be seeded for `lang`.
@@ -136,19 +136,17 @@ end
 ---@param lang string
 function M.setup_buffer(bufnr, lang)
     local spec = M.spec_for(lang)
-    if not spec or not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then return end
-    for opt, value in pairs(M.buf_options(spec)) do
-        vim.api.nvim_set_option_value(opt, value, { buf = bufnr })
-    end
+    if not spec or not bufnr then return end
+    require("codewars-ui.utils").buf_set_opts(bufnr, M.buf_options(spec))
 end
 
 --- Check the `indent` option as the user wrote it. Run at setup(): a typo in
 --- it has no symptom of its own, the option just does nothing for that
---- language.
+--- language. Any language the plugin has a filetype for is accepted: kumite
+--- and the kata editor serve more of them than training does.
 ---@param cfg any
----@param lang_slugs string[]
 ---@return string? err nil when the option is usable
-function M.check_config(cfg, lang_slugs)
+function M.check_config(cfg)
     if cfg == nil then return nil end
     local function shown(value)
         return (vim.inspect(value):gsub("%s+", " "))
@@ -157,16 +155,14 @@ function M.check_config(cfg, lang_slugs)
         return ("indent: expected a table keyed by language, got %s"):format(shown(cfg))
     end
 
-    local known = {}
-    for _, slug in ipairs(lang_slugs) do known[slug] = true end
-
+    local filetypes = require("codewars.languages.filetypes")
     for slug, spec in pairs(cfg) do
-        if not known[slug] then
+        if not filetypes.code(slug) then
             return ("indent.%s: unknown language"):format(tostring(slug))
         end
-        if not M.valid_spec(spec) then
+        if not valid_spec(spec) then
             return ('indent.%s: expected a number of spaces from 1 to %d, or "tabs"; got %s')
-                :format(slug, M.MAX_WIDTH, shown(spec))
+                :format(slug, MAX_WIDTH, shown(spec))
         end
     end
     return nil

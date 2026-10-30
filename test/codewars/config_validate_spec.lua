@@ -66,6 +66,12 @@ describe("config.validate", function()
             assert.has_no.errors(function() config.validate() end)
         end)
 
+        -- Kumite and the kata editor serve more languages than training does.
+        it("accepts a language you can only write kumite or katas in", function()
+            config.apply({ indent = { solidity = 4 } })
+            assert.has_no.errors(function() config.validate() end)
+        end)
+
         it("rejects a width it cannot use, naming the language", function()
             config.apply({ indent = { python = 12 } })
             local ok, err = pcall(config.validate)

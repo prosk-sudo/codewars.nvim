@@ -48,10 +48,8 @@ function Kata:_template_ctx()
         name = self.name,
         rank = self.rank,
         tags = self.tags,
-        -- Converted to the `indent` option here, the one place every starter
-        -- passes through on its way to a buffer -- a new kata, a reset, a
-        -- language switch, with a template or without -- so they all land in
-        -- the same style. self.setup_code itself stays as Codewars sent it.
+        -- Every starter reaches a buffer through here (new kata, reset, switch,
+        -- template or not); self.setup_code stays as Codewars sent it.
         starter = require("codewars.indent").starter(self.lang, self.setup_code or ""),
     }
 end

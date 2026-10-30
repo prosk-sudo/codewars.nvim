@@ -132,8 +132,7 @@ describe("indent", function()
     -- Checked at setup(): a typo here has no symptom of its own, the option
     -- just silently does nothing for that language.
     describe("check_config", function()
-        local slugs = { "python", "c", "go" }
-        local function check(cfg) return indent.check_config(cfg, slugs) end
+        local check = indent.check_config
 
         it("accepts spaces or tabs per language", function()
             assert.is_nil(check(nil))
