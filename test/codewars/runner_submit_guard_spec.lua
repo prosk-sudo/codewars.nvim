@@ -94,13 +94,12 @@ describe("Runner submit eligibility", function()
 
         register({ success = true })
         assert.equals(0, k._notify_pending)
-        vim.wait(100, function() return false end)
+        settle()
         assert.equals(1, finalized)
     end)
 
-    -- Submitting inside that window used to be refused with "try again in a
-    -- moment", and the console sat on "Submitting..." while the user guessed
-    -- when to retry. The plugin knows exactly when it is safe; it waits.
+    -- Only the plugin can see when that window closes, so it waits for it
+    -- rather than asking the user to retry "in a moment".
     describe("a submit made while the attempt is still registering", function()
         it("goes through on its own once Codewars registers it", function()
             local k = kata()
@@ -175,6 +174,55 @@ describe("Runner submit eligibility", function()
             pending.notify.cb({ success = true })
             settle()
             assert.equals(1, finalized, "a quick test's registration submitted again")
+        end)
+
+        -- Runner.run refuses while another run is in flight, and its "Runner
+        -- is busy" says nothing about the submit the user was promised.
+        it("is not sent while another run is in progress, and says so", function()
+            local k = kata()
+            local register = passed_attempt(k)
+            submit(k)
+
+            Runner.running = true -- the user started another run meanwhile
+            register({ success = true })
+            settle()
+            Runner.running = false
+            assert.equals(0, finalized)
+            assert.truthy((warnings[#warnings] or ""):find("not sent", 1, true), vim.inspect(warnings))
+        end)
+
+        it("goes through the console, as :CW submit does", function()
+            local k = kata()
+            local ran = {}
+            k.console = { run = function(_, mode) ran[#ran + 1] = mode end }
+            local register = passed_attempt(k)
+            submit(k)
+
+            register({ success = true })
+            settle()
+            assert.same({ "submit" }, ran)
+        end)
+
+        -- Kata:change_lang starts the count afresh. A reply for the old
+        -- session counted against the new one and released its submit
+        -- before the new attempt was registered.
+        it("is not released by a registration from before a language switch", function()
+            local k = kata()
+            local old = passed_attempt(k)
+            -- what Kata:change_lang does to the kata on a switch
+            k.project_id, k.solution_id = "p2", "s2"
+            k._notify_pending, k._submit_queued, k.last_attempt_success = 0, nil, false
+            local new = passed_attempt(k)
+            submit(k)
+
+            old({ success = true })
+            settle()
+            assert.equals(0, finalized, "released by the old session's registration")
+            assert.equals(1, k._notify_pending)
+
+            new({ success = true })
+            settle()
+            assert.equals(1, finalized)
         end)
 
         it("does nothing once the registration it waited for is answered", function()

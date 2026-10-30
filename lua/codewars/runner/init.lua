@@ -152,6 +152,40 @@ function Runner.format_output(output)
     return lines
 end
 
+---@param kata cw.ui.Kata
+---@param err table
+local function console_error(kata, err)
+    if kata.console and kata.console.result then
+        kata.console.result:handle_error(err)
+    end
+end
+
+--- Send a :CW submit that was held for attempt registrations in flight,
+--- once the last of them has answered.
+---@param kata cw.ui.Kata
+local function release_queued_submit(kata)
+    if not kata._submit_queued or (kata._notify_pending or 0) > 0 then return end
+    kata._submit_queued = nil
+
+    local why
+    if not kata.last_attempt_success then
+        why = "the attempt it was waiting on did not register as passing."
+    elseif Runner.running then
+        why = "another run started meanwhile. Run :CW submit again once it finishes."
+    end
+    if why then
+        local msg = "Your :CW submit was not sent: " .. why
+        log.warn(msg)
+        return console_error(kata, { msg = msg })
+    end
+
+    -- The way :CW submit goes, so the console shows it the same.
+    if kata.console then
+        return kata.console:run("submit")
+    end
+    Runner:init(kata):run("submit")
+end
+
 ---@param mode string "test"|"attempt"|"submit"
 function Runner:handle(mode)
     Runner.running = true
@@ -163,11 +197,8 @@ function Runner:handle(mode)
             return log.warn("Cannot submit: last attempt was not successful")
         end
         if (kata._notify_pending or 0) > 0 then
-            -- The passing attempt is still being registered, and finalizing
-            -- before it is would complete nothing. This used to refuse and
-            -- ask the user to try again "in a moment" -- a moment only the
-            -- plugin can see the end of. Wait for it instead: the notify
-            -- reply below runs this submit once nothing is in flight.
+            -- Finalizing before the passing attempt is registered would
+            -- complete nothing. Hold it: the last notify reply sends it.
             self:stop()
             kata._submit_queued = true
             return log.info("Waiting for Codewars to register your attempt — it will submit as soon as it does.")
@@ -181,9 +212,7 @@ function Runner:handle(mode)
 
             if err then
                 log.err(err)
-                if kata.console and kata.console.result then
-                    kata.console.result:handle_error(err)
-                end
+                console_error(kata, err)
                 return
             end
 
@@ -192,9 +221,7 @@ function Runner:handle(mode)
             if res and res.success == false then
                 local msg = "Codewars refused to finalize this solution — the passing attempt may not have registered. Run :CW attempt, then :CW submit again."
                 log.error(msg)
-                if kata.console and kata.console.result then
-                    kata.console.result:handle_error({ msg = msg })
-                end
+                console_error(kata, { msg = msg })
                 return
             end
 
@@ -281,9 +308,7 @@ function Runner:handle(mode)
                         session_cache.delete(kata.slug, kata.lang)
                     end
                     log.err(err)
-                    if kata.console and kata.console.result then
-                        kata.console.result:handle_error(err)
-                    end
+                    console_error(kata, err)
                     return
                 end
 
@@ -356,14 +381,15 @@ function Runner:handle(mode)
                             testFramework = kata.test_framework or "cw-2",
                             token = res.token,
                         }, function(nres, nerr)
-                            if gates_submit then
+                            -- Rechecked at reply time: a switch to another
+                            -- language meanwhile means this notify belongs to
+                            -- a session that is no longer the kata's, and the
+                            -- switch already zeroed the count it was in.
+                            local still_same = kata.project_id == project_id and kata.solution_id == solution_id
+                            if gates_submit and still_same then
                                 kata._notify_pending = math.max(0, (kata._notify_pending or 1) - 1)
                             end
                             local not_registered = nerr ~= nil or (nres and nres.success == false)
-                            -- Rechecked at reply time: a switch to another
-                            -- language meanwhile means this notify belongs to
-                            -- a session that is no longer the kata's.
-                            local still_same = kata.project_id == project_id and kata.solution_id == solution_id
                             if not_registered and gates_submit and completed and still_same then
                                 kata.last_attempt_success = false
                                 log.warn("Codewars did not register this attempt"
@@ -371,25 +397,7 @@ function Runner:handle(mode)
                                     .. " — run :CW attempt again before submitting.")
                             end
 
-                            -- A :CW submit made while registrations were in
-                            -- flight was held for them. Only the last reply
-                            -- releases it, and only if what it waited for is
-                            -- still a passing attempt; a failed registration
-                            -- just revoked that above.
-                            if kata._submit_queued and (kata._notify_pending or 0) == 0 then
-                                kata._submit_queued = nil
-                                if kata.last_attempt_success then
-                                    -- Runner.run, as :CW submit itself does:
-                                    -- the same busy check and error handling.
-                                    Runner:init(kata):run("submit")
-                                else
-                                    local msg = "Your :CW submit was not sent: the attempt it was waiting on did not register as passing."
-                                    log.warn(msg)
-                                    if kata.console and kata.console.result then
-                                        kata.console.result:handle_error({ msg = msg })
-                                    end
-                                end
-                            end
+                            release_queued_submit(kata)
                         end)
                     elseif mode == "attempt" and completed and same_session then
                         kata.last_attempt_success = false
