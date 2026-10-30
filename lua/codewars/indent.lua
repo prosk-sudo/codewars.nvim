@@ -28,14 +28,19 @@ end
 ---@field width integer characters of leading whitespace per level
 
 --- The indentation `text` is written in, or nil when that cannot be read with
---- certainty: nothing is indented, tabs and spaces are mixed, or some line is
+--- certainty: nothing is indented, tabs and spaces are mixed, some line is
 --- indented by other than a whole number of levels (an aligned continuation,
---- say). nil means "leave it alone" -- a wrong guess here rewrites code.
+--- say), or some line is more than one level deeper than the line before it.
+--- nil means "leave it alone" -- a wrong guess here rewrites code.
 ---
 --- The unit is the shallowest indentation present. Requiring every other
 --- line to be a whole multiple of it is what makes the conversion safe: the
 --- mapping from old depth to new is then strictly increasing, so two lines
 --- at different depths can never land on the same one, in either direction.
+---
+--- Code opens one level at a time, which is what catches a unit that was
+--- never a level: a comment box aligned one space in, over a body four
+--- deep, would otherwise make each of those four spaces a level of its own.
 ---@param text string
 ---@return cw.IndentStyle?
 function M.detect(text)
@@ -43,8 +48,8 @@ function M.detect(text)
     local depths = {}
     for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
         -- Blank and whitespace-only lines say nothing about the style.
-        local lead = line:match("^([ \t]+)%S")
-        if lead then
+        local lead = line:match("^([ \t]*)%S")
+        if lead and lead ~= "" then
             local has_tab = lead:find("\t", 1, true) ~= nil
             local has_space = lead:find(" ", 1, true) ~= nil
             if has_tab and has_space then return nil end
@@ -53,14 +58,16 @@ function M.detect(text)
             elseif tabs ~= has_tab then
                 return nil
             end
-            depths[#depths + 1] = #lead
             if not unit or #lead < unit then unit = #lead end
         end
+        if lead then depths[#depths + 1] = #lead end
     end
     if not unit then return nil end
 
+    local previous = 0
     for _, depth in ipairs(depths) do
-        if depth % unit ~= 0 then return nil end
+        if depth % unit ~= 0 or depth - previous > unit then return nil end
+        previous = depth
     end
     return { tabs = tabs, width = unit }
 end

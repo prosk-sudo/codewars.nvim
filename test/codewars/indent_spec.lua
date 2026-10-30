@@ -36,6 +36,24 @@ describe("indent", function()
         it("ignores blank and whitespace-only lines", function()
             assert.are.same({ tabs = false, width = 4 }, indent.detect("def f():\n    a = 1\n   \n\n    return a"))
         end)
+
+        -- The shallowest indentation in these is a comment's alignment, not a
+        -- level, and taking it as the unit made every space of the code a
+        -- level: a four-space body came out sixteen wide.
+        it("refuses a comment aligned shallower than the code", function()
+            -- The shape of a real C starter: a boxed comment, one space in.
+            assert.is_nil(indent.detect("/*----*\\\n |  hint  |\n\\*----*/\nint f(void)\n{\n    return 1;\n}"))
+            assert.is_nil(indent.detect("/**\n * Sums.\n */\nint sum(int a, int b) {\n    return 0;\n}"))
+            assert.is_nil(indent.detect('"""\n  Notes\n"""\ndef f():\n    pass'))
+        end)
+
+        it("refuses a line more than one level deeper than the one before it", function()
+            assert.is_nil(indent.detect("def f(\n        a, b):\n    return a"))
+        end)
+
+        it("reads a starter that is indented from its first line", function()
+            assert.are.same({ tabs = false, width = 2 }, indent.detect("  a = 1\n  if a:\n    b = 2"))
+        end)
     end)
 
     describe("convert", function()
@@ -67,7 +85,12 @@ describe("indent", function()
         end)
 
         it("leaves code alone when its indentation cannot be read", function()
-            for _, src in ipairs({ "f() {\n\ta;\n    b;\n}", "def f(a,\n      b):\n    return a", "x = 1" }) do
+            for _, src in ipairs({
+                "f() {\n\ta;\n    b;\n}",
+                "def f(a,\n      b):\n    return a",
+                "x = 1",
+                "/**\n * Sums.\n */\nint sum(int a, int b) {\n    return 0;\n}",
+            }) do
                 assert.are.equal(src, indent.convert(src, 2))
             end
         end)

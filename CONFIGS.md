@@ -193,8 +193,10 @@ with two spaces on one kata and four on the next. For a language listed here:
   settings: a kata's tests are not always written in the kata's language.
 
 A starter is left as it came when its indentation cannot be read with
-certainty: tabs and spaces mixed, or a line aligned to something rather than
-indented by whole levels. Solution files already on disk are never rewritten;
+certainty: tabs and spaces mixed, a line aligned to something rather than
+indented by whole levels, or a line more than one level deeper than the one
+before it (a comment box set one space in, over code four deep). The buffer's
+options are still set. Solution files already on disk are never rewritten;
 `:CW reset` re-seeds one.
 
 A mistake in this table is reported when `setup()` runs and names the key, for
