@@ -108,8 +108,9 @@ editor on the right, and the test cases below it. Write your solution, then
 `:CW test` → `:CW attempt` → `:CW submit`.
 
 To find something to solve, `:CW focus` lets Codewars' trainer pick for you,
-`:CW list` browses everything with filters, and `:CW completed` shows what
-you've already finished.
+`:CW list` browses everything with filters, `:CW next` opens the next unsolved
+kata those filters would show (`:CW next 6`, `:CW next rust`), and
+`:CW completed` shows what you've already finished.
 
 ### Writing your own
 

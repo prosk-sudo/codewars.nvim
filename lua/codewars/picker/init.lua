@@ -1,5 +1,5 @@
 local config = require("codewars.config")
-local select = require("codewars.picker.select")
+local slice = require("codewars.picker.select")
 local log = require("codewars.logger")
 local theme = require("codewars.theme")
 
@@ -180,12 +180,12 @@ function picker._show_kata_list(items, title, completed_set, initial)
 
     local function build_display_list()
         local filtered = problemlist_utils.filter_by_language(items, current_lang_filter)
-        filtered = select.filter_by_rank(filtered, current_rank_filter)
-        local sorted = select.sort_items(filtered, sort_modes[current_sort_idx].key)
+        filtered = slice.filter_by_rank(filtered, current_rank_filter)
+        local sorted = slice.sort_items(filtered, sort_modes[current_sort_idx].key)
 
         local lang_label = current_lang_filter or "All languages"
         local sort_label = sort_modes[current_sort_idx].label
-        local rank_text = select.rank_label(current_rank_filter)
+        local rank_text = slice.rank_label(current_rank_filter)
 
         local controls = {
             { _control = "sort", label = ("  Sort: %s"):format(sort_label) },
@@ -289,7 +289,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
         local lang_icons = require("codewars.icons").get()
         local current_lang_idx = 0
 
-        local rank_filtered = select.filter_by_rank(items, current_rank_filter)
+        local rank_filtered = slice.filter_by_rank(items, current_rank_filter)
         local all_prefix = current_lang_filter == nil and "● " or "  "
         table.insert(lang_entries, {
             -- value wraps the nil-able lang so on_select can distinguish "All languages"
@@ -337,7 +337,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
         -- One pass over the list for every rank's count, not one per rank.
         local per_rank = {}
         for _, item in ipairs(lang_filtered) do
-            local r = select.rank_of(item)
+            local r = slice.rank_of(item)
             if r then per_rank[r] = (per_rank[r] or 0) + 1 end
         end
         for j, opt in ipairs(difficulty_options) do
@@ -500,7 +500,7 @@ function picker.problems(opts)
             items = items or {}
             -- Judge emptiness on what the picker will actually show for the
             -- requested ranks, not on the whole (possibly partial) catalogue.
-            local shown = select.filter_by_rank(items, initial.rank_filter or nil)
+            local shown = slice.filter_by_rank(items, initial.rank_filter or nil)
             if #shown == 0 then
                 -- An aborted run already reported its own error.
                 if partial then return end

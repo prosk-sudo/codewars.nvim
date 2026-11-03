@@ -4,7 +4,7 @@
 describe(":CW next", function()
     local cmd, config, utils
     local mounted, said, filters, completed, items
-    local real_picker, real_problemlist, real_kata, real_logger, real_guard
+    local real_picker, real_problemlist, real_kata, real_logger, real_guard, real_kata_in_tab
 
     before_each(function()
         mounted, said = {}, {}
@@ -47,11 +47,15 @@ describe(":CW next", function()
         utils = require("codewars.utils")
         real_guard = utils.auth_guard
         utils.auth_guard = function() end
+        -- Outside any kata unless a test says otherwise.
+        real_kata_in_tab = utils.kata_in_tab
+        utils.kata_in_tab = function() end
         config.lang = "python"
     end)
 
     after_each(function()
         utils.auth_guard = real_guard
+        utils.kata_in_tab = real_kata_in_tab
         package.loaded["codewars.picker"] = real_picker
         package.loaded["codewars.cache.problemlist"] = real_problemlist
         package.loaded["codewars-ui.kata"] = real_kata
@@ -91,6 +95,29 @@ describe(":CW next", function()
         -- Easiest-first, and rank ids are negative: d7 (-7) comes before c6 (-6).
         cmd.next({ _positional = { "rust" } })
         assert.are.same({ slug = "d7", lang = "rust" }, mounted[1])
+    end)
+
+    -- Right after a submit, where ":CW next for another." is shown, "another"
+    -- means another in the language just solved in -- which a kata opened by
+    -- :CW train or :CW focus need not share with the list.
+    it("inside a kata, serves that kata's language", function()
+        utils.kata_in_tab = function() return { lang = "rust" } end
+        cmd.next({})
+        assert.are.same({ slug = "d7", lang = "rust" }, mounted[1])
+    end)
+
+    it("inside a kata, still takes a language on the command line", function()
+        utils.kata_in_tab = function() return { lang = "rust" } end
+        cmd.next({ _positional = { "python" } })
+        assert.are.same({ slug = "a8", lang = "python" }, mounted[1])
+    end)
+
+    it("refuses a kyu with no digits in it in its own terms", function()
+        cmd.next({ _positional = { "," } })
+        assert.are.same({}, mounted)
+        local err = last_said("error") or ""
+        assert.truthy(err:find("kyu", 1, true), err)
+        assert.is_nil(err:find("difficulty=", 1, true), "names another command's option: " .. err)
     end)
 
     it("takes both, in either order", function()

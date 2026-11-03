@@ -665,10 +665,6 @@ function cmd.completed()
     picker.completed()
 end
 
---- Open a random kata from the cached problem list (client-side).
----@param lang string
----@param on_mounted? fun() runs once the kata is actually on screen
----@return table? kata the mounted cw.ui.Kata instance (nil when the list is empty)
 --- `8,7` -> `{ -8, -7 }`, the rank ids the catalogue carries. Shared by
 --- `:CW list difficulty=` and `:CW next`, so the two cannot disagree about
 --- what a kyu is.
@@ -676,7 +672,7 @@ end
 ---@return integer[]? ranks, string? err
 local function parse_kyu(values)
     if #values == 0 then
-        return nil, "difficulty= needs a value, e.g. difficulty=8 or difficulty=8,7"
+        return nil, "Expected a kyu from 1 to 8, e.g. 6 or 8,7"
     end
     local ranks, seen = {}, {}
     for _, d in ipairs(values) do
@@ -692,6 +688,10 @@ local function parse_kyu(values)
     return ranks
 end
 
+--- Open a random kata from the cached problem list (client-side).
+---@param lang string
+---@param on_mounted? fun() runs once the kata is actually on screen
+---@return table? kata the mounted cw.ui.Kata instance (nil when the list is empty)
 local function open_random_kata(lang, on_mounted)
     local item, err = require("codewars.cache.problemlist_utils").random_for_lang(lang)
     if err then return log.warn(err) end
@@ -722,13 +722,18 @@ end
 --- slice of the catalogue, read from the filters last chosen in the list
 --- menus. Either argument overrides for this call only, in either order: a
 --- token of digits and commas is a kyu, anything else is a language.
+---
+--- Inside a kata its language wins over the list's: "another" after a
+--- submit means another in the language just solved in, and a kata opened
+--- by :CW train or :CW focus need not share the list's.
 function cmd.next(options)
     local utils = require("codewars.utils")
     utils.auth_guard()
 
     local picker = require("codewars.picker")
     local sel = picker.current_filters()
-    sel.lang = sel.lang or config.lang
+    local here = utils.kata_in_tab()
+    sel.lang = (here and here.lang) or sel.lang or config.lang
 
     for _, tok in ipairs(options._positional or {}) do
         if tok:match("^[%d,]+$") then
@@ -750,11 +755,11 @@ function cmd.next(options)
     problemlist.refresh_if_stale()
 
     picker.with_completed(function(completed)
-        local select = require("codewars.picker.select")
-        local item = select.next(items, sel, completed)
+        local slice = require("codewars.picker.select")
+        local item = slice.next(items, sel, completed)
         if not item then
             return log.info(("Nothing unsolved left for %s at %s — :CW list to widen the filters.")
-                :format(sel.lang, select.rank_label(sel.rank)))
+                :format(sel.lang, slice.rank_label(sel.rank)))
         end
         require("codewars-ui.kata"):new(item.slug or item.id, sel.lang):mount()
     end)
@@ -1007,7 +1012,10 @@ function cmd.list(options)
     -- Parse difficulty filter: difficulty=8,7 -> rank={-8,-7}
     if options.difficulty then
         -- `difficulty=` with nothing after it arrives as an empty (truthy)
-        -- table; parse_kyu refuses it rather than filtering everything out.
+        -- table; it must not become an empty rank set that filters out all.
+        if #options.difficulty == 0 then
+            return log.error("difficulty= needs a value, e.g. difficulty=8 or difficulty=8,7")
+        end
         local ranks, err = parse_kyu(options.difficulty)
         if not ranks then return log.error(err) end
         opts.rank = ranks
