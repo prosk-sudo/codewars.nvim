@@ -717,6 +717,20 @@ function cmd.random(options)
     open_random_kata(lang)
 end
 
+--- What :CW next passes over: kata already solved, and kata already open.
+--- next is also how you skip one, and serving the open kata again would
+--- only switch back to its own tab -- with a fixed sort, every time.
+---@param completed table<string, boolean> solved slugs and ids
+---@return table<string, boolean>
+local function next_skip_set(completed)
+    local skip = vim.tbl_extend("force", {}, completed)
+    for _, tab in ipairs(require("codewars.utils").kata_tabs()) do
+        if tab.kata.slug then skip[tab.kata.slug] = true end
+        if tab.kata.kata_id then skip[tab.kata.kata_id] = true end
+    end
+    return skip
+end
+
 --- :CW next [lang] [kyu] -- the first unsolved kata the list would show,
 --- without the picker. `focus` is Codewars' curated queue; this is your own
 --- slice of the catalogue, read from the filters last chosen in the list
@@ -756,7 +770,7 @@ function cmd.next(options)
 
     picker.with_completed(function(completed)
         local slice = require("codewars.picker.select")
-        local item = slice.next(items, sel, completed)
+        local item = slice.next(items, sel, next_skip_set(completed))
         if not item then
             return log.info(("Nothing unsolved left for %s at %s — :CW list to widen the filters.")
                 :format(sel.lang, slice.rank_label(sel.rank)))

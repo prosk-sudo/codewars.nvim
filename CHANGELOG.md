@@ -19,7 +19,8 @@ All notable changes to codewars.nvim are documented here.
   opening the picker. Either argument overrides for that call, in either
   order: `:CW next 6`, `:CW next rust`, `:CW next rust 6`, `:CW next 8,7`.
   Run from inside a kata, it stays in that kata's language unless you name
-  another. With the list sorted easiest-first it walks a rank in order; with
+  another, and it never serves a kata you have solved or already have open,
+  so running it again from one you would rather skip moves on. With the list sorted easiest-first it walks a rank in order; with
   shuffle it picks at random within the slice. `focus` remains Codewars' curated queue;
   this is your own slice of the catalogue. A successful submit now ends with
   `:CW next for another.`

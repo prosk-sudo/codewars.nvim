@@ -4,7 +4,7 @@
 describe(":CW next", function()
     local cmd, config, utils
     local mounted, said, filters, completed, items
-    local real_picker, real_problemlist, real_kata, real_logger, real_guard, real_kata_in_tab
+    local real_picker, real_problemlist, real_kata, real_logger, real_guard, real_kata_in_tab, real_kata_tabs
 
     before_each(function()
         mounted, said = {}, {}
@@ -47,15 +47,16 @@ describe(":CW next", function()
         utils = require("codewars.utils")
         real_guard = utils.auth_guard
         utils.auth_guard = function() end
-        -- Outside any kata unless a test says otherwise.
-        real_kata_in_tab = utils.kata_in_tab
+        -- Outside any kata, with none open, unless a test says otherwise.
+        real_kata_in_tab, real_kata_tabs = utils.kata_in_tab, utils.kata_tabs
         utils.kata_in_tab = function() end
+        utils.kata_tabs = function() return {} end
         config.lang = "python"
     end)
 
     after_each(function()
         utils.auth_guard = real_guard
-        utils.kata_in_tab = real_kata_in_tab
+        utils.kata_in_tab, utils.kata_tabs = real_kata_in_tab, real_kata_tabs
         package.loaded["codewars.picker"] = real_picker
         package.loaded["codewars.cache.problemlist"] = real_problemlist
         package.loaded["codewars-ui.kata"] = real_kata
@@ -76,6 +77,26 @@ describe(":CW next", function()
 
     it("skips what you have already solved", function()
         completed = { a8 = true }
+        cmd.next({})
+        assert.are.equal("b8", mounted[1].slug)
+    end)
+
+    -- next is also how you skip a kata: run it again from one you do not
+    -- want. Serving the open one again only switched back to its own tab,
+    -- so with any fixed sort there was no getting past it.
+    it("passes over kata you already have open, so running it again moves on", function()
+        utils.kata_tabs = function()
+            return { { tabpage = 1, kata = { slug = "a8", lang = "python" } } }
+        end
+        cmd.next({})
+        assert.are.equal("b8", mounted[1].slug)
+    end)
+
+    it("passes over an open kata by its id too", function()
+        items[1].id = "id-a8"
+        utils.kata_tabs = function()
+            return { { tabpage = 1, kata = { slug = "opened-by-id", kata_id = "id-a8", lang = "python" } } }
+        end
         cmd.next({})
         assert.are.equal("b8", mounted[1].slug)
     end)

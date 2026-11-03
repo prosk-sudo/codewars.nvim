@@ -1004,9 +1004,10 @@ function picker.current_filters()
     }
 end
 
---- Run `cb` with the completed set, refreshing it first when the cache is
---- stale -- so a kata solved on the website since the last refresh is not
---- served as "next".
+--- Run `cb` with the completed set, as the list does: fetched first when
+--- there is none yet, otherwise served as cached while a stale one refreshes
+--- in the background. A kata solved here is marked at once; one solved on
+--- the website shows up from the next call after that refresh.
 ---@param cb fun(completed: table<string, boolean>)
 function picker.with_completed(cb)
     ensure_completed_set(cb)

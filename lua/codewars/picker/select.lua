@@ -85,17 +85,17 @@ end
 ---@field rank integer|integer[]|nil
 ---@field sort string a key of picker.sort_modes
 
---- The first unsolved kata the list would show for `sel`, or nil when every
---- kata in that slice is done.
+--- The first kata the list would show for `sel` that is not in `skip`, or
+--- nil when every kata in that slice is.
 ---@param items table[] the cached catalogue
 ---@param sel cw.picker.Selection
----@param completed table<string, boolean> slugs and ids already solved
+---@param skip table<string, boolean> slugs and ids to pass over (solved, or already open)
 ---@return table? item
-function M.next(items, sel, completed)
+function M.next(items, sel, skip)
     local pool = require("codewars.cache.problemlist_utils").filter_by_language(items, sel.lang)
     pool = M.filter_by_rank(pool, sel.rank)
     for _, item in ipairs(M.sort_items(pool, sel.sort or "shuffle")) do
-        if not (completed[item.slug] or completed[item.id]) then
+        if not (skip[item.slug] or skip[item.id]) then
             return item
         end
     end
