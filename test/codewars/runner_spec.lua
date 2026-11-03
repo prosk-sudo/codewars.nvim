@@ -131,6 +131,27 @@ describe("Runner", function()
             restore()
         end)
 
+        -- The loop is solve -> next -> solve; the message after a finalize is
+        -- where a user learns the command exists.
+        it("points at :CW next once the kata is finalized", function()
+            local restore = stub_finalize_deps(function() end)
+            local logger = package.loaded["codewars.logger"]
+            local real_info, infos = logger.info, {}
+            logger.info = function(m) table.insert(infos, m) end
+
+            Runner:init(submit_kata(-7)):handle("submit")
+
+            logger.info = real_info
+            restore()
+            local hinted = false
+            for _, m in ipairs(infos) do
+                if m:find("finalized successfully", 1, true) and m:find(":CW next", 1, true) then
+                    hinted = true
+                end
+            end
+            assert.is_true(hinted, "no finalize message mentioned :CW next: " .. vim.inspect(infos))
+        end)
+
         it("still finalizes when the focus hook throws, and says so at debug level", function()
             local logger = package.loaded["codewars.logger"]
             local real_debug = logger.debug

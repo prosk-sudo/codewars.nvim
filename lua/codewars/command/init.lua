@@ -3,6 +3,10 @@ local config = require("codewars.config")
 local api = vim.api
 
 local lang_slugs = vim.tbl_map(function(l) return l.slug end, require("codewars.config.langs"))
+-- Kyu as typed, 8 (easiest) .. 1. Completion for `:CW list difficulty=` and
+-- both positions of `:CW next`, which takes a language or a kyu in either order.
+local kyu_values = { "8", "7", "6", "5", "4", "3", "2", "1" }
+local next_arg_candidates = vim.list_extend(vim.list_slice(lang_slugs, 1, #lang_slugs), kyu_values)
 
 -- Keep in sync with picker.focus_categories keys and trainer.STRATEGIES.
 -- Deliberately a literal: deriving from the picker would eager-load the
@@ -20,7 +24,7 @@ local kata_pane_keys = { "answer", "setup", "fixture", "example", "description" 
 
 local arguments = {
     list = {
-        difficulty = { "8", "7", "6", "5", "4", "3", "2", "1" },
+        difficulty = kyu_values,
         -- Keep in sync with picker.sort_modes keys (pinned by
         -- input_parsing_spec; literal so completion does not load the picker).
         order = { "shuffle", "name", "satisfaction", "hardest", "easiest" },
@@ -51,6 +55,7 @@ function cmd._help_lines()
         { "TRAINING",       "" },
         { "train <slug> [lang]", "Open a kata by title, slug or URL" },
         { "random [lang]",  "Open a random kata" },
+        { "next [lang] [kyu]", "Next unsolved kata matching your list filters" },
         { "focus [lang] [category]", "Choose Today's Focus (re-run returns the same kata)" },
         { "focus skip", "Skip the current focus kata and open the next" },
         { "test",           "Quick test with example fixtures" },
@@ -660,6 +665,29 @@ function cmd.completed()
     picker.completed()
 end
 
+--- `8,7` -> `{ -8, -7 }`, the rank ids the catalogue carries. Shared by
+--- `:CW list difficulty=` and `:CW next`, so the two cannot disagree about
+--- what a kyu is.
+---@param values string[] as typed
+---@return integer[]? ranks, string? err
+local function parse_kyu(values)
+    if #values == 0 then
+        return nil, "Expected a kyu from 1 to 8, e.g. 6 or 8,7"
+    end
+    local ranks, seen = {}, {}
+    for _, d in ipairs(values) do
+        local n = tonumber(d)
+        if not n or n < 1 or n > 8 or n % 1 ~= 0 then
+            return nil, ("Invalid difficulty: %s (expected a kyu from 1 to 8)"):format(d)
+        end
+        if not seen[n] then
+            seen[n] = true
+            ranks[#ranks + 1] = -n
+        end
+    end
+    return ranks
+end
+
 --- Open a random kata from the cached problem list (client-side).
 ---@param lang string
 ---@param on_mounted? fun() runs once the kata is actually on screen
@@ -687,6 +715,68 @@ function cmd.random(options)
     end
 
     open_random_kata(lang)
+end
+
+--- What :CW next passes over: kata already solved, and kata already open.
+--- next is also how you skip one, and serving the open kata again would
+--- only switch back to its own tab -- with a fixed sort, every time.
+---@param completed table<string, boolean> solved slugs and ids
+---@return table<string, boolean>
+local function next_skip_set(completed)
+    local skip = vim.tbl_extend("force", {}, completed)
+    for _, tab in ipairs(require("codewars.utils").kata_tabs()) do
+        if tab.kata.slug then skip[tab.kata.slug] = true end
+        if tab.kata.kata_id then skip[tab.kata.kata_id] = true end
+    end
+    return skip
+end
+
+--- :CW next [lang] [kyu] -- the first unsolved kata the list would show,
+--- without the picker. `focus` is Codewars' curated queue; this is your own
+--- slice of the catalogue, read from the filters last chosen in the list
+--- menus. Either argument overrides for this call only, in either order: a
+--- token of digits and commas is a kyu, anything else is a language.
+---
+--- Inside a kata its language wins over the list's: "another" after a
+--- submit means another in the language just solved in, and a kata opened
+--- by :CW train or :CW focus need not share the list's.
+function cmd.next(options)
+    local utils = require("codewars.utils")
+    utils.auth_guard()
+
+    local picker = require("codewars.picker")
+    local sel = picker.current_filters()
+    local here = utils.kata_in_tab()
+    sel.lang = (here and here.lang) or sel.lang or config.lang
+
+    for _, tok in ipairs(options._positional or {}) do
+        if tok:match("^[%d,]+$") then
+            local ranks, err = parse_kyu(vim.split(tok, ",", { plain = true, trimempty = true }))
+            if not ranks then return log.error(err) end
+            sel.rank = #ranks == 1 and ranks[1] or ranks
+        else
+            -- resolve_lang_arg reports the unknown language itself.
+            if not utils.resolve_lang_arg(tok) then return end
+            sel.lang = tok
+        end
+    end
+
+    local problemlist = require("codewars.cache.problemlist")
+    local items = problemlist.get()
+    if not items or #items == 0 then
+        return log.warn("Problem list empty. Run :CW cache update first.")
+    end
+    problemlist.refresh_if_stale()
+
+    picker.with_completed(function(completed)
+        local slice = require("codewars.picker.select")
+        local item = slice.next(items, sel, next_skip_set(completed))
+        if not item then
+            return log.info(("Nothing unsolved left for %s at %s — :CW list to widen the filters.")
+                :format(sel.lang, slice.rank_label(sel.rank)))
+        end
+        require("codewars-ui.kata"):new(item.slug or item.id, sel.lang):mount()
+    end)
 end
 
 -- Last focus target, so `:CW focus skip` knows which queue to advance and
@@ -940,18 +1030,9 @@ function cmd.list(options)
         if #options.difficulty == 0 then
             return log.error("difficulty= needs a value, e.g. difficulty=8 or difficulty=8,7")
         end
-        opts.rank = {}
-        local seen = {}
-        for _, d in ipairs(options.difficulty) do
-            local n = tonumber(d)
-            if not n or n < 1 or n > 8 or n % 1 ~= 0 then
-                return log.error(("Invalid difficulty: %s (expected a kyu from 1 to 8)"):format(d))
-            end
-            if not seen[n] then
-                seen[n] = true
-                opts.rank[#opts.rank + 1] = -n
-            end
-        end
+        local ranks, err = parse_kyu(options.difficulty)
+        if not ranks then return log.error(err) end
+        opts.rank = ranks
     end
 
     -- order= selects the picker's sort mode. The list is the cached
@@ -1408,6 +1489,10 @@ cmd.commands = {
     random = {
         cmd.random,
         _positional_complete = { lang_slugs },
+    },
+    next = {
+        cmd.next,
+        _positional_complete = { next_arg_candidates, next_arg_candidates },
     },
     focus = {
         cmd.focus,

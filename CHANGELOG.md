@@ -14,6 +14,16 @@ All notable changes to codewars.nvim are documented here.
   any ftplugin. A starter whose indentation cannot be read with certainty is
   left as it came, solution files already on disk are never rewritten, and a
   language you leave out is not touched at all.
+- `:CW next [lang] [kyu]` opens the next unsolved kata matching the filters
+  you last chose in the list menus — your language, rank and sort — without
+  opening the picker. Either argument overrides for that call, in either
+  order: `:CW next 6`, `:CW next rust`, `:CW next rust 6`, `:CW next 8,7`.
+  Run from inside a kata, it stays in that kata's language unless you name
+  another, and it never serves a kata you have solved or already have open,
+  so running it again from one you would rather skip moves on. With the list sorted easiest-first it walks a rank in order; with
+  shuffle it picks at random within the slice. `focus` remains Codewars' curated queue;
+  this is your own slice of the catalogue. A successful submit now ends with
+  `:CW next for another.`
 
 ### Changed
 - `:CW submit` right after a passing `:CW attempt` now waits for Codewars to
