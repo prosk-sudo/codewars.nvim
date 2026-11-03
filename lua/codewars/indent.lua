@@ -107,7 +107,7 @@ function M.buf_options(spec)
 end
 
 --- The style configured for `lang`, or nil when there is none -- in which
---- case nothing in this module touches the code or the buffer.
+--- case neither the starter nor the code buffer is touched.
 ---@param lang string
 ---@return cw.IndentSpec?
 function M.spec_for(lang)
@@ -127,17 +127,6 @@ function M.starter(lang, text)
     local spec = M.spec_for(lang)
     if not spec then return text end
     return M.convert(text, spec)
-end
-
---- Set a code buffer's indent options for `lang`. Call it after the buffer
---- has its filetype: the FileType event runs ftplugins, and whichever sets
---- these options last is the one that holds.
----@param bufnr integer?
----@param lang string
-function M.setup_buffer(bufnr, lang)
-    local spec = M.spec_for(lang)
-    if not spec or not bufnr then return end
-    require("codewars-ui.utils").buf_set_opts(bufnr, M.buf_options(spec))
 end
 
 --- Check the `indent` option as the user wrote it. Run at setup(): a typo in

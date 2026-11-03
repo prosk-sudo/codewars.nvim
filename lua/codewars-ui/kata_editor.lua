@@ -199,10 +199,7 @@ function KataEditor:switch_language(lang)
         local bufnr = self.bufs and self.bufs[pane.key]
         if bufnr and api.nvim_buf_is_valid(bufnr) and pane.field then
             api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(self:loaded_value(pane.key), "\n"))
-            ui_utils.buf_set_opts(bufnr, { filetype = self:pane_filetype(pane.kind) })
-            if pane.kind == "code" then
-                require("codewars.indent").setup_buffer(bufnr, self.lang)
-            end
+            self:_set_pane_opts(bufnr, pane.kind)
             vim.bo[bufnr].modified = false
         end
     end
@@ -884,6 +881,19 @@ function KataEditor:pane_filetype(kind)
     return filetypes.code(self.lang) or ""
 end
 
+--- A pane's options, its filetype included. Code panes are code buffers in
+--- the kata's language; the others are not -- a kata's tests are not always
+--- written in its language -- so they keep the editor's own indentation.
+---@param bufnr integer
+---@param kind string
+---@param opts table<string, any>?
+function KataEditor:_set_pane_opts(bufnr, kind, opts)
+    if kind == "code" then
+        return ui_utils.set_code_buffer(bufnr, self.lang, opts)
+    end
+    ui_utils.buf_set_opts(bufnr, vim.tbl_extend("force", opts or {}, { filetype = self:pane_filetype(kind) }))
+end
+
 function KataEditor:mount()
     if focus_existing(self.model.id) then
         return self
@@ -897,17 +907,12 @@ function KataEditor:mount()
     for _, pane in ipairs(PANES) do
         local bufnr = api.nvim_create_buf(false, true)
         api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(self:loaded_value(pane.key), "\n"))
-        ui_utils.buf_set_opts(bufnr, {
+        self:_set_pane_opts(bufnr, pane.kind, {
             buftype = "acwrite", -- lets :w be intercepted without a real file
             swapfile = false,
             buflisted = false,
-            filetype = self:pane_filetype(pane.kind),
             modifiable = true,
         })
-        -- Code panes only: test panes are not always in the kata's language.
-        if pane.kind == "code" then
-            require("codewars.indent").setup_buffer(bufnr, self.lang)
-        end
         vim.bo[bufnr].modified = false
         pcall(api.nvim_buf_set_name, bufnr, ("Kata · %s · %s"):format(pane.label, self.model.id:sub(1, 6)))
         self.bufs[pane.key] = bufnr

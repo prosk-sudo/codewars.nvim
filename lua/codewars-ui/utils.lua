@@ -16,6 +16,40 @@ function utils.buf_set_opts(bufnr, options)
     end
 end
 
+--- Set up a buffer that holds code you write in `lang`: `opts`, then the
+--- language's filetype, then the `indent` option's style for it.
+---
+--- Every such buffer goes through here, so none of them misses the indent
+--- style, and in this order because setting a filetype runs its ftplugins:
+--- whichever sets the indent options last is the one that holds.
+---
+--- A real file (a kata's solution) keeps the filetype it detected on
+--- opening: setting it again would run its ftplugins, and attach its
+--- language server, a second time. Scratch buffers have nothing to detect
+--- from, so they get the language's, or none for a language without one.
+---@param bufnr integer
+---@param lang string codewars language slug
+---@param opts table<string, any>? any other buffer options
+function utils.set_code_buffer(bufnr, lang, opts)
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+        return
+    end
+    utils.buf_set_opts(bufnr, opts or {})
+
+    if vim.bo[bufnr].buftype ~= "" then
+        local ft = require("codewars.languages.filetypes").code(lang) or ""
+        if ft ~= vim.bo[bufnr].filetype then
+            utils.buf_set_opts(bufnr, { filetype = ft })
+        end
+    end
+
+    local indent = require("codewars.indent")
+    local spec = indent.spec_for(lang)
+    if spec then
+        utils.buf_set_opts(bufnr, indent.buf_options(spec))
+    end
+end
+
 function utils.win_set_opts(winid, options)
     if not vim.api.nvim_win_is_valid(winid) then
         return

@@ -168,27 +168,5 @@ describe("indent", function()
             assert.are.equal("def f():\n    return 1", indent.starter("python", "def f():\n  return 1"))
             assert.are.equal("f() {\n  return 1;\n}", indent.starter("c", "f() {\n  return 1;\n}"))
         end)
-
-        it("sets a buffer's options to the configured style", function()
-            config.apply({ indent = { python = 2, go = "tabs" } })
-            local buf = vim.api.nvim_create_buf(false, true)
-            vim.bo[buf].shiftwidth = 8
-
-            indent.setup_buffer(buf, "python")
-            assert.are.same({ true, 2, 2, 2 },
-                { vim.bo[buf].expandtab, vim.bo[buf].shiftwidth, vim.bo[buf].softtabstop, vim.bo[buf].tabstop })
-
-            indent.setup_buffer(buf, "go")
-            assert.is_false(vim.bo[buf].expandtab)
-            assert.are.equal(0, vim.bo[buf].shiftwidth)
-        end)
-
-        it("leaves a buffer alone for a language with no setting", function()
-            config.apply({ indent = { python = 2 } })
-            local buf = vim.api.nvim_create_buf(false, true)
-            vim.bo[buf].shiftwidth = 8
-            indent.setup_buffer(buf, "c")
-            assert.are.equal(8, vim.bo[buf].shiftwidth)
-        end)
     end)
 end)
