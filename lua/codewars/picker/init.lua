@@ -568,7 +568,18 @@ function picker.problems(opts)
             picker._show_kata_list(cached, "Select a Question", completed_set, initial)
         end)
     else
+        -- A full build takes minutes. Pressing the key again while it runs
+        -- must neither start a second build (twice the request rate, straight
+        -- into the limiter) nor queue a second picker for when it ends.
+        if picker._awaiting_list then
+            local found = problemlist.building()
+            return log.info(found
+                and ("Still fetching the kata list (%d so far) — the picker opens when it is done"):format(found)
+                or "Still fetching the kata list — the picker opens when it is done")
+        end
+        picker._awaiting_list = true
         problemlist.update(opts, function(items, partial)
+            picker._awaiting_list = false
             items = items or {}
             -- Judge emptiness on what the picker will actually show for the
             -- requested ranks, not on the whole (possibly partial) catalogue.
@@ -579,9 +590,10 @@ function picker.problems(opts)
                 return log.warn("No kata found")
             end
             if partial then
-                -- Nothing was cached, so the next picker open retries; but
-                -- do not pass off the fragment as the whole catalogue.
-                log.warn(("Showing %d kata fetched before the build was aborted — run :CW cache update to retry"):format(#shown))
+                -- The list was not cached, so the next open resumes the
+                -- build from its last finished rank; but do not pass off
+                -- the fragment as the whole catalogue.
+                log.warn(("Showing %d kata fetched before the build stopped — run :CW cache update to continue it"):format(#shown))
             end
             ensure_completed_set(function(completed_set)
                 picker._show_kata_list(items, "Select a Question", completed_set, initial)
