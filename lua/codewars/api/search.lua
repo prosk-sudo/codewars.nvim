@@ -4,7 +4,7 @@ local api_utils = require("codewars.api.utils")
 local search = {}
 
 --- Fetch a single page of kata search results.
----@param opts table { language?, query?, rank?, order?, cancelled?: fun(): boolean }
+---@param opts table { language?, query?, rank?, order?, cancelled?: fun(): boolean, retry_rate_limited?: boolean }
 ---@param page integer
 ---@param cb function callback(results[], has_more, err?)
 function search.fetch_page(opts, page, cb)
@@ -44,6 +44,14 @@ function search.fetch_page(opts, page, cb)
     api_utils.get(endpoint, {
         headers = { ["Accept"] = "text/html" },
         cancelled = opts.cancelled,
+        -- nil keeps the request layer's default (GETs retry a 429); the
+        -- cache build passes false because it waits the limiter out itself.
+        retry_rate_limited = opts.retry_rate_limited,
+        -- plenary's async curl has no timeout of its own. The cache build
+        -- is single-flight -- every later :CW list and :CW cache update
+        -- joins it -- so one page that never answers would wedge them all
+        -- until restart. A timeout fails the page like any other error.
+        raw = { "--max-time", "30" },
         callback = function(res, err)
             if err then
                 return cb({}, false, err)

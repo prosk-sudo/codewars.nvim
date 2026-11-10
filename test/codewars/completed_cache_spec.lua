@@ -88,6 +88,7 @@ describe("cache.problemlist all-empty guard", function()
         }
         package.loaded["codewars.cache.problemlist"] = nil
         local problemlist = require("codewars.cache.problemlist")
+        problemlist.PACE_MS = 0
         local got, partial
         problemlist.update({ max_pages = 2 }, function(items, p) got, partial = items, p end)
         vim.wait(2000, function() return got ~= nil end)

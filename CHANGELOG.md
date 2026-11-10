@@ -16,6 +16,23 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- `:CW list` no longer fetches the whole kata catalogue every time it opens.
+  Codewars answers `429 Too Many Requests` once about 60 search pages land
+  inside a minute, and the build ran at about three a second. Every attempt
+  hit the limit around 1,500 kata in, threw the run away and cached nothing,
+  so the next open started over and hit the same wall. The build now stays
+  under the limit (one page every ~1.1s; about five minutes for the
+  ~8,500-kata catalogue, once). If it is refused anyway, it pauses and asks
+  for the same page again instead of giving up.
+- An interrupted list build resumes where it stopped. Each finished rank is
+  saved to `problemlist.partial.json`, so a later `:CW list` or
+  `:CW cache update` fetches only the ranks that are still missing. The
+  checkpoint is removed once the complete list is written, and
+  `problemlist.json` still only ever holds a complete list.
+- Opening the list again while it is still being built no longer starts a
+  second build alongside the first. It reports progress, and the picker
+  opens once, when the build finishes. Search pages also time out after 30s,
+  so a request that never answers cannot stall the build.
 - The dashboard now says when your session has expired. It used to paint
   your name, rank and honor from the cache as if you were signed in — the
   stats are public, so the cache refreshes with no session at all — and then
