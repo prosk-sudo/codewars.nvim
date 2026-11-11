@@ -11,6 +11,15 @@ All notable changes to codewars.nvim are documented here.
   page with nothing new — usually one or two requests instead of the ~290
   of a full build. The full rebuild every `cache.update_interval` remains
   as a safety net. `cache.check_interval` sets how often it looks.
+- `:CW unfinished` lists the kata you started and never submitted, most
+  recently changed first, and opens the one you pick in the language you were
+  writing it in. A kata counts once its solution file no longer holds the
+  starter it was seeded with — one you only opened is left out — and once it
+  is not completed in that language. To know the starter, the plugin now
+  records a fingerprint of it in `.seeded.json` beside your solutions whenever
+  it seeds one, resets one or toggles a template on an untouched one. Files
+  from before that cannot be checked yet: they are listed, marked
+  `not checked`, until you next open the kata.
 - `indent` option: one indentation style per language, set in `setup()` the
   way templates are — `indent = { python = 4, c = 4, go = "tabs" }`. Codewars'
   starter code is not consistently indented; the same language arrives with

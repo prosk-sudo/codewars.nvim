@@ -8,11 +8,9 @@ local picker = {}
 
 -- Cached completed set (rebuilt per picker session)
 local _completed_set = nil
-local _completed_set_time = 0
 
 function picker.invalidate_completed_cache()
     _completed_set = nil
-    _completed_set_time = 0
 end
 
 local function build_completed_set(items)
@@ -24,45 +22,37 @@ local function build_completed_set(items)
     return set
 end
 
-local function get_completed_set()
-    local now = os.time()
-    if _completed_set and (now - _completed_set_time) < 60 then
-        return _completed_set
-    end
-
-    local completed_cache = require("codewars.cache.completed")
-    local items, _ = completed_cache.get()
-    _completed_set = build_completed_set(items)
-    _completed_set_time = now
-    return _completed_set
-end
-
---- Ensure completed set is populated and fresh.
---- Returns stale data immediately for responsiveness, refreshes in background if stale.
-local function ensure_completed_set(cb)
+--- Run `cb` with the completed kata as cache.completed holds them: fetched
+--- first when there are none yet, otherwise served as cached at once while a
+--- stale list refreshes in the background.
+---@param cb fun(items: table[])
+local function ensure_completed_items(cb)
     local completed_cache = require("codewars.cache.completed")
     local items, is_stale = completed_cache.get()
-    local set = build_completed_set(items)
-    _completed_set = set
-    _completed_set_time = os.time()
+    local signed_in = config.user.username ~= ""
 
-    if vim.tbl_isempty(set) then
-        -- No data at all — must fetch before showing picker
-        if config.user.username == "" then return cb(set) end
+    if vim.tbl_isempty(items) and signed_in then
         log.info("Fetching completed kata...")
-        completed_cache.update(function()
+        return completed_cache.update(function()
             picker.invalidate_completed_cache()
-            vim.schedule(function() cb(get_completed_set()) end)
+            vim.schedule(function() cb((completed_cache.get())) end)
         end)
-    elseif is_stale and config.user.username ~= "" then
-        -- Have data but stale — show immediately, refresh in background
-        cb(set)
-        completed_cache.update(function()
-            picker.invalidate_completed_cache()
-        end)
-    else
-        cb(set)
     end
+    cb(items)
+    if is_stale and signed_in then
+        completed_cache.update(function()
+            picker.invalidate_completed_cache()
+        end)
+    end
+end
+
+--- The same, as a set of completed slugs and ids.
+---@param cb fun(set: table<string, boolean>)
+local function ensure_completed_set(cb)
+    ensure_completed_items(function(items)
+        _completed_set = build_completed_set(items)
+        cb(_completed_set)
+    end)
 end
 
 local function rank_icon(rank_id)
@@ -657,6 +647,54 @@ end
 local function lang_icon(slug)
     local icons = require("codewars.icons").get()
     return icons["lang_" .. slug] or "#"
+end
+
+--- Each catalogue kata's name, by slug and by id: a solution file is named
+--- after whichever its kata was opened by.
+---@return table<string, string>
+local function catalogue_names()
+    local names = {}
+    for _, item in ipairs(require("codewars.cache.problemlist").get() or {}) do
+        if item.slug then names[item.slug] = item.name end
+        if item.id then names[item.id] = item.name end
+    end
+    return names
+end
+
+--- Kata you started and never submitted, most recently changed first, to
+--- pick back up. A file from before starters were recorded cannot be told
+--- from an untouched one, so it is listed and marked "not checked".
+function picker.unfinished()
+    ensure_completed_items(function(completed)
+        local found = require("codewars.unfinished").list(completed)
+        if #found == 0 then
+            return log.info("Nothing unfinished: every kata you have opened is completed or untouched.")
+        end
+
+        local names = catalogue_names()
+        local widest = 0
+        local entries = vim.tbl_map(function(e)
+            local label = ("%s  ·  %s  ·  %s%s"):format(
+                names[e.key] or e.key, e.lang, os.date("%Y-%m-%d", e.mtime), e.checked and "" or "  ·  not checked")
+            widest = math.max(widest, vim.fn.strdisplaywidth(label))
+            return {
+                label = label,
+                value = { key = e.key, lang = e.lang },
+                icon = lang_icon(e.lang),
+                icon_hl = "codewars_lang_" .. e.lang,
+            }
+        end, found)
+
+        dropdown.open({
+            prompt_title = ("Unfinished kata (%d)"):format(#entries),
+            entries = entries,
+            -- Room for the icon column and the border around the longest row.
+            width = math.min(widest + 8, vim.o.columns - 4),
+            on_select = function(choice)
+                require("codewars-ui.kata"):new(choice.key, choice.lang):mount()
+            end,
+        })
+    end)
 end
 
 --- Build dropdown entries for a list of language configs.

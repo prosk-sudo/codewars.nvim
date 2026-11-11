@@ -86,13 +86,17 @@ function Kata:retemplate(op)
     local templates = require("codewars.templates")
     local apply = op == "wrap" and templates.wrap or templates.strip
 
-    local text, reason = apply(self.lang, self:_buffer_text(), self:_template_ctx())
+    local before = self:_buffer_text()
+    local text, reason = apply(self.lang, before, self:_template_ctx())
     if not text then
         log.info(reason)
         return false
     end
 
     self:_set_code(text)
+    if self._file_name then
+        require("codewars.unfinished").retemplated(self._file_name, before, text)
+    end
     -- Forced: the rewrite moved the user's code, so wherever the cursor was
     -- describes a buffer that no longer exists. Both directions end up at the
     -- same question -- where is the code now -- and the buffer answers it.
@@ -100,23 +104,45 @@ function Kata:retemplate(op)
     return true
 end
 
----@return string path, boolean existed
-function Kata:path()
+--- Point self.file at this kata's solution in self.lang, seeding the starter
+--- when there is no file yet. Either way the starter goes on record, so that
+--- :CW unfinished can tell a kata you are working in from one you only opened.
+---@return boolean existed
+function Kata:_open_file()
     local lang = utils.get_lang(self.lang)
     assert(lang, "Unsupported language: " .. self.lang)
-    local fn = ("%s.%s"):format(self.slug, lang.ft)
+    self._file_name = ("%s.%s"):format(self.slug, lang.ft)
+    -- Older versions named a kata opened by its id after the id. The kata has
+    -- its slug by now, so look for that file too, or the work in it never
+    -- shows and a fresh starter is seeded beside it.
+    local by_id = self.kata_id and self.kata_id ~= self.slug and ("%s.%s"):format(self.kata_id, lang.ft)
+    if by_id and not config.storage.home:joinpath(self._file_name):exists()
+        and config.storage.home:joinpath(by_id):exists() then
+        self._file_name = by_id
+    end
+    self.file = config.storage.home:joinpath(self._file_name)
 
-    self.file = config.storage.home:joinpath(fn)
-    local existed = self.file:exists()
+    local unfinished = require("codewars.unfinished")
+    if self.file:exists() then
+        unfinished.seeded_if_unknown(self._file_name, function() return self:_starter_code() end)
+        return true
+    end
+    local starter = self:_starter_code()
+    self.file:write(starter, "w")
+    unfinished.seeded(self._file_name, starter)
+    return false
+end
+
+---@return string path, boolean existed
+function Kata:path()
+    local existed = self:_open_file()
 
     local templates = require("codewars.templates")
-    if not existed then
-        self.file:write(self:_starter_code(), "w")
-    elseif templates.is_enabled() and templates.is_configured(self.lang) then
+    if existed and templates.is_enabled() and templates.is_configured(self.lang) then
         -- Seeding is guarded so it can never overwrite work in progress, which
         -- means a configured template silently does nothing on a kata you have
         -- opened before. Say so, rather than letting it read as a broken feature.
-        log.info(("%s already exists — :CW reset to apply your %s template."):format(fn, self.lang))
+        log.info(("%s already exists — :CW reset to apply your %s template."):format(self._file_name, self.lang))
     end
 
     return self.file:absolute(), existed
@@ -537,7 +563,13 @@ end
 
 function Kata:reset_code()
     if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
-        self:_set_code(self:_starter_code())
+        local starter = self:_starter_code()
+        self:_set_code(starter)
+        -- A fresh start: this starter, not the first one, is what counts as
+        -- untouched now.
+        if self._file_name then
+            require("codewars.unfinished").seeded(self._file_name, starter)
+        end
         -- Forced: the rewrite moved the user's code out from under wherever
         -- they were standing, so the old position is not a claim on anything.
         self:_cursor_to_end(true)
@@ -587,7 +619,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
             local SESSION_FIELDS = {
                 "lang", "bufnr", "project_id", "solution_id", "setup_code", "example_fixture",
                 "fixture", "package", "test_framework", "language_version", "last_attempt_success",
-                "finalized", "file", "_notify_pending", "_submit_queued",
+                "finalized", "file", "_file_name", "_notify_pending", "_submit_queued",
             }
             local before = {}
             for _, k in ipairs(SESSION_FIELDS) do before[k] = self[k] end
@@ -609,15 +641,8 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 self._notify_pending = 0
                 self._submit_queued = nil
 
-                local lang_info = utils.get_lang(new_lang)
-                assert(lang_info, "Unsupported language: " .. new_lang)
-                local fn = ("%s.%s"):format(self.slug, lang_info.ft)
-                self.file = config.storage.home:joinpath(fn)
+                self:_open_file()
                 require("codewars.cache.recent").record(self)
-
-                if not self.file:exists() then
-                    self.file:write(self:_starter_code(), "w")
-                end
 
                 local path = self.file:absolute()
                 self.bufnr = vim.fn.bufadd(path)

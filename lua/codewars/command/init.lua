@@ -69,6 +69,7 @@ function cmd._help_lines()
         { "BROWSING",       "" },
         { "list",           "Browse all kata (with filters)" },
         { "completed",      "Browse completed kata" },
+        { "unfinished",     "Kata you started and never submitted" },
         { "solutions",      "View community solutions" },
         { "leaderboard",    "Top 500 leaderboard (4 categories)" },
         { "kumite",         "Browse Freestyle Sparring (kumite)" },
@@ -665,6 +666,11 @@ end
 function cmd.completed()
     local picker = require("codewars.picker")
     picker.completed()
+end
+
+--- :CW unfinished -- kata you started and never submitted, to pick back up.
+function cmd.unfinished()
+    require("codewars.picker").unfinished()
 end
 
 --- `8,7` -> `{ -8, -7 }`, the rank ids the catalogue carries. Shared by
@@ -1564,6 +1570,7 @@ cmd.commands = {
     stats = { cmd.stats },
     completed = { cmd.completed },
     recent = { cmd.recent },
+    unfinished = { cmd.unfinished },
     list = {
         cmd.list,
         _args = arguments.list,
