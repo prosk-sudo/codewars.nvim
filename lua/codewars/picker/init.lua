@@ -83,6 +83,9 @@ end
 local problemlist_utils = require("codewars.cache.problemlist_utils")
 local dropdown = require("codewars.picker.dropdown")
 
+-- The kata list's window. Shared so every list of kata opens the same way.
+local LIST_LAYOUT = { width = 100, height = 0.8 }
+
 -- Persistent filter state (remembered across picker reopens)
 local _saved_sort_idx = 1
 local _saved_lang_filter = config.lang
@@ -416,7 +419,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
         local display = build_display_list()
 
         local opts = t.themes.get_dropdown({
-            layout_config = { width = 100, height = 0.8 },
+            layout_config = vim.deepcopy(LIST_LAYOUT),
         })
 
         local num_controls = 4
@@ -649,51 +652,184 @@ local function lang_icon(slug)
     return icons["lang_" .. slug] or "#"
 end
 
---- Each catalogue kata's name, by slug and by id: a solution file is named
---- after whichever its kata was opened by.
----@return table<string, string>
-local function catalogue_names()
-    local names = {}
+--- Each catalogue kata by slug and by id: a solution file is named after
+--- whichever its kata was opened by.
+---@return table<string, table>
+local function catalogue_index()
+    local index = {}
     for _, item in ipairs(require("codewars.cache.problemlist").get() or {}) do
-        if item.slug then names[item.slug] = item.name end
-        if item.id then names[item.id] = item.name end
+        if item.slug then index[item.slug] = item end
+        if item.id then index[item.id] = item end
     end
-    return names
+    return index
+end
+
+--- A number that goes up by one each calendar day `time` is later.
+local function day_of(time)
+    local d = os.date("*t", time)
+    return math.floor(os.time({ year = d.year, month = d.month, day = d.day, hour = 12 }) / 86400)
+end
+
+--- When `mtime` was, the way a person would say it; a date past a month.
+---@param mtime integer
+---@param now integer
+---@return string
+local function when(mtime, now)
+    local days = day_of(now) - day_of(mtime)
+    if days <= 0 then return "today" end
+    if days == 1 then return "yesterday" end
+    if days < 7 then return ("%d days ago"):format(days) end
+    if days < 30 then
+        local weeks = math.floor(days / 7)
+        return weeks == 1 and "a week ago" or ("%d weeks ago"):format(weeks)
+    end
+    return os.date("%Y-%m-%d", mtime)
+end
+
+local NOT_CHECKED = "not checked"
+
+--- A file's own name made readable, for a kata known by nothing else:
+--- "how-old-will-i-be" reads "How old will i be". An id has nothing to read.
+---@param key string
+---@return string
+local function readable(key)
+    if #key == 24 and key:match("^%x+$") then return key end
+    return (key:gsub("-", " "):gsub("^%l", string.upper))
+end
+
+--- What one :CW unfinished row shows. The catalogue does not hold every
+--- kata; what it lacks comes from what the kata was last opened with, then
+--- from kata details looked up before (cache.completed keeps those).
+---@param entry cw.UnfinishedEntry
+---@param catalogue table<string, table>
+---@param details table<string, table> cache.completed's kata details
+---@param now integer
+local function unfinished_row(entry, catalogue, details, now)
+    local item = catalogue[entry.key] or {}
+    local looked_up = details[entry.key] or {}
+    local rank_id = item.rank_id or entry.rank_id or (looked_up.rank and looked_up.rank.id)
+    local lang = require("codewars.utils").get_lang(entry.lang)
+    return {
+        key = entry.key,
+        lang = entry.lang,
+        name = item.name or entry.name or looked_up.name or readable(entry.key),
+        rank_id = rank_id,
+        -- Left blank rather than "beta" when nothing says what the rank is.
+        rank_name = item.rank_name or (rank_id and theme.rank_str(rank_id)) or "",
+        lang_name = lang and lang.lang or entry.lang,
+        when = when(entry.mtime, now),
+        checked = entry.checked,
+    }
+end
+
+--- Whether a row would have no rank to show: nothing knows the kata.
+local function unnamed(entry, catalogue, details)
+    local looked_up = details[entry.key]
+    return not (catalogue[entry.key] or entry.rank_id or (looked_up and looked_up.rank))
+end
+
+--- The :CW unfinished picker, laid out as the kata list is: rank in its
+--- colour, then the kata, with the language and how long ago it was last
+--- changed in the columns after it.
+---@param t table telescope, as picker.dropdown hands it out
+---@param rows table[] from unfinished_row
+local function open_unfinished(t, rows)
+    -- Fixed columns sized to what they hold; the name gets the rest.
+    local lang_w, when_w = 0, 0
+    for _, row in ipairs(rows) do
+        lang_w = math.max(lang_w, vim.fn.strdisplaywidth(row.lang_name))
+        when_w = math.max(when_w, vim.fn.strdisplaywidth(row.when))
+    end
+    -- Rank icon, rank, language icon, the separators between all seven
+    -- columns, and the window's border and padding.
+    local fixed = 1 + 5 + 1 + lang_w + when_w + #NOT_CHECKED + 6 + 4
+    local displayer = t.entry_display.create({
+        separator = " ",
+        items = {
+            { width = 1 },
+            { width = 5 },
+            { width = 1 },
+            { width = math.max(20, LIST_LAYOUT.width - fixed) },
+            { width = lang_w },
+            { width = when_w },
+            { remaining = true },
+        },
+    })
+
+    local function entry_maker(row)
+        local hl = rank_hl_from_id(row.rank_id)
+        return {
+            value = row,
+            ordinal = ("%s %s %s"):format(row.name, row.lang_name, row.key),
+            display = function()
+                return displayer({
+                    { rank_icon(row.rank_id), hl },
+                    { rank_str(row.rank_name), hl },
+                    { lang_icon(row.lang), "codewars_lang_" .. row.lang },
+                    { row.name },
+                    { row.lang_name, "codewars_ref" },
+                    { row.when, "codewars_ref" },
+                    { row.checked and "" or NOT_CHECKED, "codewars_warning" },
+                })
+            end,
+        }
+    end
+
+    local opts = t.themes.get_dropdown({ layout_config = vim.deepcopy(LIST_LAYOUT) })
+    local shown = t.pickers.new(opts, {
+        prompt_title = ("Unfinished kata (%d)"):format(#rows),
+        finder = t.finders.new_table({ results = rows, entry_maker = entry_maker }),
+        sorter = t.conf.generic_sorter(opts),
+        attach_mappings = function(prompt_bufnr)
+            t.actions.select_default:replace(function()
+                local selection = t.action_state.get_selected_entry()
+                if not selection then return end
+                t.actions.close(prompt_bufnr)
+                require("codewars-ui.kata"):new(selection.value.key, selection.value.lang):mount()
+            end)
+            return true
+        end,
+    })
+    shown:find()
+
+    --- Redraw with `new_rows`, keeping what was typed -- if it is still open.
+    ---@param new_rows table[]
+    return function(new_rows)
+        if not (shown.prompt_bufnr and vim.api.nvim_buf_is_valid(shown.prompt_bufnr)) then return end
+        shown:refresh(t.finders.new_table({ results = new_rows, entry_maker = entry_maker }), { reset_prompt = false })
+    end
 end
 
 --- Kata you started and never submitted, most recently changed first, to
 --- pick back up. A file from before starters were recorded cannot be told
 --- from an untouched one, so it is listed and marked "not checked".
 function picker.unfinished()
+    local t = dropdown.telescope()
+    if not t then return end
     ensure_completed_items(function(completed)
         local found = require("codewars.unfinished").list(completed)
         if #found == 0 then
             return log.info("Nothing unfinished: every kata you have opened is completed or untouched.")
         end
+        local completed_cache = require("codewars.cache.completed")
+        local catalogue = catalogue_index()
+        local function rows()
+            local details, now = completed_cache.get_details(), os.time()
+            return vim.tbl_map(function(e) return unfinished_row(e, catalogue, details, now) end, found)
+        end
+        local update = open_unfinished(t, rows())
 
-        local names = catalogue_names()
-        local widest = 0
-        local entries = vim.tbl_map(function(e)
-            local label = ("%s  ·  %s  ·  %s%s"):format(
-                names[e.key] or e.key, e.lang, os.date("%Y-%m-%d", e.mtime), e.checked and "" or "  ·  not checked")
-            widest = math.max(widest, vim.fn.strdisplaywidth(label))
-            return {
-                label = label,
-                value = { key = e.key, lang = e.lang },
-                icon = lang_icon(e.lang),
-                icon_hl = "codewars_lang_" .. e.lang,
-            }
-        end, found)
-
-        dropdown.open({
-            prompt_title = ("Unfinished kata (%d)"):format(#entries),
-            entries = entries,
-            -- Room for the icon column and the border around the longest row.
-            width = math.min(widest + 8, vim.o.columns - 4),
-            on_select = function(choice)
-                require("codewars-ui.kata"):new(choice.key, choice.lang):mount()
-            end,
-        })
+        -- What nothing knows yet is looked up as :CW completed does, and
+        -- filled in once Codewars answers rather than held up for.
+        local details = completed_cache.get_details()
+        local unknown = {}
+        for _, e in ipairs(found) do
+            if unnamed(e, catalogue, details) then unknown[#unknown + 1] = { slug = e.key } end
+        end
+        if #unknown == 0 then return end
+        completed_cache.enrich(unknown, function()
+            vim.schedule(function() update(rows()) end)
+        end)
     end)
 end
 

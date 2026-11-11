@@ -74,6 +74,20 @@ describe("Kata and :CW unfinished", function()
         assert.is_true(entry.checked)
     end)
 
+    it("records the kata's name and rank when it opens the file", function()
+        n = n + 1
+        local slug = "unfinished-kata-" .. n
+        local kata = Kata:new(slug, "python")
+        kata.setup_code, kata.name, kata.rank = STUB, "Multiply", -8
+        kata:create_buffer()
+        vim.api.nvim_buf_set_lines(kata.bufnr, 0, -1, false, { "def f(x):", "    return x" })
+        save(kata)
+
+        local entry = listed(slug .. ".py")
+        assert.are.equal("Multiply", entry.name)
+        assert.are.equal(-8, entry.rank_id)
+    end)
+
     -- A file from before starters were recorded: opening it is the first
     -- chance to check it.
     it("checks a file with nothing on record against the starter when opened", function()

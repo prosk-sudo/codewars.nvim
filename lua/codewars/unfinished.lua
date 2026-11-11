@@ -29,36 +29,73 @@ local function record_path()
     return config.storage.home:joinpath(RECORD)
 end
 
----@return table<string, string[]> solution file name -> fingerprints that count as untouched
+---@class cw.SeededRecord
+---@field prints string[] fingerprints of the starters that count as untouched
+---@field name string? the kata's name, as it was last opened with
+---@field rank_id integer? its rank, likewise; the catalogue does not hold every kata
+
+---@class cw.KataInfo
+---@field name string?
+---@field rank_id integer?
+
+---@return table<string, cw.SeededRecord> by solution file name
 local function load()
     local data = cache_utils.read_json(record_path())
-    return type(data) == "table" and data or {}
+    if type(data) ~= "table" then return {} end
+    for file_name, rec in pairs(data) do
+        -- The first records held only the fingerprints, as a bare list.
+        if type(rec) == "table" and rec.prints == nil then
+            data[file_name] = { prints = rec }
+        end
+    end
+    return data
 end
 
 local function save(data)
     cache_utils.write_json(record_path(), data)
 end
 
+--- `rec` with `info`'s name and rank, keeping its own where `info` has none.
+---@param rec cw.SeededRecord
+---@param info cw.KataInfo?
+---@return cw.SeededRecord
+local function with_info(rec, info)
+    info = info or {}
+    return {
+        prints = rec.prints,
+        name = info.name or rec.name,
+        rank_id = info.rank_id or rec.rank_id,
+    }
+end
+
 --- `file_name` now holds a freshly seeded starter: a new kata, or :CW reset.
---- Whatever was on record goes, since that starter is gone.
+--- The starters on record go, since that one is gone; the name stays.
 ---@param file_name string
 ---@param text string
-function M.seeded(file_name, text)
+---@param info cw.KataInfo?
+function M.seeded(file_name, text, info)
     local data = load()
-    data[file_name] = { M.fingerprint(text) }
+    local old = data[file_name] or {}
+    data[file_name] = with_info({ prints = { M.fingerprint(text) }, name = old.name, rank_id = old.rank_id }, info)
     save(data)
 end
 
---- An existing file opened with nothing on record. The starter it would be
---- seeded with today is the best record there is: a file that still matches it
---- is untouched, and one that does not is listed -- the safe way to be wrong.
+--- A kata opened its existing file. With nothing on record, the starter it
+--- would be seeded with today is the best record there is: a file that still
+--- matches it is untouched, and one that does not is listed -- the safe way to
+--- be wrong.
 ---@param file_name string
 ---@param starter string|fun(): string the starter, or how to make it -- only made when nothing is on record
-function M.seeded_if_unknown(file_name, starter)
+---@param info cw.KataInfo?
+function M.opened(file_name, starter, info)
     local data = load()
-    if data[file_name] then return end
-    local text = type(starter) == "function" and starter() or starter
-    data[file_name] = { M.fingerprint(text) }
+    local rec = data[file_name]
+    if rec and not info then return end
+    if not rec then
+        local text = type(starter) == "function" and starter() or starter
+        rec = { prints = { M.fingerprint(text) } }
+    end
+    data[file_name] = with_info(rec, info)
     save(data)
 end
 
@@ -70,11 +107,15 @@ end
 ---@param after string
 function M.retemplated(file_name, before, after)
     local data = load()
-    local prints = data[file_name]
-    if not (prints and vim.tbl_contains(prints, M.fingerprint(before))) then return end
+    local rec = data[file_name]
+    if not (rec and vim.tbl_contains(rec.prints, M.fingerprint(before))) then return end
     local print_after = M.fingerprint(after)
-    if vim.tbl_contains(prints, print_after) then return end
-    data[file_name] = vim.list_extend(vim.list_slice(prints, 1, #prints), { print_after })
+    if vim.tbl_contains(rec.prints, print_after) then return end
+    data[file_name] = with_info({
+        prints = vim.list_extend(vim.list_slice(rec.prints, 1, #rec.prints), { print_after }),
+        name = rec.name,
+        rank_id = rec.rank_id,
+    })
     save(data)
 end
 
@@ -105,6 +146,8 @@ end
 ---@field file string file name in storage.home
 ---@field mtime integer last changed, in seconds since the epoch
 ---@field checked boolean false when nothing was on record to check it against
+---@field name string? the kata's name as it was last opened with, when on record
+---@field rank_id integer? its rank, likewise
 
 --- Unfinished kata, most recently changed first.
 ---@param completed table[] completed kata, as cache.completed holds them
@@ -124,16 +167,18 @@ function M.list(completed)
         local lang = ext and lang_of[ext]
         if kind == "file" and lang and not done[key .. "|" .. lang] then
             local path = home .. "/" .. name
-            local prints = record[name]
-            local text = prints and read(path)
-            if not (text and vim.tbl_contains(prints, M.fingerprint(text))) then
+            local rec = record[name]
+            local text = rec and read(path)
+            if not (text and vim.tbl_contains(rec.prints, M.fingerprint(text))) then
                 local stat = vim.loop.fs_stat(path)
                 entries[#entries + 1] = {
                     key = key,
                     lang = lang,
                     file = name,
                     mtime = stat and stat.mtime.sec or 0,
-                    checked = prints ~= nil,
+                    checked = rec ~= nil,
+                    name = rec and rec.name,
+                    rank_id = rec and rec.rank_id,
                 }
             end
         end

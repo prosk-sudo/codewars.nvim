@@ -19,7 +19,11 @@ All notable changes to codewars.nvim are documented here.
   records a fingerprint of it in `.seeded.json` beside your solutions whenever
   it seeds one, resets one or toggles a template on an untouched one. Files
   from before that cannot be checked yet: they are listed, marked
-  `not checked`, until you next open the kata.
+  `not checked`, until you next open the kata. Rows read like the kata list's:
+  rank in its colour, the kata's name, its language and how long ago you last
+  changed it. A kata the cached catalogue does not hold is named from when you
+  last opened it, or looked up as `:CW completed` does, in the background so
+  the picker opens at once and fills the rest in.
 - `indent` option: one indentation style per language, set in `setup()` the
   way templates are — `indent = { python = 4, c = 4, go = "tabs" }`. Codewars'
   starter code is not consistently indented; the same language arrives with

@@ -96,9 +96,44 @@ describe("unfinished", function()
         assert.are.same({ "multiply.py" }, listed())
     end)
 
-    it("keeps the record it has when asked to fill in a missing one", function()
+    it("keeps the starter it has on record when an opened file already has one", function()
         unfinished.seeded("multiply.py", STUB)
-        unfinished.seeded_if_unknown("multiply.py", "something else")
+        unfinished.opened("multiply.py", "something else")
+        file("multiply.py", STUB)
+        assert.are.same({}, listed())
+    end)
+
+    it("only makes the starter when there is none on record", function()
+        unfinished.seeded("multiply.py", STUB)
+        local made = false
+        unfinished.opened("multiply.py", function() made = true; return "x" end)
+        assert.is_false(made)
+    end)
+
+    -- The catalogue does not hold every kata, so the picker would otherwise
+    -- have nothing but a file name to show for one opened by :CW train.
+    it("remembers the name and rank the kata was opened with", function()
+        unfinished.seeded("multiply.py", STUB, { name = "Multiply", rank_id = -8 })
+        file("multiply.py", "def f(x):\n    return x * 2")
+        local entry = unfinished.list({})[1]
+        assert.are.equal("Multiply", entry.name)
+        assert.are.equal(-8, entry.rank_id)
+
+        unfinished.opened("multiply.py", STUB, { name = "Multiply (renamed)", rank_id = -7 })
+        entry = unfinished.list({})[1]
+        assert.are.equal("Multiply (renamed)", entry.name)
+        assert.are.equal(-7, entry.rank_id)
+    end)
+
+    it("keeps the name and rank through a reset that does not repeat them", function()
+        unfinished.seeded("multiply.py", STUB, { name = "Multiply", rank_id = -8 })
+        unfinished.seeded("multiply.py", "def f(x, y):\n    pass")
+        file("multiply.py", "changed")
+        assert.are.equal("Multiply", unfinished.list({})[1].name)
+    end)
+
+    it("reads a record written as a bare list of starters", function()
+        vim.fn.writefile({ vim.json.encode({ ["multiply.py"] = { unfinished.fingerprint(STUB) } }) }, tmp .. "/.seeded.json")
         file("multiply.py", STUB)
         assert.are.same({}, listed())
     end)

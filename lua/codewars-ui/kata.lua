@@ -124,13 +124,20 @@ function Kata:_open_file()
 
     local unfinished = require("codewars.unfinished")
     if self.file:exists() then
-        unfinished.seeded_if_unknown(self._file_name, function() return self:_starter_code() end)
+        unfinished.opened(self._file_name, function() return self:_starter_code() end, self:_info())
         return true
     end
     local starter = self:_starter_code()
     self.file:write(starter, "w")
-    unfinished.seeded(self._file_name, starter)
+    unfinished.seeded(self._file_name, starter, self:_info())
     return false
+end
+
+--- What :CW unfinished shows for this kata: the catalogue does not hold
+--- every kata, so the name and rank go on record with its starter.
+---@return cw.KataInfo
+function Kata:_info()
+    return { name = self.name, rank_id = self.rank }
 end
 
 ---@return string path, boolean existed
@@ -568,7 +575,7 @@ function Kata:reset_code()
         -- A fresh start: this starter, not the first one, is what counts as
         -- untouched now.
         if self._file_name then
-            require("codewars.unfinished").seeded(self._file_name, starter)
+            require("codewars.unfinished").seeded(self._file_name, starter, self:_info())
         end
         -- Forced: the rewrite moved the user's code out from under wherever
         -- they were standing, so the old position is not a claim on anything.

@@ -191,7 +191,9 @@ function completed.enrich(items, cb)
                 spinner:update(("Fetching kata details (%d/%d)"):format(fetched, total))
 
                 if not err and res then
-                    details[slug] = { rank = res.rank, tags = res.tags }
+                    -- The name too: :CW unfinished lists kata the catalogue
+                    -- does not hold, and has nothing else to call them by.
+                    details[slug] = { rank = res.rank, tags = res.tags, name = res.name }
                 else
                     failed = failed + 1
                     rate_limited = rate_limited or (err and err.rate_limited) or false
