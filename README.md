@@ -31,7 +31,7 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
 - Neovim >= 0.9.0
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) — HTTP requests, file operations
 - [nui.nvim](https://github.com/MunifTanjim/nui.nvim) — UI components
-- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) — kata picker, language picker
+- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) — kata picker, language picker (optional: without it pickers use `vim.ui.select`, i.e. your global picker; see [CONFIGS.md](CONFIGS.md#picker))
 - [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) with `markdown` parser — description rendering (optional)
 - [markdown.nvim](https://github.com/tadmccorkle/markdown.nvim) — enhanced markdown rendering (optional)
 
@@ -47,8 +47,8 @@ Solve [Codewars](https://www.codewars.com) katas from within Neovim.
   dependencies = {
     "nvim-lua/plenary.nvim",
     "MunifTanjim/nui.nvim",
-    "nvim-telescope/telescope.nvim",    -- kata picker / language picker
     -- optional
+    "nvim-telescope/telescope.nvim",    -- kata / language picker; else vim.ui.select
     "tadmccorkle/markdown.nvim",        -- markdown rendering in description
   },
   opts = {},

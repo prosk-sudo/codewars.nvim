@@ -48,7 +48,7 @@
 
 ---@alias cw.storage table<"cache"|"home", string>
 
----@alias cw.picker { provider?: "telescope" }
+---@alias cw.picker { provider?: "telescope"|"select" }
 
 ---@class cw.TemplateCtx
 ---@field lang string language slug
@@ -113,6 +113,8 @@ local M = {
     },
 
     ---@type cw.picker
+    --- "telescope" for the full picker UI, "select" for vim.ui.select (the
+    --- picker the user registered globally). Unset: telescope if installed.
     picker = {},
 
     ---@type cw.templates

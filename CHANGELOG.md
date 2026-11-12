@@ -4,6 +4,15 @@ All notable changes to codewars.nvim are documented here.
 
 ## [Unreleased]
 
+### Added
+- telescope.nvim is now optional. Without it every picker goes through
+  `vim.ui.select`, so the kata list, kumite browser and language menus open in
+  whatever picker you registered globally (fzf-lua, snacks.picker, dressing,
+  telescope-ui-select). The kata list's sort / language / difficulty / reset
+  and the kumite browser's paging and language become rows of the list in
+  place of the telescope-only keys. Set `picker = { provider = "telescope" }`
+  or `"select"` to choose; unset, telescope is used when it is installed.
+
 ### Changed
 - The dashboard header no longer waits on a network round trip to show who you
   are. Your username, rank, honor and completed count are remembered between
