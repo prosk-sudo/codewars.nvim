@@ -49,6 +49,22 @@ describe("config.validate", function()
         end)
     end)
 
+    it("rejects an unknown picker provider", function()
+        config.apply({ picker = { provider = "fzf" } })
+        local ok, err = pcall(config.validate)
+        assert.is_false(ok)
+        assert.truthy(tostring(err):find("fzf", 1, true))
+    end)
+
+    it("accepts the select and telescope picker providers", function()
+        for _, provider in ipairs({ "select", "telescope" }) do
+            config.apply({ picker = { provider = provider } })
+            assert.has_no.errors(function()
+                config.validate()
+            end)
+        end
+    end)
+
     it("accepts the shipped default when the user sets no language", function()
         config.apply({})
         assert.has_no.errors(function()

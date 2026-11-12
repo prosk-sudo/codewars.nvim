@@ -19,8 +19,8 @@ Run `:CW help` inside Neovim for a quick reference.
 
 | Command | Description |
 |---|---|
-| `:CW list [difficulty=8,7] [order=…]` | Browse kata with filters (telescope). `difficulty=` takes kyu numbers and becomes the picker's rank filter (one rank or a set — `Ctrl-d` can widen it back to all); `order=` is one of `shuffle`, `name`, `satisfaction`, `hardest`, `easiest` — `<Tab>` completes both. Without arguments the picker keeps the filters you last chose in its menus |
-| `:CW completed` | Browse completed kata (telescope) |
+| `:CW list [difficulty=8,7] [order=…]` | Browse kata with filters. `difficulty=` takes kyu numbers and becomes the picker's rank filter (one rank or a set — `Ctrl-d` can widen it back to all); `order=` is one of `shuffle`, `name`, `satisfaction`, `hardest`, `easiest` — `<Tab>` completes both. Without arguments the picker keeps the filters you last chose in its menus |
+| `:CW completed` | Browse completed kata |
 | `:CW solutions` | View community solutions for current kata, with Best Practices / Clever counts and comments. In the popup: `1`–`0`, `]`/`[` page through solutions, `gb` / `gv` vote Best Practices / Clever (again to retract), `c` toggles the comment pane, `<Tab>` switches pane, `q` closes |
 | `:CW leaderboard [category]` | Top 500 leaderboard: `overall`, `kata` (completed), `authored`, `ranks`. No args opens the category picker; also in the menu under `l` |
 | `:CW kumite` | Browse Freestyle Sparring (kumite): server-paged picker (`Ctrl-n`/`Ctrl-p` page, `Ctrl-g` go to page, `Ctrl-l` language). Menu `m`; works signed out |

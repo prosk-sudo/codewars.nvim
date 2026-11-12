@@ -215,21 +215,14 @@ end
 --- touches a menu (save_state), never from a caller, so other list views are
 --- not affected. rank_filter = false means "All ranks" explicitly.
 function picker._show_kata_list(items, title, completed_set, initial)
+    local use_select = dropdown.provider() == "select"
     -- Memoized telescope table lives in picker.dropdown; shared error path.
-    local t = dropdown.telescope()
-    if not t then return end
+    local t
+    if not use_select then
+        t = dropdown.telescope()
+        if not t then return end
+    end
     initial = initial or {}
-
-    local displayer = t.entry_display.create({
-        separator = " ",
-        items = {
-            { width = 1 },  -- completed icon
-            { width = 1 },  -- rank icon
-            { width = 5 },  -- rank name
-            { width = 1 },  -- warning icon
-            { remaining = true },  -- kata name
-        },
-    })
 
     local current_sort_idx = sort_index(initial.sort_key) or _saved_sort_idx
     local current_lang_filter = _saved_lang_filter
@@ -237,7 +230,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
     if initial.rank_filter ~= nil then
         current_rank_filter = initial.rank_filter or nil
     end
-    local make_picker
+    local reopen
     local cached_languages = problemlist_utils.collect_languages(items)
 
     -- Remember only what the user just chose in a menu. Values seeded by a
@@ -248,6 +241,57 @@ function picker._show_kata_list(items, title, completed_set, initial)
         if field == "sort" or not field then _saved_sort_idx = current_sort_idx end
         if field == "lang" or not field then _saved_lang_filter = current_lang_filter end
         if field == "rank" or not field then _saved_rank_filter = current_rank_filter end
+    end
+
+    local function reset_filters()
+        current_sort_idx = 1
+        current_lang_filter = nil
+        current_rank_filter = nil
+        save_state()
+    end
+
+    local function open_kata(item)
+        local Kata = require("codewars-ui.kata")
+        local slug = item.slug or item.id
+
+        local lang = current_lang_filter
+        if not lang then
+            lang = config.lang
+            if item.languages and #item.languages > 0 and not vim.tbl_contains(item.languages, lang) then
+                lang = item.languages[1]
+            end
+        end
+
+        Kata:new(slug, lang):mount()
+    end
+
+    --- Text columns of a kata row, shared by both backends.
+    local function kata_columns(item)
+        local rid = rank_of(item)
+        local rname = item.rank_name or (item.rank and item.rank.name) or ""
+        local slug = item.slug or item.id
+
+        -- Judged against the language you are filtering by, not the default:
+        -- a kata valid for the selected filter is not "unavailable".
+        local lang_available = true
+        local judge_lang = current_lang_filter or config.lang
+        if item.languages and #item.languages > 0 and judge_lang then
+            lang_available = vim.tbl_contains(item.languages, judge_lang)
+        end
+
+        local display_name = item.name or slug
+        if item.satisfaction then
+            display_name = ("%s (%d%%)"):format(display_name, item.satisfaction)
+        end
+
+        return {
+            rid = rid,
+            rname = rname,
+            hl = rank_hl_from_id(rid),
+            slug = slug,
+            warn_icon = lang_available and " " or "\u{f0205}",
+            display_name = display_name,
+        }
     end
 
     local function build_display_list()
@@ -272,10 +316,23 @@ function picker._show_kata_list(items, title, completed_set, initial)
         return display, #sorted
     end
 
-    local control_displayer = t.entry_display.create({
-        separator = "",
-        items = { { remaining = true } },
-    })
+    local displayer, control_displayer
+    if t then
+        displayer = t.entry_display.create({
+            separator = " ",
+            items = {
+                { width = 1 },  -- completed icon
+                { width = 1 },  -- rank icon
+                { width = 5 },  -- rank name
+                { width = 1 },  -- warning icon
+                { remaining = true },  -- kata name
+            },
+        })
+        control_displayer = t.entry_display.create({
+            separator = "",
+            items = { { remaining = true } },
+        })
+    end
 
     local function combined_entry_maker(item)
         if item._control == "separator" then
@@ -300,37 +357,20 @@ function picker._show_kata_list(items, title, completed_set, initial)
             }
         end
 
-        local rid = item.rank_id or (item.rank and item.rank.id)
-        local rname = item.rank_name or (item.rank and item.rank.name) or ""
-        local hl = rank_hl_from_id(rid)
-        local slug = item.slug or item.id
-
-        -- Judged against the language you are filtering by, not the default:
-        -- a kata valid for the selected filter is not "unavailable".
-        local lang_available = true
-        local judge_lang = current_lang_filter or config.lang
-        if item.languages and #item.languages > 0 and judge_lang then
-            lang_available = vim.tbl_contains(item.languages, judge_lang)
-        end
-        local warn_icon = lang_available and " " or "\u{f0205}"
-
-        local display_name = item.name or slug
-        if item.satisfaction then
-            display_name = ("%s (%d%%)"):format(display_name, item.satisfaction)
-        end
+        local c = kata_columns(item)
 
         return {
             value = item,
             display = function()
                 return displayer({
-                    status_icon(slug, completed_set),
-                    { rank_icon(rid), hl },
-                    { rank_str(rname), hl },
-                    { warn_icon, "codewars_error" },
-                    { display_name },
+                    status_icon(c.slug, completed_set),
+                    { rank_icon(c.rid), c.hl },
+                    { rank_str(c.rname), c.hl },
+                    { c.warn_icon, "codewars_error" },
+                    { c.display_name },
                 })
             end,
-            ordinal = ("%s %s %s"):format(rname, item.name or "", slug),
+            ordinal = ("%s %s %s"):format(c.rname, item.name or "", c.slug),
         }
     end
 
@@ -350,7 +390,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
             on_select = function(idx)
                 current_sort_idx = idx
                 save_state("sort")
-                vim.schedule(function() make_picker():find() end)
+                vim.schedule(reopen)
             end,
         })
     end
@@ -397,7 +437,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
             on_select = function(v)
                 current_lang_filter = v.lang
                 save_state("lang")
-                vim.schedule(function() make_picker():find() end)
+                vim.schedule(reopen)
             end,
         })
     end
@@ -432,12 +472,12 @@ function picker._show_kata_list(items, title, completed_set, initial)
             on_select = function(v)
                 current_rank_filter = v.rank
                 save_state("rank")
-                vim.schedule(function() make_picker():find() end)
+                vim.schedule(reopen)
             end,
         })
     end
 
-    make_picker = function()
+    local function make_picker()
         local display = build_display_list()
 
         local opts = t.themes.get_dropdown({
@@ -474,19 +514,7 @@ function picker._show_kata_list(items, title, completed_set, initial)
                     end
 
                     t.actions.close(prompt_bufnr)
-                    local Kata = require("codewars-ui.kata")
-                    local slug = selection.value.slug or selection.value.id
-                    local item = selection.value
-
-                    local lang = current_lang_filter
-                    if not lang then
-                        lang = config.lang
-                        if item.languages and #item.languages > 0 and not vim.tbl_contains(item.languages, lang) then
-                            lang = item.languages[1]
-                        end
-                    end
-
-                    Kata:new(slug, lang):mount()
+                    open_kata(selection.value)
                 end)
 
                 map("i", "<C-s>", function() t.actions.close(prompt_bufnr); vim.schedule(open_sort_dropdown) end)
@@ -496,16 +524,13 @@ function picker._show_kata_list(items, title, completed_set, initial)
                 map("i", "<C-d>", function() t.actions.close(prompt_bufnr); vim.schedule(open_rank_dropdown) end)
                 map("n", "<C-d>", function() t.actions.close(prompt_bufnr); vim.schedule(open_rank_dropdown) end)
 
-                local function reset_filters()
-                    current_sort_idx = 1
-                    current_lang_filter = nil
-                    current_rank_filter = nil
-                    save_state()
+                local function reset_and_reopen()
+                    reset_filters()
                     t.actions.close(prompt_bufnr)
-                    vim.schedule(function() make_picker():find() end)
+                    vim.schedule(reopen)
                 end
-                map("i", "<C-r>", reset_filters)
-                map("n", "<C-r>", reset_filters)
+                map("i", "<C-r>", reset_and_reopen)
+                map("n", "<C-r>", reset_and_reopen)
 
                 return true
             end,
@@ -525,7 +550,53 @@ function picker._show_kata_list(items, title, completed_set, initial)
         return p
     end
 
-    make_picker():find()
+    -- vim.ui.select has no custom keys, so sort / language / difficulty /
+    -- reset are rows of the list; picking one opens its menu, which reopens
+    -- the list. The separator row is telescope decoration only.
+    local function show_select()
+        local display, count = build_display_list()
+        local choices = {}
+        for _, item in ipairs(display) do
+            if item._control ~= "separator" then table.insert(choices, item) end
+        end
+        table.insert(choices, 4, { _control = "reset", label = "  Reset filters" })
+
+        vim.ui.select(choices, {
+            prompt = ("%s (Default: %s, %d kata)"):format(title, config.lang, count),
+            format_item = function(item)
+                if item._control then return item.label end
+                local c = kata_columns(item)
+                return table.concat({
+                    status_icon(c.slug, completed_set)[1],
+                    rank_icon(c.rid),
+                    rank_str(c.rname),
+                    c.warn_icon,
+                    c.display_name,
+                }, " ")
+            end,
+        }, function(choice)
+            if not choice then return end
+            if choice._control == "sort" then
+                vim.schedule(open_sort_dropdown)
+            elseif choice._control == "lang" then
+                vim.schedule(open_lang_dropdown)
+            elseif choice._control == "rank" then
+                vim.schedule(open_rank_dropdown)
+            elseif choice._control == "reset" then
+                reset_filters()
+                vim.schedule(reopen)
+            else
+                open_kata(choice)
+            end
+        end)
+    end
+
+    reopen = function()
+        if use_select then return show_select() end
+        make_picker():find()
+    end
+
+    reopen()
 end
 
 --- Browse all kata. Uses cached problem list for instant loading.
@@ -850,8 +921,106 @@ local function open_kumite_hint()
     return win
 end
 
+---@param item cw.KumiteListEntry
+---@return string
+local function kumite_byline(item)
+    local byline = item.author or ""
+    if item.forked_from_author then
+        byline = byline .. " vs " .. item.forked_from_author
+    end
+    return byline
+end
+
+--- Move to a page and refetch. `close` tears down the current picker first;
+--- returns false (picker left alone) when the page is out of range or current.
+---@param page_num integer
+---@param close fun()?
+---@return boolean
+local function kumite_goto_page(page_num, close)
+    if page_num < 1 or page_num > _kumite_last then
+        log.info(("Page must be between 1 and %d."):format(_kumite_last))
+        return false
+    end
+    if page_num == _kumite_page then return false end
+    _kumite_page = page_num
+    if close then close() end
+    kumite_fetch_and_show()
+    return true
+end
+
+local function kumite_pick_language()
+    local lang_entries = lang_dropdown_entries(config.langs)
+    table.insert(lang_entries, 1, { label = "All languages", value = { slug = false } })
+    dropdown.open({
+        prompt_title = "Kumite language",
+        entries = lang_entries,
+        width = 40,
+        on_select = function(v)
+            _kumite_lang = v.slug or nil
+            -- Language switch resets to page 1: a persisted deep
+            -- page rarely exists in the new language.
+            _kumite_page = 1
+            kumite_fetch_and_show()
+        end,
+    })
+end
+
+--- vim.ui.select variant: paging and language are rows of the list. Fork
+--- stays available as `:CW kumite fork` in the opened workspace.
+---@param entries cw.KumiteListEntry[]
+local function show_kumite_select(entries)
+    local choices = {}
+    if _kumite_page < _kumite_last then
+        table.insert(choices, { _control = "next", label = "  Next page" })
+    end
+    if _kumite_page > 1 then
+        table.insert(choices, { _control = "prev", label = "  Prev page" })
+    end
+    if _kumite_last > 1 then
+        table.insert(choices, { _control = "goto", label = "  Go to page..." })
+    end
+    table.insert(choices, { _control = "lang", label = ("  Language: %s"):format(_kumite_lang or "all") })
+    vim.list_extend(choices, entries)
+
+    local function reshow() vim.schedule(function() show_kumite_select(entries) end) end
+
+    vim.ui.select(choices, {
+        prompt = ("Kumite · %s · page %d/%d"):format(_kumite_lang or "all", _kumite_page, _kumite_last),
+        format_item = function(item)
+            if item._control then return item.label end
+            return table.concat({
+                item.title or "",
+                kumite_byline(item),
+                item.language or "",
+                kumite_age(item.published_at),
+            }, "  ")
+        end,
+    }, function(choice)
+        if not choice then return end
+        if choice._control == "next" then
+            if not kumite_goto_page(_kumite_page + 1) then reshow() end
+        elseif choice._control == "prev" then
+            if not kumite_goto_page(_kumite_page - 1) then reshow() end
+        elseif choice._control == "goto" then
+            vim.schedule(function()
+                vim.ui.input({ prompt = ("Page (1-%d): "):format(_kumite_last) }, function(input)
+                    local n = tonumber(input)
+                    if not (n and kumite_goto_page(math.floor(n))) then reshow() end
+                end)
+            end)
+        elseif choice._control == "lang" then
+            vim.schedule(kumite_pick_language)
+        else
+            kumite_open_entry(choice)
+        end
+    end)
+end
+
 ---@param entries cw.KumiteListEntry[]
 function picker._show_kumite_list(entries)
+    if dropdown.provider() == "select" then
+        return show_kumite_select(entries)
+    end
     local t = dropdown.telescope()
     if not t then return end
 
@@ -866,10 +1035,7 @@ function picker._show_kumite_list(entries)
     })
 
     local function entry_maker(item)
-        local byline = item.author or ""
-        if item.forked_from_author then
-            byline = byline .. " vs " .. item.forked_from_author
-        end
+        local byline = kumite_byline(item)
         return {
             value = item,
             display = function()
@@ -885,13 +1051,7 @@ function picker._show_kumite_list(entries)
     end
 
     local function goto_page(prompt_bufnr, page_num)
-        if page_num < 1 or page_num > _kumite_last then
-            return log.info(("Page must be between 1 and %d."):format(_kumite_last))
-        end
-        if page_num == _kumite_page then return end
-        _kumite_page = page_num
-        t.actions.close(prompt_bufnr)
-        kumite_fetch_and_show()
+        kumite_goto_page(page_num, function() t.actions.close(prompt_bufnr) end)
     end
 
     local hint_win = open_kumite_hint()
@@ -940,21 +1100,8 @@ function picker._show_kumite_list(entries)
                 end)
             end)
             map({ "i", "n" }, "<C-l>", function()
-                local lang_entries = lang_dropdown_entries(config.langs)
-                table.insert(lang_entries, 1, { label = "All languages", value = { slug = false } })
                 t.actions.close(prompt_bufnr)
-                dropdown.open({
-                    prompt_title = "Kumite language",
-                    entries = lang_entries,
-                    width = 40,
-                    on_select = function(v)
-                        _kumite_lang = v.slug or nil
-                        -- Language switch resets to page 1: a persisted deep
-                        -- page rarely exists in the new language.
-                        _kumite_page = 1
-                        kumite_fetch_and_show()
-                    end,
-                })
+                kumite_pick_language()
             end)
             return true
         end,
