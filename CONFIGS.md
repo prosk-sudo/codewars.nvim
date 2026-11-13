@@ -297,7 +297,7 @@ icons = {
 - **Result:** `all_passed`, `tests_failed`, `test_passed`, `test_failed`
 - **Picker:** `completed`, `rank`
 - **Solutions popup:** `voted` (the label you voted for)
-- **Menu:** `katas`, `stats`, `cookie`, `cache`, `exit`, `search`, `list`, `random`, `back`, `update`, `signin`, `signout`, `expand`
+- **Menu:** `katas`, `stats`, `cookie`, `cache`, `exit`, `search`, `list`, `random`, `back`, `update`, `signin`, `signout`, `expand`, `recent`
 - **Leaderboard:** `leaderboard`, `leaderboard_authored`
 - **Kumite:** `kumite`
 - **Today's Focus:** `focus`, `focus_fundamentals`, `focus_rank_up`, `focus_practice_and_repeat`, `focus_beta`

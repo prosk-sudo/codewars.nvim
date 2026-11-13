@@ -104,6 +104,7 @@ local sort_modes = {
     { key = "satisfaction", label = "Satisfaction (%)" },
     { key = "hardest", label = "Hardest first" },
     { key = "easiest", label = "Easiest first" },
+    { key = "recent", label = "Recently completed" },
 }
 
 -- Exposed so `:CW list order=` completion/validation can be pinned to it.
@@ -178,7 +179,18 @@ end
 local function sort_items(items, mode)
     if mode == "shuffle" then return shuffle(items) end
     local sorted = vim.list_slice(items, 1, #items)
-    if mode == "name" then
+    if mode == "recent" then
+        -- ISO 8601 UTC strings sort chronologically as text. Items without a
+        -- date (catalogue entries) keep their order, after the dated ones.
+        local pos = {}
+        for i, item in ipairs(sorted) do pos[item] = i end
+        table.sort(sorted, function(a, b)
+            local da, db = a.completedAt, b.completedAt
+            if (da == nil) ~= (db == nil) then return db == nil end
+            if da and da ~= db then return da > db end
+            return pos[a] < pos[b]
+        end)
+    elseif mode == "name" then
         table.sort(sorted, function(a, b)
             return (a.name or a.slug or "") < (b.name or b.slug or "")
         end)
@@ -203,6 +215,9 @@ local function sort_items(items, mode)
     end
     return sorted
 end
+
+--- Test seam: the list sort, so its order is testable without a picker UI.
+picker._sort_items = sort_items
 
 --- Show a telescope picker for a list of kata items.
 ---@param items table[]
@@ -591,21 +606,22 @@ function picker.problems(opts)
 end
 
 --- Show enriched kata list (shared by both branches of picker.completed)
-local function show_enriched(data)
+local function show_enriched(data, initial)
     local completed_cache = require("codewars.cache.completed")
     completed_cache.enrich(data, function(enriched)
         vim.schedule(function()
             ensure_completed_set(function(completed_set)
-                picker._show_kata_list(enriched, "Select a Question", completed_set)
+                picker._show_kata_list(enriched, "Select a Question", completed_set, initial)
             end)
         end)
     end)
 end
 
---- Browse completed kata.
+--- Browse completed kata, newest first (the Sort menu can still change it).
 function picker.completed()
     local completed_cache = require("codewars.cache.completed")
     local items = completed_cache.get()
+    local initial = { sort_key = "recent" }
 
     if vim.tbl_isempty(items) then
         log.info("Fetching completed kata...")
@@ -618,11 +634,58 @@ function picker.completed()
                 end
                 return log.warn("No completed kata found. Is your username configured?")
             end
-            show_enriched(data)
+            show_enriched(data, initial)
         end)
     else
-        show_enriched(items)
+        show_enriched(items, initial)
     end
+end
+
+---@param seconds integer
+---@return string # compact age like "5m", "3h", "26d", "2y"
+local function ago(seconds)
+    local diff = math.max(0, seconds)
+    if diff < 3600 then return math.floor(diff / 60) .. "m" end
+    if diff < 86400 then return math.floor(diff / 3600) .. "h" end
+    if diff < 86400 * 365 then return math.floor(diff / 86400) .. "d" end
+    return math.floor(diff / (86400 * 365)) .. "y"
+end
+
+--- Kata you opened lately, newest first, marked completed or in progress.
+--- Picking one reopens it in the same language (its file is reused).
+function picker.recent()
+    local items = require("codewars.cache.recent").get()
+    if #items == 0 then
+        return log.info("No recent kata yet. Open one with :CW train, :CW list or :CW focus.")
+    end
+
+    ensure_completed_set(function(completed_set)
+        local icons = require("codewars.icons").get()
+        local now = os.time()
+        local entries = {}
+        for _, e in ipairs(items) do
+            local done = completed_set[e.slug] == true
+            local rank = theme.rank_str(e.rank)
+            table.insert(entries, {
+                label = ("%-6s %s  %s  %s"):format(
+                    rank, e.name or e.slug, e.lang, ago(now - (e.opened_at or now))),
+                value = e,
+                icon = done and icons.completed or icons.recent,
+                icon_hl = done and "codewars_completed" or "codewars_warning",
+                ordinal = ("%s %s %s"):format(e.name or "", e.slug, e.lang),
+            })
+        end
+
+        dropdown.open({
+            prompt_title = "Recent kata",
+            entries = entries,
+            width = 80,
+            height = math.min(#entries + 4, 25),
+            on_select = function(e)
+                require("codewars-ui.kata"):new(e.slug, e.lang):mount()
+            end,
+        })
+    end)
 end
 
 local function lang_icon(slug)

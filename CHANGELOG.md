@@ -4,7 +4,16 @@ All notable changes to codewars.nvim are documented here.
 
 ## [Unreleased]
 
+### Added
+- `:CW recent` (also Menu > Katas > Recent): the kata you opened lately,
+  newest first, each marked completed or in progress, to pick up where you
+  left off. Codewars has no "in progress" API, so opens are recorded locally
+  (last 50, per kata and language) and matched against your completed kata.
+
 ### Changed
+- `:CW completed` lists your most recently completed kata first. A new
+  "Recently completed" sort mode (`order=recent`) does this; the Sort menu
+  still switches to the others.
 - The dashboard header no longer waits on a network round trip to show who you
   are. Your username, rank, honor and completed count are remembered between
   launches, so the menu paints them immediately instead of sitting on a bare
