@@ -1,116 +1,156 @@
 local theme = {}
 
+-- Every group derives from a standard group the colorscheme defines. A spec
+-- with only `link` becomes a real link; extra style keys (bold, italic, ...)
+-- cannot ride on a link, so those take the target's fg plus the style.
 local highlights = {
-    codewars_ok = { fg = "#2cbe4e", bold = true },
-    codewars_error = { fg = "#f44747", bold = true },
-    codewars_info = { fg = "#61afef", bold = true },
-    codewars_warning = { fg = "#e5c07b", bold = true },
-    codewars_normal = { fg = "#abb2bf" },
-    codewars_ref = { fg = "#5c6370", italic = true },
-    codewars_header = { fg = "#b1361e", bold = true }, -- Codewars red
-    codewars_icon = { fg = "#DA70D6" },
-    codewars_shortcut = { fg = "#40E0D0" },
-    codewars_breadcrumb = { fg = "#5c6370" },
-    -- Light-blue hint box (keybinding legends)
-    codewars_hint = { fg = "#7dcfff" },
-    codewars_hint_border = { fg = "#7dcfff" },
-    codewars_hint_key = { fg = "#7dcfff", bold = true },
-    codewars_rank_white = { fg = "#e6e6e6" },
-    codewars_rank_yellow = { fg = "#ecb613" },
-    codewars_rank_blue = { fg = "#3c7ebb" },
-    codewars_rank_purple = { fg = "#866cc7" },
-    codewars_completed = { fg = "#2cbe4e" },
+    codewars_ok = { link = "DiagnosticOk", bold = true },
+    codewars_error = { link = "DiagnosticError", bold = true },
+    codewars_info = { link = "DiagnosticInfo", bold = true },
+    codewars_warning = { link = "DiagnosticWarn", bold = true },
+    codewars_normal = { link = "Normal" },
+    codewars_ref = { link = "Comment", italic = true },
+    codewars_header = { link = "Title", bold = true },
+    codewars_icon = { link = "Special" },
+    codewars_shortcut = { link = "Function" },
+    codewars_breadcrumb = { link = "Comment" },
+    -- Hint box (keybinding legends)
+    codewars_hint = { link = "DiagnosticHint" },
+    codewars_hint_border = { link = "DiagnosticHint" },
+    codewars_hint_key = { link = "DiagnosticHint", bold = true },
+    codewars_rank_white = { link = "Normal" },
+    codewars_rank_yellow = { link = "DiagnosticWarn" },
+    codewars_rank_blue = { link = "DiagnosticInfo" },
+    codewars_rank_purple = { link = "Statement" },
+    codewars_completed = { link = "DiagnosticOk" },
 
     -- Solution comment thread (rendered from the site's markdown-lite)
-    codewars_comment_author = { fg = "#e6e6e6", bold = true },
-    codewars_comment_guide = { fg = "#5c6370" },
+    codewars_comment_author = { link = "Normal", bold = true },
+    codewars_comment_guide = { link = "Comment" },
     codewars_comment_bold = { bold = true },
     codewars_comment_italic = { italic = true },
-    codewars_comment_code = { fg = "#98c379" },
-    codewars_comment_link = { fg = "#61afef", underline = true },
+    codewars_comment_code = { link = "String" },
+    codewars_comment_link = { link = "Underlined" },
 
     -- Success rate colors
-    codewars_rate_white = { fg = "#e6e6e6" },
-    codewars_rate_yellow = { fg = "#ecb613" },
-    codewars_rate_orange = { fg = "#e5945e" },
-    codewars_rate_green = { fg = "#2cbe4e" },
-    codewars_rate_blue = { fg = "#3c7ebb" },
-    codewars_rate_red = { fg = "#f44747" },
-    codewars_rate_pink = { fg = "#e06c9f" },
-    codewars_rate_purple = { fg = "#866cc7" },
-    codewars_rate_gray = { fg = "#5c6370" },
-    codewars_rate_brown = { fg = "#8b6914" },
-    codewars_rate_black = { fg = "#333333" },
+    codewars_rate_white = { link = "Normal" },
+    codewars_rate_yellow = { link = "DiagnosticWarn" },
+    codewars_rate_orange = { link = "Number" },
+    codewars_rate_green = { link = "DiagnosticOk" },
+    codewars_rate_blue = { link = "DiagnosticInfo" },
+    codewars_rate_red = { link = "DiagnosticError" },
+    codewars_rate_pink = { link = "Special" },
+    codewars_rate_purple = { link = "Statement" },
+    codewars_rate_gray = { link = "Comment" },
+    codewars_rate_brown = { link = "Type" },
+    codewars_rate_black = { link = "NonText" },
 
-    -- Language icon colors
-    codewars_lang_python = { fg = "#3776AB" },
-    codewars_lang_javascript = { fg = "#F7DF1E" },
-    codewars_lang_typescript = { fg = "#3178C6" },
-    codewars_lang_ruby = { fg = "#CC342D" },
-    codewars_lang_java = { fg = "#ED8B00" },
-    codewars_lang_cpp = { fg = "#00599C" },
-    codewars_lang_c = { fg = "#A8B9CC" },
-    codewars_lang_csharp = { fg = "#512BD4" },
-    codewars_lang_go = { fg = "#00ADD8" },
-    codewars_lang_rust = { fg = "#DEA584" },
-    codewars_lang_haskell = { fg = "#5D4F85" },
-    codewars_lang_clojure = { fg = "#5881D8" },
-    codewars_lang_elixir = { fg = "#4B275F" },
-    codewars_lang_swift = { fg = "#F05138" },
-    codewars_lang_kotlin = { fg = "#7F52FF" },
-    codewars_lang_scala = { fg = "#DC322F" },
-    codewars_lang_php = { fg = "#777BB4" },
-    codewars_lang_shell = { fg = "#4EAA25" },
-    codewars_lang_lua = { fg = "#2C2D72" },
-    codewars_lang_coffeescript = { fg = "#2F2625" },
-    codewars_lang_sql = { fg = "#4169E1" },
-    codewars_lang_dart = { fg = "#0175C2" },
-    codewars_lang_r = { fg = "#276DC3" },
-    codewars_lang_nim = { fg = "#FFE953" },
-    codewars_lang_crystal = { fg = "#000000" },
-    codewars_lang_julia = { fg = "#9558B2" },
-    codewars_lang_racket = { fg = "#9F1D20" },
-    codewars_lang_ocaml = { fg = "#EC6813" },
-    codewars_lang_fsharp = { fg = "#378BBA" },
-    codewars_lang_erlang = { fg = "#A90533" },
-    codewars_lang_fortran = { fg = "#734F96" },
-    codewars_lang_nasm = { fg = "#105060" },
-    codewars_lang_cobol = { fg = "#3B5998" },      -- IBM blue
-    codewars_lang_d = { fg = "#B03931" },           -- D lang red
-    codewars_lang_prolog = { fg = "#E4552D" },      -- SWI-Prolog orange
-    codewars_lang_factor = { fg = "#636746" },      -- Factor olive
-    codewars_lang_groovy = { fg = "#4298B8" },      -- Groovy blue
-    codewars_lang_perl = { fg = "#0298C3" },        -- Perl cyan
-    codewars_lang_lambdacalc = { fg = "#DAA520" },  -- lambda gold
-    codewars_lang_powershell = { fg = "#012456" },  -- PowerShell dark blue
-    codewars_lang_elm = { fg = "#60B5CC" },         -- Elm blue
-    codewars_lang_reason = { fg = "#DD4B39" },      -- ReasonML red
-    codewars_lang_bf = { fg = "#7A7A7A" },          -- Brainfuck gray
-    codewars_lang_pascal = { fg = "#E3F171" },      -- Pascal yellow-green
-    codewars_lang_objc = { fg = "#438EFF" },        -- Objective-C blue
-    codewars_lang_haxe = { fg = "#EA8220" },        -- Haxe orange
-    codewars_lang_riscv = { fg = "#283272" },       -- RISC-V navy
-    codewars_lang_coq = { fg = "#D0B68C" },         -- Coq tan
-    codewars_lang_forth = { fg = "#341708" },       -- Forth brown
-    codewars_lang_raku = { fg = "#0098D8" },        -- Raku blue (Perl 6)
-    codewars_lang_purescript = { fg = "#1D222D" },  -- PureScript dark
-    codewars_lang_agda = { fg = "#315665" },        -- Agda teal
-    codewars_lang_lean = { fg = "#2E3A4E" },        -- Lean dark blue
-    codewars_lang_commonlisp = { fg = "#3FB68B" },  -- Common Lisp green
-    codewars_lang_idris = { fg = "#B30000" },       -- Idris dark red
-    codewars_lang_solidity = { fg = "#363636" },    -- Solidity dark gray
-    codewars_lang_vb = { fg = "#945DB7" },          -- Visual Basic purple
-    codewars_lang_cfml = { fg = "#ED2CD6" },        -- CFML magenta
+    -- Language icons: one theme color, each still overridable on its own
+    codewars_lang = { link = "Special" },
+    codewars_lang_python = { link = "codewars_lang" },
+    codewars_lang_javascript = { link = "codewars_lang" },
+    codewars_lang_typescript = { link = "codewars_lang" },
+    codewars_lang_ruby = { link = "codewars_lang" },
+    codewars_lang_java = { link = "codewars_lang" },
+    codewars_lang_cpp = { link = "codewars_lang" },
+    codewars_lang_c = { link = "codewars_lang" },
+    codewars_lang_csharp = { link = "codewars_lang" },
+    codewars_lang_go = { link = "codewars_lang" },
+    codewars_lang_rust = { link = "codewars_lang" },
+    codewars_lang_haskell = { link = "codewars_lang" },
+    codewars_lang_clojure = { link = "codewars_lang" },
+    codewars_lang_elixir = { link = "codewars_lang" },
+    codewars_lang_swift = { link = "codewars_lang" },
+    codewars_lang_kotlin = { link = "codewars_lang" },
+    codewars_lang_scala = { link = "codewars_lang" },
+    codewars_lang_php = { link = "codewars_lang" },
+    codewars_lang_shell = { link = "codewars_lang" },
+    codewars_lang_lua = { link = "codewars_lang" },
+    codewars_lang_coffeescript = { link = "codewars_lang" },
+    codewars_lang_sql = { link = "codewars_lang" },
+    codewars_lang_dart = { link = "codewars_lang" },
+    codewars_lang_r = { link = "codewars_lang" },
+    codewars_lang_nim = { link = "codewars_lang" },
+    codewars_lang_crystal = { link = "codewars_lang" },
+    codewars_lang_julia = { link = "codewars_lang" },
+    codewars_lang_racket = { link = "codewars_lang" },
+    codewars_lang_ocaml = { link = "codewars_lang" },
+    codewars_lang_fsharp = { link = "codewars_lang" },
+    codewars_lang_erlang = { link = "codewars_lang" },
+    codewars_lang_fortran = { link = "codewars_lang" },
+    codewars_lang_nasm = { link = "codewars_lang" },
+    codewars_lang_cobol = { link = "codewars_lang" },
+    codewars_lang_d = { link = "codewars_lang" },
+    codewars_lang_prolog = { link = "codewars_lang" },
+    codewars_lang_factor = { link = "codewars_lang" },
+    codewars_lang_groovy = { link = "codewars_lang" },
+    codewars_lang_perl = { link = "codewars_lang" },
+    codewars_lang_lambdacalc = { link = "codewars_lang" },
+    codewars_lang_powershell = { link = "codewars_lang" },
+    codewars_lang_elm = { link = "codewars_lang" },
+    codewars_lang_reason = { link = "codewars_lang" },
+    codewars_lang_bf = { link = "codewars_lang" },
+    codewars_lang_pascal = { link = "codewars_lang" },
+    codewars_lang_objc = { link = "codewars_lang" },
+    codewars_lang_haxe = { link = "codewars_lang" },
+    codewars_lang_riscv = { link = "codewars_lang" },
+    codewars_lang_coq = { link = "codewars_lang" },
+    codewars_lang_forth = { link = "codewars_lang" },
+    codewars_lang_raku = { link = "codewars_lang" },
+    codewars_lang_purescript = { link = "codewars_lang" },
+    codewars_lang_agda = { link = "codewars_lang" },
+    codewars_lang_lean = { link = "codewars_lang" },
+    codewars_lang_commonlisp = { link = "codewars_lang" },
+    codewars_lang_idris = { link = "codewars_lang" },
+    codewars_lang_solidity = { link = "codewars_lang" },
+    codewars_lang_vb = { link = "codewars_lang" },
+    codewars_lang_cfml = { link = "codewars_lang" },
 }
 
-function theme.setup()
-    local config = require("codewars.config")
-    local overrides = config.user.theme or {}
+--- Test seam: the built-in specs.
+theme._specs = highlights
 
-    for name, val in pairs(highlights) do
-        local hl = vim.tbl_deep_extend("force", val, overrides[name] or {})
-        vim.api.nvim_set_hl(0, name, hl)
+--- Target's fg (never bg, so floats keep their own background) plus `extra`.
+---@param target string
+---@param extra table
+---@return table
+local function resolve(target, extra)
+    local base = vim.api.nvim_get_hl(0, { name = target, link = false })
+    return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, extra)
+end
+
+---@param spec table
+---@param override table?
+---@return table
+local function build(spec, override)
+    if override and override.link then return override end
+    local extra = {}
+    for k, v in pairs(spec) do
+        if k ~= "link" then extra[k] = v end
     end
+    if override then extra = vim.tbl_extend("force", extra, override) end
+    if not spec.link then return extra end
+    if next(extra) == nil then return { link = spec.link } end
+    return resolve(spec.link, extra)
+end
+
+local function apply()
+    local config = require("codewars.config")
+    local overrides = (config.user and config.user.theme) or {}
+    -- codewars_lang first: lang_* link to it, and a resolved group reads it.
+    vim.api.nvim_set_hl(0, "codewars_lang", build(highlights.codewars_lang, overrides.codewars_lang))
+    for name, spec in pairs(highlights) do
+        if name ~= "codewars_lang" then
+            vim.api.nvim_set_hl(0, name, build(spec, overrides[name]))
+        end
+    end
+end
+
+function theme.setup()
+    apply()
+    -- A colorscheme switch clears every group; re-derive from the new one.
+    local group = vim.api.nvim_create_augroup("codewars_theme", { clear = true })
+    vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = apply })
 end
 
 --- Unranked (beta) kata carry no numeric rank — JSON null upstream, so
