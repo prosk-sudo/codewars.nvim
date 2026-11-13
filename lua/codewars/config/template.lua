@@ -46,7 +46,12 @@
 
 ---@alias cw.direction "col" | "row"
 
----@alias cw.storage table<"cache"|"home", string>
+---@class cw.StorageCtx
+---@field lang string language slug
+---@field slug string kata slug
+---@field ext string file extension
+
+---@alias cw.storage { home: string, cache: string, path?: fun(ctx: cw.StorageCtx): string }
 
 ---@alias cw.picker { provider?: "telescope"|"select" }
 
@@ -79,6 +84,9 @@ local M = {
     storage = {
         home = vim.fn.stdpath("data") .. "/codewars",
         cache = vim.fn.stdpath("cache") .. "/codewars",
+        --- fun(ctx): string mapping a kata to its file, relative to home.
+        --- Unset: "<slug>.<ext>" flat in home.
+        path = nil,
     },
 
     ---@type boolean
