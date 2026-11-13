@@ -271,12 +271,24 @@ hooks = {
 
 ## Theme
 
-Override highlight group colors. See `lua/codewars/theme/init.lua` for the full list of groups.
+Every highlight group derives from your colorscheme: each `codewars_*` group
+links to a standard group (`Title`, `Comment`, `DiagnosticOk`/`Warn`/`Error`/
+`Info`/`Hint`, `Special`, `Function`, `Statement`, `String`, ...) and is
+re-derived on `:colorscheme`, so nothing ships with fixed colors. Groups that
+add a style (bold headers, italic references) take the linked group's
+foreground and add the style. Language icons all link to `codewars_lang`
+(-> `Special`); each `codewars_lang_<slug>` can still be overridden on its own.
+See `lua/codewars/theme/init.lua` for the full list and mapping.
+
+Override any group with colors and styles, or point it at another group with
+`link`:
 
 ```lua
 theme = {
     codewars_header = { fg = "#ff0000" },
     codewars_rank_purple = { fg = "#9b59b6", bold = true },
+    codewars_breadcrumb = { link = "NonText" },
+    codewars_lang = { link = "Identifier" },  -- every language icon
 },
 ```
 

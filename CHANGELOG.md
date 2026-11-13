@@ -5,6 +5,11 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Changed
+- Highlights follow your colorscheme. Every `codewars_*` group now links to a
+  standard group (`Title`, `Comment`, `Diagnostic*`, `Special`, ...) instead
+  of a hardcoded hex color, and is re-derived on `:colorscheme`, which used to
+  wipe them. Language icons share one `codewars_lang` group in place of brand
+  colors. `theme = {}` overrides still work, and now also accept `link`.
 - The dashboard header no longer waits on a network round trip to show who you
   are. Your username, rank, honor and completed count are remembered between
   launches, so the menu paints them immediately instead of sitting on a bare
