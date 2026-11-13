@@ -439,6 +439,7 @@ function Kata:handle_mount()
         self:_settle_cursor()
     end)
 
+    require("codewars.cache.recent").record(self)
     utils.exec_hooks("kata_enter", self)
 end
 
@@ -605,6 +606,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 assert(lang_info, "Unsupported language: " .. new_lang)
                 local fn = ("%s.%s"):format(self.slug, lang_info.ft)
                 self.file = config.storage.home:joinpath(fn)
+                require("codewars.cache.recent").record(self)
 
                 if not self.file:exists() then
                     self.file:write(self:_starter_code(), "w")

@@ -344,6 +344,9 @@ local function build_pages(menu)
             { icon = I.focus,   label = "Choose Today's Focus", sc = "f", fn = function()
                 require("codewars.command").focus({})
             end },
+            { icon = I.recent,  label = "Recent",      sc = "r", fn = function()
+                require("codewars.command").recent()
+            end },
             { icon = I.back,    label = "Back",        sc = "b", fn = function()
                 menu:set_page("main")
             end },

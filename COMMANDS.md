@@ -10,6 +10,7 @@ Run `:CW help` inside Neovim for a quick reference.
 | `:CW random [language]` | Open a random kata |
 | `:CW focus [language] [category]` | Choose Today's Focus. `fundamentals`, `rank_up`, `practice_and_repeat`, `beta` use the server-side trainer; `random` picks locally from the cached problem list. No args opens the pickers; re-running returns the same kata until you solve or skip it |
 | `:CW focus skip` | Skip the current focus kata and open the next one (uses the last `:CW focus` language + category) |
+| `:CW recent` | Kata you opened lately, newest first, each marked completed or in progress; pick one to reopen it in the same language. Also Menu > Katas > Recent (`r`). History is kept locally (last 50) |
 | `:CW test` | Quick test with example fixtures |
 | `:CW attempt` | Full attempt with all tests (random + hidden) |
 | `:CW submit` | Finalize solution (after passing attempt) |
@@ -19,8 +20,8 @@ Run `:CW help` inside Neovim for a quick reference.
 
 | Command | Description |
 |---|---|
-| `:CW list [difficulty=8,7] [order=…]` | Browse kata with filters (telescope). `difficulty=` takes kyu numbers and becomes the picker's rank filter (one rank or a set — `Ctrl-d` can widen it back to all); `order=` is one of `shuffle`, `name`, `satisfaction`, `hardest`, `easiest` — `<Tab>` completes both. Without arguments the picker keeps the filters you last chose in its menus |
-| `:CW completed` | Browse completed kata (telescope) |
+| `:CW list [difficulty=8,7] [order=…]` | Browse kata with filters (telescope). `difficulty=` takes kyu numbers and becomes the picker's rank filter (one rank or a set — `Ctrl-d` can widen it back to all); `order=` is one of `shuffle`, `name`, `satisfaction`, `hardest`, `easiest`, `recent` — `<Tab>` completes both. Without arguments the picker keeps the filters you last chose in its menus |
+| `:CW completed` | Browse completed kata, most recently completed first (telescope) |
 | `:CW solutions` | View community solutions for current kata, with Best Practices / Clever counts and comments. In the popup: `1`–`0`, `]`/`[` page through solutions, `gb` / `gv` vote Best Practices / Clever (again to retract), `c` toggles the comment pane, `<Tab>` switches pane, `q` closes |
 | `:CW leaderboard [category]` | Top 500 leaderboard: `overall`, `kata` (completed), `authored`, `ranks`. No args opens the category picker; also in the menu under `l` |
 | `:CW kumite` | Browse Freestyle Sparring (kumite): server-paged picker (`Ctrl-n`/`Ctrl-p` page, `Ctrl-g` go to page, `Ctrl-l` language). Menu `m`; works signed out |
