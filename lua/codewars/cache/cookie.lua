@@ -142,6 +142,14 @@ function Cookie.set_parts(csrf, session)
     return Cookie.set(str)
 end
 
+--- The dashboard has to hear about a sign-in or sign-out, whichever command
+--- caused it: `:CW cookie` from the command line never goes near the menu.
+--- Only after the file is final -- the menu reads the cookie back.
+local function tell_menu()
+    local ok, menu = pcall(require, "codewars-ui.renderer.menu")
+    if ok and menu then pcall(menu.session_changed) end
+end
+
 ---@param str string
 ---@return string? error
 function Cookie.set(str)
@@ -153,6 +161,7 @@ function Cookie.set(str)
     file():write(str, "w")
     cached_cookie = nil
     Cookie.identity_changed()
+    tell_menu()
     log.info("Cookie saved successfully")
     return nil
 end
@@ -182,23 +191,25 @@ function Cookie.identity_changed()
     with("codewars.picker", function(m) m.invalidate_completed_cache() end)
     -- The remembered focus kata belongs to the old account's queue.
     with("codewars.command", function(m) m.forget_focus() end)
-    -- Detected from the old dashboard; the menu re-detects when empty.
+    -- Detected from the old dashboard; set() and delete() tell the menu,
+    -- which detects it again.
     with("codewars.config", function(m) m.user.username = "" end)
     -- The same name persisted for next launch, plus that account's stats.
     with("codewars.cache.profile", function(m) m.clear() end)
-    -- The dashboard may be saying "session expired"; it is not, any more.
-    with("codewars-ui.renderer.menu", function(m) m.session_changed() end)
+    -- Not the menu: verify() calls this itself when it finds the cookie
+    -- belongs to somebody else, and is already fetching the new identity.
 end
 
----@return boolean
+---@return boolean removed
 function Cookie.delete()
-    cached_cookie = nil
     Cookie.identity_changed()
     local f = file()
-    if not f:exists() then
-        return false
-    end
-    return pcall(f.rm, f)
+    local removed = f:exists() and (pcall(f.rm, f)) or false
+    -- After the file is gone: anything above that read the cookie cached it
+    -- again, and a sign-out that keeps serving the old cookie is none.
+    cached_cookie = nil
+    tell_menu()
+    return removed
 end
 
 ---@return cw.cache.Cookie?
