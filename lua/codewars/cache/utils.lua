@@ -83,7 +83,16 @@ function M.write_json(path, data, opts)
     local fd, open_err = uv.fs_open(temp, "wx", mode)
     if not fd then return fail(open_err) end
 
-    local written, write_err = write_all(fd, encoded)
+    -- fs_open's mode is masked by the umask a second time, which would strip
+    -- bits the file already had (a group-writable cache refreshed under
+    -- umask 022 came back 0644). Set the exact mode instead -- but only on a
+    -- replacement: a new file gets the default, umask and all.
+    local written, write_err = true, nil
+    if existing then
+        local set, chmod_err = uv.fs_fchmod(fd, mode)
+        if not set then written, write_err = false, tostring(chmod_err or "could not set the file's mode") end
+    end
+    if written then written, write_err = write_all(fd, encoded) end
     local closed, close_err = uv.fs_close(fd)
     if written and not closed then written, write_err = false, tostring(close_err) end
     if not written then

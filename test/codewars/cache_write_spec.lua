@@ -63,18 +63,31 @@ describe("cache.utils write_json", function()
     end)
 
     describe("replaces the file whole, or not at all", function()
-        local path, original, real_write, real_rename
+        local path, original, real_write, real_rename, real_open, real_fchmod
 
         before_each(function()
             path = P:new(tmp .. "/cache.json")
             assert.is_true((cache_utils.write_json(path, { items = { "the", "old", "cache" } })))
             original = bytes(path.filename)
             real_write, real_rename = uv.fs_write, uv.fs_rename
+            real_open, real_fchmod = uv.fs_open, uv.fs_fchmod
         end)
 
         after_each(function()
             uv.fs_write, uv.fs_rename = real_write, real_rename
+            uv.fs_open, uv.fs_fchmod = real_open, real_fchmod
         end)
+
+        --- Make every file the process creates lose the bits of `umask`, as
+        --- the OS does: the process umask cannot be changed from Lua.
+        ---@param umask integer
+        local function with_umask(umask)
+            uv.fs_open = function(file, flags, mode, ...)
+                return real_open(file, flags, bit.band(mode, bit.bnot(umask)), ...)
+            end
+        end
+
+        local function mode_of(file) return bit.band(uv.fs_stat(file).mode, tonumber("777", 8)) end
 
         it("leaves a successful write's file in place and no temp file behind", function()
             assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
@@ -137,6 +150,34 @@ describe("cache.utils write_json", function()
             assert(uv.fs_chmod(path.filename, tonumber("600", 8)))
             assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
             assert.equals(tonumber("600", 8), bit.band(uv.fs_stat(path.filename).mode, tonumber("777", 8)))
+        end)
+
+        -- fs_open's mode is masked by the umask again, so a file shared by a
+        -- group would lose its group-write bit on every refresh.
+        it("keeps a mode the umask would strip bits from", function()
+            assert(uv.fs_chmod(path.filename, tonumber("664", 8)))
+            with_umask(tonumber("022", 8))
+            assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
+            assert.equals(tonumber("664", 8), mode_of(path.filename))
+            assert.same({ items = { "new" } }, cache_utils.read_json(path))
+        end)
+
+        it("keeps the old file, with no temp file, when the mode cannot be set", function()
+            assert(uv.fs_chmod(path.filename, tonumber("664", 8)))
+            uv.fs_fchmod = function() return nil, "EPERM: operation not permitted" end
+            local ok, err = cache_utils.write_json(path, { items = { "new" } }, { quiet = true })
+            assert.is_false(ok)
+            assert.truthy(tostring(err):find("EPERM", 1, true), err)
+            assert.equals(original, bytes(path.filename))
+            assert.are.same({ "cache.json" }, listing())
+        end)
+
+        it("gives a new file the default mode under the umask, without setting it", function()
+            uv.fs_fchmod = function() error("set the mode of a new file") end
+            with_umask(tonumber("022", 8))
+            local fresh = P:new(tmp .. "/fresh.json")
+            assert.is_true((cache_utils.write_json(fresh, { a = 1 })))
+            assert.equals(tonumber("644", 8), mode_of(fresh.filename))
         end)
 
         it("writes through a symlink to the file it points at, as before", function()
