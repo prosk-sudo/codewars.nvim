@@ -23,8 +23,9 @@ describe(":CW unfinished", function()
                     -- ended must not write into the next one.
                     local mine = { topts = topts, cfg = cfg }
                     opened = mine
+                    mine.bufnr = vim.api.nvim_create_buf(false, true)
                     return {
-                        prompt_bufnr = vim.api.nvim_create_buf(false, true),
+                        prompt_bufnr = mine.bufnr,
                         find = function() mine.found = true end,
                         refresh = function(_, finder) mine.cfg.finder = finder; mine.refreshed = true end,
                     }
@@ -246,9 +247,78 @@ describe(":CW unfinished", function()
         entries = { entries[1] }
         picker.unfinished()
         assert.are.same({ "multiply" }, asked)
-        assert.are.same({ names = true }, asked_opts, "the cache would have kept the nameless entry")
+        assert.is_true(asked_opts.names, "the cache would have kept the nameless entry")
         vim.wait(200, function() return opened.refreshed end)
         assert.are.equal("Looked Up multiply", text(rows()[1][4]))
+    end)
+
+    -- More kata than one lookup sends at once: the rest are looked up in the
+    -- background for as long as the picker is open, and show as they arrive.
+    describe("the lookup of names past the first batch", function()
+        --- The first batch finds nothing; what comes later comes through
+        --- on_progress, as completed.enrich calls it.
+        local function enrich_that_finds_nothing_at_first()
+            package.loaded["codewars.cache.completed"].enrich = function(_, cb, opts)
+                asked_opts = opts
+                cb({})
+            end
+        end
+
+        it("shows a name that arrives after the picker opened, without reopening it", function()
+            enrich_that_finds_nothing_at_first()
+            catalogue = {}
+            picker.unfinished()
+            assert.is_function(asked_opts.on_progress, "the lookup has no way to tell the picker")
+            vim.wait(200, function() return opened.refreshed end)
+            opened.refreshed = false
+            assert.are.equal("Multiply", text(rows()[1][4])) -- the file's own name, made readable
+
+            details.multiply = { rank = { id = -3, name = "3 kyu" }, name = "Found Late" }
+            asked_opts.on_progress()
+            vim.wait(200, function() return opened.refreshed end)
+            assert.is_true(opened.refreshed, "the open picker was not updated")
+            assert.are.equal("Found Late", text(rows()[1][4]))
+            assert.truthy(text(rows()[1][2]):find("3 kyu", 1, true), vim.inspect(rows()[1][2]))
+        end)
+
+        it("goes on looking while the picker is open, and stops once it is closed", function()
+            enrich_that_finds_nothing_at_first()
+            catalogue = {}
+            picker.unfinished()
+            assert.is_function(asked_opts.keep_going, "the lookup does not stop for anything")
+            assert.is_true(asked_opts.keep_going())
+            vim.api.nvim_buf_delete(opened.bufnr, { force = true })
+            assert.is_false(asked_opts.keep_going())
+        end)
+
+        -- vim.ui.select cannot redraw what is on screen: the names are saved
+        -- as they come and show the next time the list opens.
+        it("keeps looking for the vim.ui.select list too until a row is chosen or it is cancelled", function()
+            enrich_that_finds_nothing_at_first()
+            provider = "select"
+            catalogue = {}
+            local real_select, shown = vim.ui.select, nil
+            vim.ui.select = function(items, opts, cb) shown = { items = items, cb = cb } end
+            picker.unfinished()
+            vim.ui.select = real_select
+            assert.is_true(asked_opts.keep_going())
+            assert.has_no.errors(function() asked_opts.on_progress() end)
+            vim.wait(50)
+            shown.cb(nil)
+            assert.is_false(asked_opts.keep_going())
+        end)
+
+        it("stops looking for the vim.ui.select list once a row is chosen", function()
+            enrich_that_finds_nothing_at_first()
+            provider = "select"
+            catalogue = {}
+            local real_select, shown = vim.ui.select, nil
+            vim.ui.select = function(items, opts, cb) shown = { items = items, cb = cb } end
+            picker.unfinished()
+            vim.ui.select = real_select
+            shown.cb(shown.items[1])
+            assert.is_false(asked_opts.keep_going())
+        end)
     end)
 
     it("looks up nothing the catalogue or the kata's own record already names", function()

@@ -34,7 +34,11 @@ All notable changes to codewars.nvim are documented here.
   from when you last opened it, then from `:CW recent`, or looked up as
   `:CW completed` does, in the background so the picker opens at once and
   fills the rest in. Kata details cached before names were kept have a rank
-  and no name; those are looked up again for this list too.
+  and no name; those are looked up again for this list too. Names past the
+  first 50 keep filling in while the picker is open, one request about every
+  second to stay under Codewars' rate limit and waiting out a refusal before
+  asking again; the `vim.ui.select` list cannot redraw, so those show the
+  next time it opens.
 - `indent` option: one indentation style per language, set in `setup()` the
   way templates are — `indent = { python = 4, c = 4, go = "tabs" }`. Codewars'
   starter code is not consistently indented; the same language arrives with

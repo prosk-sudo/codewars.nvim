@@ -273,14 +273,150 @@ function completed.mark(kata_id, slug, lang)
     completed.save(vim.list_extend({ marked }, items), raw.timestamp or 0)
 end
 
+--- Kata one call looks up at once. About 60 requests a minute is what
+--- Codewars lets through, so more than this in one burst is asking for a 429.
+local FIRST_BATCH = 50
+
+--- Names found past the first batch are saved, and the caller told, this
+--- many at a time rather than one write each.
+local REST_SAVE_EVERY = 5
+
 ---@class cw.EnrichOpts
 ---@field names boolean? look a kata up again when its cached details have no name
+---@field keep_going (fun(): boolean)? when given, the kata past the first batch are looked up too, one at a time at the kata-list build's pace, for as long as this returns true -- checked before every request
+---@field on_progress fun()? called after names found past the first batch are saved, so the caller can show them
+
+--- Look up `slugs`, the kata an `enrich` call had no room for in its first
+--- batch, one at a time. Paced and backed off the way the kata-list build is
+--- (problemlist's pace, cooldown and pacer), and saved as they arrive.
+---
+--- Stops before the next request when its caller no longer wants the names
+--- (`keep_going` false), keeping what it has; and when the account changed or
+--- the cache was cleared since it began, saving nothing more: what it holds
+--- then belongs to a cache that is gone.
+---@param slugs string[]
+---@param opts cw.EnrichOpts
+local function look_up_rest(slugs, opts)
+    local username, began = config.user.username, generation
+
+    --- Why the run should not go on, if so: "gone" for an account or cache
+    --- that is not the one it began for, "closed" for a caller that is done.
+    local function stop_reason()
+        if config.user.username ~= username or generation ~= began then return "gone" end
+        local ok, wanted = pcall(opts.keep_going)
+        if not (ok and wanted) then return "closed" end
+    end
+    if stop_reason() then return end
+
+    local problemlist = require("codewars.cache.problemlist")
+    local kata_api = require("codewars.api.kata")
+    local total = #slugs
+    local next_slug, refusals, failed, looked_up = 1, 0, 0, 0
+    local pace_ms = problemlist.PACE_MS
+    local pending = {} ---@type table<string, table> looked up, not yet saved
+    local finished = false
+    -- The first batch has just gone out: the first of these waits its turn.
+    local paced = problemlist.pacer(function() return pace_ms end, function() return finished end,
+        (vim.uv or vim.loop).now())
+    local spinner = require("codewars.logger.spinner"):start(("Looking up %d more kata names"):format(total))
+
+    local function save_pending()
+        if next(pending) == nil then return end
+        local drop = stop_reason() == "gone"
+        local to_save = pending
+        pending = {}
+        if drop then return end
+        completed.save_details(vim.tbl_extend("force", completed.get_details(), to_save))
+        if not opts.on_progress then return end
+        local ok, failure = pcall(opts.on_progress)
+        if not ok then log.error("Kata name lookup progress callback failed: " .. tostring(failure)) end
+    end
+
+    --- The one way out. `outcome`: "done", "limited" (refused too often in a
+    --- row), "broke" (an error of our own), or the stop_reason it stopped for.
+    local function finish(outcome, failure)
+        if finished then return end
+        finished = true
+        save_pending()
+        if outcome == "done" and failed == 0 then
+            spinner:success(("Looked up %d kata names"):format(looked_up))
+        elseif outcome == "done" then
+            spinner:error(("Looked up %d of %d kata names; the rest are tried again next time"):format(looked_up, total))
+        elseif outcome == "limited" then
+            spinner:error(("Rate limited by Codewars — %d of %d kata names looked up; the rest fill in next time"):format(
+                looked_up, total))
+        elseif outcome == "broke" then
+            log.error("Kata name lookup failed: " .. tostring(failure))
+            spinner:error("Could not look up the rest of the kata names")
+        else
+            spinner:success(("Stopped looking up kata names (%d of %d done)"):format(looked_up, total))
+        end
+    end
+
+    local step
+
+    local function on_reply(slug, res, err)
+        if finished then return end
+        local reason = stop_reason()
+        if reason == "gone" then return finish("gone") end
+
+        if err and err.rate_limited then
+            if reason then return finish(reason) end
+            refusals = refusals + 1
+            if refusals > problemlist.MAX_COOLDOWNS then return finish("limited") end
+            -- Wait the limiter out, then ask for the SAME kata at a slower pace.
+            local wait = problemlist.cooldown_ms(refusals)
+            pace_ms = problemlist.slower(pace_ms)
+            spinner:update(("Rate limited by Codewars — resuming in %ds (%d of %d looked up)"):format(
+                math.floor(wait / 1000), looked_up, total))
+            return vim.defer_fn(step, wait)
+        end
+
+        refusals = 0
+        if err or not res then
+            failed = failed + 1
+        else
+            pending = vim.tbl_extend("force", pending, { [slug] = { rank = res.rank, tags = res.tags, name = res.name } })
+            looked_up = looked_up + 1
+        end
+        next_slug = next_slug + 1
+        if vim.tbl_count(pending) >= REST_SAVE_EVERY then save_pending() end
+        if reason then return finish(reason) end
+        if next_slug > total then return finish("done") end
+        spinner:update(("Looking up kata names (%d of %d)"):format(next_slug - 1, total))
+        step()
+    end
+
+    function step()
+        if finished then return end
+        local reason = stop_reason()
+        if reason then return finish(reason) end
+        paced(function()
+            local again = stop_reason()
+            if again then return finish(again) end
+            local slug = slugs[next_slug]
+            -- The refusals are this run's to wait out, not the request
+            -- layer's: its own retries would spend the window's slots.
+            local ok, failure = pcall(kata_api.get, slug, function(res, err)
+                local handled, broke = pcall(on_reply, slug, res, err)
+                if not handled then finish("broke", broke) end
+            end, { retry_rate_limited = false, cancelled = function() return finished end })
+            if not ok then finish("broke", failure) end
+        end)
+    end
+
+    step()
+end
 
 --- Enrich completed kata with rank/tag details.
 ---
 --- Details cached before names were kept hold a rank and tags and no name.
 --- :CW completed has no use for the name and leaves them be; a caller that
 --- names kata from them (:CW unfinished) asks with `names`.
+---
+--- At most FIRST_BATCH kata are looked up at once. A caller that gives
+--- `keep_going` has the rest looked up after them, in the background, while
+--- it stays true; the others get the first batch only.
 ---@param items table[]
 ---@param cb function callback(enriched_items)
 ---@param opts cw.EnrichOpts?
@@ -306,8 +442,8 @@ function completed.enrich(items, cb, opts)
         return cb(items)
     end
 
-    -- Fetch missing details (limit to 50, 5 concurrent)
-    local total = math.min(#missing, 50)
+    -- Fetch missing details (limit to FIRST_BATCH, 5 concurrent)
+    local total = math.min(#missing, FIRST_BATCH)
     local fetched = 0
     local failed = 0
     local rate_limited = false
@@ -355,6 +491,11 @@ function completed.enrich(items, cb, opts)
                             item.rank = details[s].rank
                             item.tags = details[s].tags
                         end
+                    end
+                    -- Before the callback, so that nothing it does can keep
+                    -- the rest from starting; the first of them waits a pace.
+                    if opts and type(opts.keep_going) == "function" and #missing > FIRST_BATCH then
+                        look_up_rest(vim.list_slice(missing, FIRST_BATCH + 1), opts)
                     end
                     cb(items)
                 else

@@ -828,20 +828,26 @@ local function open_unfinished(t, rows)
     })
     shown:find()
 
+    local function is_open()
+        return shown.prompt_bufnr ~= nil and vim.api.nvim_buf_is_valid(shown.prompt_bufnr)
+    end
+
     --- Redraw with `new_rows`, keeping what was typed -- if it is still open.
     ---@param new_rows table[]
     return function(new_rows)
-        if not (shown.prompt_bufnr and vim.api.nvim_buf_is_valid(shown.prompt_bufnr)) then return end
+        if not is_open() then return end
         shown:refresh(t.finders.new_table({ results = new_rows, entry_maker = entry_maker }), { reset_prompt = false })
-    end
+    end, is_open
 end
 
 --- The vim.ui.select variant: the same rows as plain text, as the kata
 --- list's are. An open select cannot be redrawn, so what the background
 --- lookup finds shows from the next open.
 ---@param rows table[]
----@return fun(new_rows: table[])
+---@return fun(new_rows: table[]) update does nothing: there is no redrawing it
+---@return fun(): boolean is_open until a row is chosen or it is cancelled
 local function select_unfinished(rows)
+    local open = true
     vim.ui.select(rows, {
         prompt = ("Unfinished kata (%d)"):format(#rows),
         format_item = function(row)
@@ -851,9 +857,10 @@ local function select_unfinished(rows)
             }, " "))
         end,
     }, function(row)
+        open = false
         if row then require("codewars-ui.kata"):new(row.key, row.lang, { file = row.file }):mount() end
     end)
-    return function() end
+    return function() end, function() return open end
 end
 
 --- Kata you started and never submitted, most recently changed first, to
@@ -881,19 +888,26 @@ function picker.unfinished()
             local known, now = sources(), os.time()
             return vim.tbl_map(function(e) return unfinished_row(e, known, now) end, found)
         end
-        local update = use_select and select_unfinished(rows()) or open_unfinished(t, rows())
+        local update, is_open
+        if use_select then
+            update, is_open = select_unfinished(rows())
+        else
+            update, is_open = open_unfinished(t, rows())
+        end
+        local function redraw() vim.schedule(function() update(rows()) end) end
 
         -- What nothing names yet is looked up as :CW completed does, and
-        -- filled in once Codewars answers rather than held up for.
+        -- filled in once Codewars answers rather than held up for. Past the
+        -- first batch the lookup carries on, a request at a time, for as long
+        -- as the list is open, and each batch of names it finds is shown.
+        -- (The vim.ui.select list cannot redraw: its names show next time.)
         local known = sources()
         local unknown = {}
         for _, e in ipairs(found) do
             if unnamed(e, known) then unknown[#unknown + 1] = { slug = e.key } end
         end
         if #unknown == 0 then return end
-        completed_cache.enrich(unknown, function()
-            vim.schedule(function() update(rows()) end)
-        end, { names = true })
+        completed_cache.enrich(unknown, redraw, { names = true, keep_going = is_open, on_progress = redraw })
     end)
 end
 
