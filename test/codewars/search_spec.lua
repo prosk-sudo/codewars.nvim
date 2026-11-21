@@ -773,6 +773,134 @@ describe("api.search", function()
             end)
         end)
 
+        -- A title link is a real `<a>` whose parsed href is /kata/<id>, and
+        -- its name is its text up to its own closing tag. Attributes are read
+        -- by walking the tag, not by pattern over its text, so a `>` or an
+        -- `href=` inside one attribute's quoted value is only that value.
+        describe("title links and attributes", function()
+            local function parse_link(anchor) return search.parse_html(block(anchor)) end
+
+            it("reads a title link that has a > in a quoted attribute", function()
+                local results = parse_link(('<a title="A > B" href="/kata/%s">Kata</a>'):format(SLUG))
+                assert.are.equal(1, #results)
+                assert.are.equal("Kata", results[1].name)
+                assert.are.equal(SLUG, results[1].slug)
+
+                results = parse_link(('<a data-x=\'>\' href="/kata/%s" title="a > b">Kata</a>'):format(SLUG))
+                assert.are.equal("Kata", results[1].name)
+            end)
+
+            it("reads the text of a title through inner tags that have a > in a quoted attribute", function()
+                local results = parse_link(('<a href="/kata/%s"><span title="a > b">Kata</span> Name</a>'):format(SLUG))
+                assert.are.equal("Kata Name", results[1].name)
+            end)
+
+            it("does not call a page of such links drift", function()
+                local link = ('<a title="A > B" href="/kata/%s">Kata</a>'):format(SLUG)
+                local results, err, dropped = search.parse_html(block(link) .. block(link) .. block(link))
+                assert.is_nil(err)
+                assert.are.equal(3, #results)
+                assert.are.equal(0, dropped)
+            end)
+
+            it("does not read an href out of another attribute's value", function()
+                for _, anchor in ipairs({
+                    ('<a title=\'see href="/kata/%s"\' href="/elsewhere">Related</a>'):format(SLUG),
+                    ('<a data-x="href=\'/kata/%s\'" href="/elsewhere">Related</a>'):format(SLUG),
+                    ('<a title="x" data-href="/kata/%s">Related</a>'):format(SLUG),
+                }) do
+                    local results, err, dropped = search.parse_html(block(anchor))
+                    assert.are.same({}, results, anchor)
+                    assert.is_true(err.drift, anchor)
+                    assert.are.equal(1, dropped, anchor)
+                end
+            end)
+
+            it("takes the first of a repeated href, as a browser does", function()
+                local first = ('<a href="/kata/%s" href="/elsewhere">Name</a>'):format(SLUG)
+                local second = ('<a href="/elsewhere" href="/kata/%s">Name</a>'):format(SLUG)
+                assert.are.equal(1, #parse_link(first))
+                assert.are.equal(0, #parse_link(second))
+            end)
+
+            it("reads an unquoted and a single-quoted href", function()
+                assert.are.equal(SLUG, parse_link(("<a href=/kata/%s>Name</a>"):format(SLUG))[1].slug)
+                assert.are.equal(SLUG, parse_link(("<a href='/kata/%s'>Name</a>"):format(SLUG))[1].slug)
+                assert.are.equal(SLUG, parse_link(("<a href=/kata/%s?beta=false>Name</a>"):format(SLUG))[1].slug)
+                assert.are.equal(0, #parse_link(("<a href=/kata/%s/train/python>Name</a>"):format(SLUG)))
+            end)
+
+            it("does not name a kata from an anchor that is never closed", function()
+                assert.are.equal(0, #parse_link(('<a href="/kata/%s">Name'):format(SLUG)))
+            end)
+
+            it("reads languages from parsed attributes of real tags", function()
+                local results = search.parse_html(result(1, "One", 2, {
+                    extra = [[<i title='data-language="ghost"' data-language='real'></i>]]
+                        .. [[<i data-language></i><i data-language=""></i><i DATA-LANGUAGE=bare></i>]],
+                }))
+                assert.are.same({ "real", "bare", "lang01", "lang02" }, results[1].languages)
+            end)
+
+            it("reads the rank from a real span, and the satisfaction from the text", function()
+                local html = block(('<a href="/kata/%s">Name</a><span title="9 dan">x</span>'
+                    .. '<i data-tippy-content="Satisfaction Rating: 89%% of users">y</i>'):format(SLUG))
+                local entry = search.parse_html(html)[1]
+                assert.are.equal("6 kyu", entry.rank_name)
+                assert.are.equal(-6, entry.rank_id)
+                assert.are.equal(89, entry.satisfaction)
+            end)
+        end)
+
+        -- RCDATA: what is between <textarea> or <title> and its closing tag is
+        -- text, however much it looks like markup.
+        describe("textarea and title", function()
+            it("does not take a block in a textarea or a title for a result", function()
+                local copy = result(3, "Textarea Kata", 2)
+                for _, wrap in ipairs({ "<textarea>%s</textarea>", "<title>%s</title>", "<TEXTAREA>%s</TEXTAREA>" }) do
+                    local inert = wrap:format(copy)
+                    local results, err, dropped = search.parse_html(inert)
+                    assert.are.same({}, results, inert)
+                    assert.is_nil(err, inert) -- no false drift
+                    assert.are.equal(0, dropped, inert)
+
+                    results, err, dropped = search.parse_html(inert .. result(1, "One", 2) .. inert)
+                    assert.is_nil(err, inert)
+                    assert.are.same({ "One" }, names(results), inert)
+                    assert.are.equal(0, dropped, inert)
+                end
+            end)
+
+            it("does not read a title out of a textarea inside a block", function()
+                local link = '<a href="/kata/' .. hex(9) .. '">Hidden Title</a>'
+                local results, err, dropped = search.parse_html(
+                    unreadable_title(2, "Two", 2, { extra = "<textarea>" .. link .. "</textarea>" })
+                )
+                assert.are.same({}, results)
+                assert.is_true(err.drift)
+                assert.are.equal(1, dropped)
+            end)
+
+            it("does not count elements written inside a textarea toward a block's depth", function()
+                local results, err, dropped = search.parse_html(
+                    '<div id="results">' .. result(1, "One", 2, { extra = "<textarea><div><div></textarea>" })
+                        .. footer(10) .. "</div>"
+                )
+                assert.is_nil(err)
+                assert.are.same({ "One" }, names(results))
+                assert.are.equal(0, dropped)
+            end)
+
+            it("returns what it read when one is never closed", function()
+                for _, open in ipairs({ "<textarea>", "<title>" }) do
+                    local results, err, dropped = search.parse_html(result(1, "One", 2) .. open .. result(2, "Two", 2))
+                    assert.is_nil(err, open)
+                    assert.are.same({ "One" }, names(results), open)
+                    assert.are.equal(0, dropped, open)
+                end
+            end)
+        end)
+
         -- One pass over the page: a block is scanned once, and a block that
         -- never closes does not send every block after it back over the rest
         -- of the page. A generous bound, only to catch a rescan per block.

@@ -130,41 +130,118 @@ function search.kata(opts, cb)
     fetch_next()
 end
 
---- The kata a result's title link points at: `/kata/<id>`, optionally
---- followed by a query or fragment, and nothing deeper. `id` must be a whole
---- 24-hex id, so a slug or a longer or shorter run of hex is not one. A link
---- with a path after the id (`/kata/<id>/train/python`) is a button, not the
---- title, and is not the kata's name.
----@param attrs string the attributes of the `<a>`, starting at the space after `a`
+--- A result block: the tags from its opening tag (`first`) to its closing tag
+--- (`last`) in a page's tag list, and the page text they index into, which is
+--- the page with what is not markup blanked out (see api.htmltags). Everything
+--- read about a result is read from these tags and their parsed attributes, or
+--- from the text between them, never by pattern over the text of a tag.
+---@class cw.SearchBlock
+---@field tags cw.HtmlTag[]
+---@field text string
+---@field first integer
+---@field last integer
+
+--- The kata a title link's href points at: `/kata/<id>`, optionally followed
+--- by a query or fragment, and nothing deeper. `id` must be a whole 24-hex id,
+--- so a slug or a longer or shorter run of hex is not one. A link with a path
+--- after the id (`/kata/<id>/train/python`) is a button, not the title, and
+--- is not the kata's name.
+---@param href string?
 ---@return string? id
-local function read_title_href(attrs)
-    -- The leading %s keeps `data-href` from passing for `href`.
-    local href = attrs:match('%shref%s*=%s*"([^"]*)"') or attrs:match("%shref%s*=%s*'([^']*)'")
+local function title_id(href)
     local id, rest = (href or ""):match("^/kata/(" .. api_utils.HEX24 .. ")(.*)$")
     if not id then return nil end
     if rest ~= "" and not rest:find("^[?#]") then return nil end
     return id
 end
 
---- The id and name of a result block's own title link: the first plain
---- `/kata/<id>` link with any text in it. The text is what shows, so tags
---- inside the link (`<a ...><span>Title</span></a>`) are dropped, entities
---- decoded and the ends trimmed. Links with no text, the language icons
---- among them, are passed over. A block with no such link has no kata in it
---- that we can name, and is left out.
----@param block string
+--- The first tag after `from`, up to `last`, named `name` (opening or closing).
+---@param tags cw.HtmlTag[]
+---@param from integer
+---@param last integer
+---@param name string
+---@return integer?
+local function next_named(tags, from, last, name)
+    for i = from + 1, last do
+        if tags[i].name == name then return i end
+    end
+end
+
+--- The text between the opening tag `tags[from]` and the later tag `tags[to]`,
+--- as it shows: what lies between the tags in them, with the tags left out.
+---@param block cw.SearchBlock
+---@param from integer
+---@param to integer
+---@return string
+local function visible_text(block, from, to)
+    local tags, text = block.tags, block.text
+    local parts, at = {}, tags[from].finish + 1
+    for i = from + 1, to - 1 do
+        parts[#parts + 1] = text:sub(at, tags[i].start - 1)
+        at = tags[i].finish + 1
+    end
+    parts[#parts + 1] = text:sub(at, tags[to].start - 1)
+    return table.concat(parts)
+end
+
+--- The text of the element opened by `tags[i]`, up to the closing tag of its
+--- own name that follows, entities decoded and the ends trimmed. nil when it
+--- is never closed within the block.
+---@param block cw.SearchBlock
+---@param i integer
+---@return string?
+local function element_text(block, i)
+    local close = next_named(block.tags, i, block.last, block.tags[i].name)
+    if not close or not block.tags[close].close then return nil end
+    local unescape = require("codewars.api.page").unescape
+    return (unescape(visible_text(block, i, close)):match("^%s*(.-)%s*$"))
+end
+
+--- The id and name of a result block's own title link: the first real `<a>`
+--- whose parsed href is a plain `/kata/<id>` and that has text in it. The name
+--- is that text, up to the link's own closing tag: tags inside it
+--- (`<a ...><span>Title</span></a>`) are left out, entities decoded and the
+--- ends trimmed. Links with no text, the language icons among them, are passed
+--- over, and so is one never closed. A block with no such link has no kata in
+--- it that we can name, and is left out.
+---@param block cw.SearchBlock
 ---@return string? id
 ---@return string? name
 local function read_title_link(block)
-    local unescape = require("codewars.api.page").unescape
-    for attrs, inner in block:gmatch("<a(%s[^>]*)>(.-)</a>") do
-        local id = read_title_href(attrs)
+    for i = block.first, block.last do
+        local tag = block.tags[i]
+        local id = tag.name == "a" and not tag.close and title_id(tag.attrs.href)
         if id then
-            -- Tags go first, so markup that was escaped in the title stays text.
-            local name = unescape((inner:gsub("<[^>]*>", ""))):match("^%s*(.-)%s*$")
-            if name ~= "" then return id, name end
+            local name = element_text(block, i)
+            if name and name ~= "" then return id, name end
         end
     end
+end
+
+--- A result's kyu or dan, `8 kyu`: the text of the first span that holds
+--- nothing else.
+---@param block cw.SearchBlock
+---@return string?
+local function read_rank(block)
+    for i = block.first, block.last do
+        local tag = block.tags[i]
+        if tag.name == "span" and not tag.close then
+            local rank = (element_text(block, i) or ""):match("^%d+ %w+$")
+            if rank then return rank end
+        end
+    end
+end
+
+--- The languages a result is offered in: the `data-language` of its tags.
+---@param block cw.SearchBlock
+---@return string[]
+local function read_languages(block)
+    local languages = {}
+    for i = block.first, block.last do
+        local language = block.tags[i].attrs["data-language"]
+        if language and language ~= "" then languages[#languages + 1] = language end
+    end
+    return languages
 end
 
 --- The class that marks a result's element.
@@ -176,8 +253,8 @@ local BLOCK_CLASS = "list-item-kata"
 ---@param tag cw.HtmlTag
 ---@return boolean
 local function opens_block(tag)
-    return not tag.close and tag.class ~= nil
-        and (" " .. tag.class .. " "):find("%s" .. BLOCK_CLASS:gsub("%-", "%%-") .. "%s") ~= nil
+    local class = not tag.close and tag.attrs.class
+    return class and (" " .. class .. " "):find("%s" .. BLOCK_CLASS:gsub("%-", "%%-") .. "%s") ~= nil
 end
 
 --- Which tag closes the element opened by `tags[first]`: the one that brings
@@ -205,8 +282,8 @@ end
 --- related-kata section, whose links would then be read as the result's own.
 --- Only real tags count (see api.htmltags): the text of a comment, a script, a
 --- template or a quoted attribute value neither opens a block, nor closes
---- one, nor changes how deep it is. The blocks are cut from the page with
---- that text blanked out, so nothing in it is read as a title or a language.
+--- one, nor changes how deep it is. The text a block is read from has that
+--- text blanked out, so nothing in it is read as a title or a language.
 ---
 --- A block whose closing tag is missing (a cut-off page, broken markup) has no
 --- end we could trust, and is left out, never guessed at. Nothing after it
@@ -214,7 +291,7 @@ end
 --- without being looked for a close: the tags are read once. Returns the blocks and
 --- how many were left out.
 ---@param html string
----@return string[] blocks
+---@return cw.SearchBlock[] blocks
 ---@return integer unclosed
 local function split_blocks(html)
     local tags, text = require("codewars.api.htmltags").scan(html)
@@ -226,14 +303,14 @@ local function split_blocks(html)
             i = i + 1
         elseif tag.empty then
             -- No contents, so no title: a block, and an unreadable one.
-            blocks[#blocks + 1] = text:sub(tag.start, tag.finish)
+            blocks[#blocks + 1] = { tags = tags, text = text, first = i, last = i }
             i = i + 1
         elseif broken then
             unclosed, i = unclosed + 1, i + 1
         else
             local last = closing_tag_of(tags, i)
             if last then
-                blocks[#blocks + 1] = text:sub(tag.start, tags[last].start - 1)
+                blocks[#blocks + 1] = { tags = tags, text = text, first = i, last = last }
                 i = last + 1
             else
                 unclosed, broken, i = unclosed + 1, true, i + 1
@@ -263,7 +340,7 @@ function search.parse_html(html)
         local entry = {}
 
         -- Rank
-        local rank_name = block:match("<span>(%d+ %w+)</span>")
+        local rank_name = read_rank(block)
         if rank_name then
             entry.rank_name = rank_name
             local num = tonumber(rank_name:match("(%d+)"))
@@ -284,17 +361,18 @@ function search.parse_html(html)
             entry.name = name
         end
 
-        -- Satisfaction from tooltip: 'Satisfaction Rating: 89% of users...'
-        local sat_pct = block:match("Satisfaction Rating: (%d+)%%")
+        -- Satisfaction from tooltip: 'Satisfaction Rating: 89% of users...'.
+        -- A phrase in the block's own text (where the tooltip's attribute
+        -- value sits), with what is not markup blanked: no tag structure is
+        -- read from it.
+        local first, last = block.tags[block.first], block.tags[block.last]
+        local sat_pct = block.text:sub(first.start, last.finish):match("Satisfaction Rating: (%d+)%%")
         if sat_pct then
             entry.satisfaction = tonumber(sat_pct)
         end
 
-        -- Supported languages from data-language attributes
-        local languages = {}
-        for lang in block:gmatch('data%-language="([^"]+)"') do
-            table.insert(languages, lang)
-        end
+        -- Supported languages from the data-language attribute of its tags
+        local languages = read_languages(block)
         if #languages > 0 then
             entry.languages = languages
         end

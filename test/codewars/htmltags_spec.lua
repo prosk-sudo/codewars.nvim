@@ -14,7 +14,10 @@ describe("api.htmltags", function()
         local html = 'ab<div class="x y">cd</div>'
         local tags = htmltags.scan(html)
         assert.are.equal(2, #tags)
-        assert.are.same({ name = "div", close = false, start = 3, finish = 19, class = "x y", empty = false }, tags[1])
+        assert.are.same(
+            { name = "div", close = false, start = 3, finish = 19, attrs = { class = "x y" }, empty = false },
+            tags[1]
+        )
         assert.are.equal("</div>", html:sub(tags[2].start, tags[2].finish))
         assert.is_true(tags[2].close)
     end)
@@ -22,15 +25,47 @@ describe("api.htmltags", function()
     it("lower-cases names and reads the class attribute in any case", function()
         local tags = htmltags.scan("<DIV CLASS='A b'></DIV>")
         assert.are.equal("div", tags[1].name)
-        assert.are.equal("A b", tags[1].class)
+        assert.are.equal("A b", tags[1].attrs.class)
         assert.are.equal("div", tags[2].name)
     end)
 
-    it("takes the first class attribute, and only a real one", function()
-        assert.are.equal("a", htmltags.scan('<p class="a" class="b">')[1].class)
-        assert.is_nil(htmltags.scan('<p data-class="a" title="class=\'b\'">')[1].class)
-        assert.is_nil(htmltags.scan("<p>")[1].class)
-        assert.are.equal("a", htmltags.scan("<p class=a>")[1].class)
+    -- Attributes are read by walking the tag once, so text in one attribute's
+    -- value is never read as another attribute.
+    describe("attributes", function()
+        local function attrs(html) return htmltags.scan(html)[1].attrs end
+
+        it("reads double-quoted, single-quoted, unquoted and bare attributes", function()
+            assert.are.same(
+                { a = "1 > 2", b = "x y", c = "z/w", d = "", e = "" },
+                attrs([[<p a="1 > 2" b='x y' c=z/w d e=>]])
+            )
+        end)
+
+        it("lower-cases the names and keeps the values as written", function()
+            assert.are.same({ class = "A B", ["data-x"] = "Y" }, attrs("<p CLASS=\"A B\" Data-X='Y'>"))
+        end)
+
+        it("takes the first of a repeated attribute, as a browser does", function()
+            assert.are.equal("a", attrs('<p class="a" class="b">').class)
+            assert.are.equal("/one", attrs('<a href=/one href="/two">').href)
+            assert.are.equal("", attrs("<p class class=b>").class)
+        end)
+
+        it("never reads text in a value as another attribute", function()
+            local found = attrs([[<a title='see href="/kata/x"' data-y="class='z'" href="/real">]])
+            assert.are.same({ title = 'see href="/kata/x"', ["data-y"] = "class='z'", href = "/real" }, found)
+            assert.is_nil(attrs("<p data-class=\"a\" title=\"class='b'\">").class)
+        end)
+
+        it("starts a quote only after an equals sign, with space allowed around it", function()
+            assert.are.same({ ["it's"] = "", b = "x" }, attrs("<a it's b = 'x'>"))
+            assert.are.same({ b = "it's" }, attrs("<a b=it's>"))
+        end)
+
+        it("has no attributes for a closing tag or a tag without any", function()
+            assert.are.same({}, htmltags.scan("<p></p>")[1].attrs)
+            assert.are.same({}, htmltags.scan("<p></p>")[2].attrs)
+        end)
     end)
 
     it("marks void and self-closing elements as empty", function()
@@ -55,6 +90,15 @@ describe("api.htmltags", function()
         assert.are.same({ "p", "/p" }, names("<p><style>a > b { } /* <div> */</style></p>"))
         assert.are.same({ "p", "/p" }, names("<p><SCRIPT>x = '<div>';</ScRiPt ></p>"))
         assert.are.same({ "p" }, names("<p><script>never <div> closed</p>"))
+    end)
+
+    -- RCDATA: the browser shows what is between the tags as text.
+    it("skips a textarea and a title as raw text too", function()
+        assert.are.same({ "p", "/p" }, names('<p><textarea><div class="list-item-kata"></textarea></p>'))
+        assert.are.same({ "p", "/p" }, names("<p><title><div></title></p>"))
+        assert.are.same({ "p", "/p" }, names("<p><TEXTAREA><b></TextArea ></p>"))
+        assert.are.same({ "p" }, names("<p><textarea><div>never closed</p>"))
+        assert.are.same({ "p" }, names("<p><title><div>never closed</p>"))
     end)
 
     it("skips a template whole, counting nested templates", function()

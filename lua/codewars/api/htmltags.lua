@@ -13,9 +13,11 @@
 ---     page. `<!-->` and `<!--->` are whole comments, as in HTML.
 ---   * `<!DOCTYPE ...>`, `<![CDATA[ ... >`, `<? ... >` and `</ ... >` with no
 ---     name: skipped to the next `>`, as the bogus comments they are.
----   * `<script>` and `<style>`: raw text. The element is skipped whole, up to
----     the first closing `</script` / `</style` (any case); nothing inside is
----     a tag. One never closed runs to the end of the page.
+---   * `<script>` and `<style>` (raw text), `<textarea>` and `<title>`
+---     (escapable raw text): what is between the tags is text. The element is
+---     skipped whole, up to the first closing `</script`, `</style`,
+---     `</textarea` or `</title` (any case); nothing inside is a tag. One
+---     never closed runs to the end of the page.
 ---   * `<template>`: its contents are inert (a browser keeps them out of the
 ---     page). The element is skipped whole up to its matching `</template>`,
 ---     counting nested templates; comments and scripts inside are read as
@@ -24,8 +26,12 @@
 ---
 --- Inside a tag, a quoted attribute value (`"..."` or `'...'`, which can only
 --- start right after an `=`) is skipped, so a `>` or a `<div` in it neither
---- ends the tag nor counts as one. The page is read once, front to back, with
---- no backtracking: every `find` starts where the last one stopped.
+--- ends the tag nor counts as one. The same walk reads the attributes: each
+--- tag's `attrs` maps the lower-cased names to their values (quoted or not,
+--- `""` for a bare name), the first of a repeated name winning, as in a
+--- browser. Text in one attribute's value is never read as another attribute.
+--- The page is read once, front to back, with no backtracking: every `find`
+--- starts where the last one stopped.
 ---@class cw.Api.HtmlTags
 local htmltags = {}
 
@@ -34,7 +40,7 @@ local htmltags = {}
 ---@field close boolean a closing tag (`</name>`)
 ---@field start integer position of its `<`
 ---@field finish integer position of its `>`
----@field class string? the value of its class attribute, when it has one
+---@field attrs table<string, string> lower-cased attribute name to value
 ---@field empty boolean an opening tag with no contents and no closing tag: a void element, or one written `<name/>`
 
 local VOID = {
@@ -51,6 +57,8 @@ end
 local RAW_TEXT_END = {
     script = "</" .. any_case("script") .. "[%s/>]",
     style = "</" .. any_case("style") .. "[%s/>]",
+    textarea = "</" .. any_case("textarea") .. "[%s/>]",
+    title = "</" .. any_case("title") .. "[%s/>]",
 }
 
 --- Read the attributes of the tag whose name ends just before `i`, up to its
@@ -58,26 +66,26 @@ local RAW_TEXT_END = {
 ---@param html string
 ---@param i integer
 ---@return integer? gt position of the closing `>`; nil when the page ends first
----@return string? class
+---@return table<string, string>? attrs
 local function scan_attributes(html, i)
-    local class
+    local attrs = {}
     while true do
         local _, space_end = html:find("^[%s/]*", i)
         i = space_end + 1
         local byte = html:byte(i)
         if not byte then return nil end
-        if byte == 62 then return i, class end -- ">"
+        if byte == 62 then return i, attrs end -- ">"
 
         local _, name_end = html:find("^[^%s/>][^%s=/>]*", i)
         local name = html:sub(i, name_end):lower()
         _, space_end = html:find("^%s*", name_end + 1)
         i = space_end + 1
 
+        local value = "" -- a bare name has no value
         if html:byte(i) == 61 then -- "="
             _, space_end = html:find("^%s*", i + 1)
             i = space_end + 1
             local quote = html:byte(i)
-            local value
             if quote == 34 or quote == 39 then
                 local close = html:find(quote == 34 and '"' or "'", i + 1, true)
                 if not close then return nil end
@@ -86,8 +94,8 @@ local function scan_attributes(html, i)
                 local _, value_end = html:find("^[^%s>]*", i)
                 value, i = html:sub(i, value_end), value_end + 1
             end
-            if class == nil and name == "class" then class = value end
         end
+        if attrs[name] == nil then attrs[name] = value end
     end
 end
 
@@ -99,12 +107,13 @@ end
 local function read_tag(html, lt)
     local closing = html:byte(lt + 1) == 47
     local name = html:match(closing and "^</(%a[^%s/>]*)" or "^<(%a[^%s/>]*)", lt)
-    local gt, class = scan_attributes(html, lt + #name + (closing and 2 or 1))
+    local gt, attrs = scan_attributes(html, lt + #name + (closing and 2 or 1))
     if not gt then return nil end
     name = name:lower()
     local self_closed = html:byte(gt - 1) == 47 and gt - 1 > lt + #name
     return {
-        name = name, close = closing, start = lt, finish = gt, class = class,
+        name = name, close = closing, start = lt, finish = gt,
+        attrs = attrs,
         empty = not closing and (VOID[name] or self_closed) or false,
     }
 end
