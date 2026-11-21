@@ -14,7 +14,8 @@ local state_machine = require("codewars.state_machine")
 ---                                  ▼
 ---  draft ◀──unpublish_done── unpublishing ──unpublish_failed──▶ REVERT
 ---
----  draft / published ──delete──▶ deleting ──delete_done / delete_failed──▶ REVERT
+---  draft / published ──delete──▶ deleting ──delete_done──▶ deleted (terminal)
+---                                         └─delete_failed─▶ REVERT
 ---
 --- Saving never changes publication, so `saving` reverts to whichever state
 --- entered it — that is why save_done is REVERT and not a fixed state.
@@ -22,14 +23,19 @@ local state_machine = require("codewars.state_machine")
 --- Unpublishing and deleting are in-flight states for the same reason as
 --- saving and publishing: while the request is out every other action is
 --- refused, so a second request cannot be answered after it and put back the
---- state it remembered. A failed request reverts; a delete that succeeds
---- reverts too, because the workspace closes right after it.
+--- state it remembered. A failed request reverts.
+---
+--- A delete that succeeds ends in `deleted`, which refuses everything. The
+--- workspace closes right after, but a prompt still waiting on the user (the
+--- rename of a publish retry) can be answered later and must not act on a
+--- kata that no longer exists, which reverting to draft would have allowed.
 local REVERT = state_machine.REVERT
 
 local SAVING_LOCKED = "Saving in progress — wait for it to finish."
 local PUBLISHING_LOCKED = "Publishing in progress — wait for it to finish."
 local UNPUBLISHING_LOCKED = "Unpublishing in progress — wait for it to finish."
 local DELETING_LOCKED = "Deleting in progress — wait for it to finish."
+local DELETED = "This kata was deleted — there is nothing left to do with it."
 
 --- transitions[state][action] = next-state string, or { err = message }.
 local transitions = {
@@ -86,8 +92,16 @@ local transitions = {
         publish = { err = DELETING_LOCKED },
         unpublish = { err = DELETING_LOCKED },
         delete = { err = "Already deleting." },
-        delete_done = REVERT,
+        delete_done = "deleted",
         delete_failed = REVERT,
+    },
+    deleted = {
+        edit = { err = DELETED },
+        validate = { err = DELETED },
+        save = { err = DELETED },
+        publish = { err = DELETED },
+        unpublish = { err = DELETED },
+        delete = { err = DELETED },
     },
 }
 
@@ -95,7 +109,7 @@ local transitions = {
 local state = state_machine.new({
     transitions = transitions,
     editable = { draft = true, published = true },
-    locked = { saving = true, publishing = true, unpublishing = true, deleting = true },
+    locked = { saving = true, publishing = true, unpublishing = true, deleting = true, deleted = true },
     labels = {
         draft = "Draft",
         saving = "Saving…",
@@ -103,6 +117,7 @@ local state = state_machine.new({
         published = "Published",
         unpublishing = "Unpublishing…",
         deleting = "Deleting…",
+        deleted = "Deleted",
     },
     kind = "kata",
 })

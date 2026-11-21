@@ -9,9 +9,9 @@ local KataEditor = require("codewars-ui.kata_editor")
 local KATA_ID = "6a63e7e085269ff93dc6332e"
 local LANG_ID = "6a63e7e085269ff93dc6332f"
 
-local function workspace(published)
+local function workspace(published, id)
     local ws = KataEditor:new({
-        id = KATA_ID,
+        id = id or KATA_ID,
         language = "python",
         published = published == true,
         languages = {
@@ -38,11 +38,22 @@ describe("kata.state in-flight unpublish and delete", function()
         assert.are.equal(kstate.REVERT, kstate.step("unpublishing", "unpublish_failed"))
     end)
 
-    it("enters deleting from either resting state and reverts when it ends", function()
+    it("enters deleting from either resting state, and a failed delete reverts", function()
         assert.are.equal("deleting", kstate.step("draft", "delete"))
         assert.are.equal("deleting", kstate.step("published", "delete"))
-        assert.are.equal(kstate.REVERT, kstate.step("deleting", "delete_done"))
         assert.are.equal(kstate.REVERT, kstate.step("deleting", "delete_failed"))
+    end)
+
+    it("ends a successful delete in a deleted state that nothing can leave", function()
+        assert.are.equal("deleted", kstate.step("deleting", "delete_done"))
+        assert.is_true(kstate.is_locked("deleted"))
+        assert.is_false(kstate.is_editable("deleted"))
+        assert.are.equal("Deleted", kstate.label("deleted"))
+        for _, action in ipairs({ "edit", "validate", "save", "publish", "unpublish", "delete" }) do
+            local next_state, why = kstate.step("deleted", action)
+            assert.is_nil(next_state, action .. " must be blocked once the kata is deleted")
+            assert.truthy(why:find("deleted", 1, true), why)
+        end
     end)
 
     it("refuses every other action with a state-aware message", function()
@@ -70,7 +81,7 @@ end)
 
 describe("KataEditor while an unpublish or delete is in flight", function()
     local real_api, real_confirm, real_input, real_warn, real_info, real_error
-    local calls, replies, warned, errors, prompt, rename
+    local calls, replies, answered, warned, errors, prompt, rename
 
     before_each(function()
         local log = require("codewars.logger")
@@ -78,7 +89,7 @@ describe("KataEditor while an unpublish or delete is in flight", function()
         real_confirm = package.loaded["codewars-ui.popup.confirm"]
         real_input = vim.ui.input
         real_warn, real_info, real_error = log.warn, log.info, log.error
-        calls, replies, warned, errors, prompt, rename = {}, {}, {}, {}, nil, nil
+        calls, replies, answered, warned, errors, prompt, rename = {}, {}, {}, {}, {}, nil, nil
 
         log.warn = function(msg) warned[#warned + 1] = msg end
         log.info = function() end
@@ -93,7 +104,11 @@ describe("KataEditor while an unpublish or delete is in flight", function()
                 -- for the function rather than taking the last argument
                 for _, arg in ipairs({ ... }) do
                     if type(arg) == "function" then
-                        replies[verb] = arg
+                        answered[verb] = false
+                        replies[verb] = function(...)
+                            answered[verb] = true
+                            return arg(...)
+                        end
                     end
                 end
             end
@@ -114,6 +129,15 @@ describe("KataEditor while an unpublish or delete is in flight", function()
     end)
 
     after_each(function()
+        -- The editor records an unpublish or delete in flight per kata id for
+        -- the whole process. A test that leaves one unanswered would lock the
+        -- same id for every test after it, so answer whatever is still out
+        -- (as a failure, the outcome with the least side effects).
+        for _, verb in ipairs({ "unpublish", "delete" }) do
+            if replies[verb] and not answered[verb] then
+                replies[verb]({ msg = "test cleanup" })
+            end
+        end
         local log = require("codewars.logger")
         log.warn, log.info, log.error = real_warn, real_info, real_error
         vim.ui.input = real_input
@@ -217,6 +241,94 @@ describe("KataEditor while an unpublish or delete is in flight", function()
         end)
     end)
 
+    describe("a second workspace of the same kata", function()
+        local OTHER_ID = "6a63e7e085269ff93dc63330"
+
+        it("cannot save while the first one's unpublish is in flight", function()
+            local first = workspace(true)
+            -- the first editor is closed and the kata reopened; the page it
+            -- loads still says published because the reply has not landed
+            local second = workspace(true)
+            first:unpublish()
+
+            second:save()
+
+            assert.is_nil(calls.save, "a save here would cross the unpublish reply")
+            assert.truthy(warned[1]:find("Unpublishing in progress", 1, true), warned[1])
+            assert.are.equal("published", second.state)
+        end)
+
+        it("cannot unpublish or delete either", function()
+            local first = workspace(true)
+            local second = workspace(true)
+            first:unpublish()
+
+            second:unpublish()
+            second:delete()
+
+            assert.are.equal(1, calls.unpublish)
+            assert.is_nil(prompt, "no delete prompt while the first request is running")
+            assert.are.equal(2, #warned)
+        end)
+
+        it("can save again once the first one's unpublish has been answered", function()
+            local first = workspace(true)
+            local second = workspace(true)
+            first:unpublish()
+            replies.unpublish(nil)
+
+            second:save()
+
+            assert.are.equal(1, calls.save)
+        end)
+
+        it("can save again once the first one's unpublish has failed", function()
+            local first = workspace(true)
+            local second = workspace(true)
+            first:unpublish()
+            replies.unpublish({ msg = "http error 500" })
+
+            second:save()
+
+            assert.are.equal(1, calls.save)
+        end)
+
+        it("cannot save while the first one's delete is in flight, and can after it fails", function()
+            local first = workspace(true)
+            local second = workspace(true)
+            first:delete()
+            prompt(true)
+
+            second:save()
+            assert.is_nil(calls.save)
+            assert.truthy(warned[1]:find("Deleting in progress", 1, true), warned[1])
+
+            replies.delete({ msg = "http error 500" })
+            second:save()
+            assert.are.equal(1, calls.save)
+        end)
+
+        it("is not held up by a request for a different kata", function()
+            local first = workspace(true)
+            local other = workspace(true, OTHER_ID)
+            first:unpublish()
+
+            other:save()
+
+            assert.are.equal(1, calls.save)
+        end)
+
+        it("is not locked by a delete prompt that is still open", function()
+            local first = workspace(true)
+            local second = workspace(true)
+            first:delete()
+
+            second:save()
+
+            assert.are.equal(1, calls.save)
+        end)
+    end)
+
     describe("a publish still waiting on the user", function()
         local function lock_warning()
             return warned[#warned]
@@ -263,6 +375,23 @@ describe("KataEditor while an unpublish or delete is in flight", function()
             assert.are.equal(1, calls.publish, "only the first publish may have been sent")
             assert.are.equal("deleting", ws.state)
             assert.truthy(lock_warning():find("Deleting in progress", 1, true), lock_warning())
+        end)
+
+        it("is refused once the kata has been deleted while the rename prompt was open", function()
+            local ws = workspace(false)
+            ws:publish()
+            prompt(true)
+            replies.publish(nil, { msg = "name: Name is already taken" })
+            assert.is_function(rename, "the rename prompt should be open")
+            ws:delete()
+            prompt(true)
+            replies.delete(nil)
+
+            assert.has_no.errors(function() rename("Another name") end)
+
+            assert.are.equal(1, calls.publish, "a deleted kata must not be published")
+            assert.are.equal("deleted", ws.state)
+            assert.truthy(lock_warning():find("deleted", 1, true), lock_warning())
         end)
 
         it("still goes ahead when nothing else started in the meantime", function()

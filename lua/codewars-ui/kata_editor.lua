@@ -556,6 +556,24 @@ function KataEditor:set_state(next_state)
     self:set_panes_locked(kstate.is_locked(next_state))
 end
 
+--- Kata id -> the locked state of an unpublish or delete still in flight. The
+--- state machine only locks the workspace that sent the request, but closing
+--- the editor and reopening the kata gives a fresh workspace that loaded the
+--- page before the reply landed. Without this record it could start a save
+--- that the reply then crosses, the same race the locked state exists to stop.
+---@type table<string, string>
+local requests_in_flight = {}
+
+--- `kstate.step` for this workspace, honouring a request another workspace of
+--- the same kata still has in flight. Every locked state refuses these
+--- actions, so asking it gives the same lock message the sender would see.
+---@param action string
+---@return string? next_state
+---@return string? err
+function KataEditor:_step(action)
+    return kstate.step(requests_in_flight[self.model.id] or self.state, action)
+end
+
 --- Codewars requires a kata name to be free. The rejection names the field and
 --- the reason, and the name travels inside the same payload, so a rename can be
 --- applied and the request retried immediately -- no intermediate save, unlike
@@ -580,7 +598,7 @@ end
 --- Save the kata in place (`POST /kata/{id}`). Publication is unaffected, so
 --- the state machine reverts to whichever state we came from.
 function KataEditor:save()
-    local _, err = kstate.step(self.state, "save")
+    local _, err = self:_step("save")
     if err then
         return log.warn(err)
     end
@@ -672,7 +690,7 @@ end
 --- Publish the kata. Outward-facing and slow to undo, so it
 --- confirms first and refuses to publish content the server has not seen.
 function KataEditor:publish()
-    local _, err = kstate.step(self.state, "publish")
+    local _, err = self:_step("publish")
     if err then
         return log.warn(err)
     end
@@ -701,7 +719,7 @@ end
 --- meanwhile. Ask again, or the publish would go out under that request and
 --- its reply would put back a state that is no longer true.
 function KataEditor:_do_publish()
-    local in_flight, blocked = kstate.step(self.state, "publish")
+    local in_flight, blocked = self:_step("publish")
     if blocked then
         return log.warn(blocked)
     end
@@ -738,7 +756,7 @@ end
 
 --- Un-publish (hide) a published kata. Reversible by publishing again.
 function KataEditor:unpublish()
-    local in_flight, err = kstate.step(self.state, "unpublish")
+    local in_flight, err = self:_step("unpublish")
     if err then
         return log.warn(err)
     end
@@ -746,10 +764,13 @@ function KataEditor:unpublish()
     -- `published` and put it back after this reply, leaving the editor
     -- claiming Published while the server holds a draft.
     local prev = self.state
+    local id = self.model.id
     self:set_state(in_flight) -- "unpublishing"
+    requests_in_flight[id] = in_flight
     self:refresh_title()
 
-    require("codewars.api.kata").unpublish(self.model.id, function(uerr)
+    require("codewars.api.kata").unpublish(id, function(uerr)
+        requests_in_flight[id] = nil -- whatever the outcome, the request is over
         if uerr then
             if uerr.auth then
                 require("codewars.cache.cookie").delete()
@@ -768,7 +789,7 @@ end
 --- Delete the kata. Irreversible, so it confirms with the kata's name and
 --- closes the workspace on success.
 function KataEditor:delete()
-    local _, err = kstate.step(self.state, "delete")
+    local _, err = self:_step("delete")
     if err then
         return log.warn(err)
     end
@@ -783,23 +804,29 @@ function KataEditor:delete()
         -- Locked only now, not when the prompt opened: the user may have
         -- walked away from it, and the editor must stay usable meanwhile.
         -- It also may have started a save in that time, so ask again.
-        local in_flight, blocked = kstate.step(self.state, "delete")
+        local in_flight, blocked = self:_step("delete")
         if blocked then
             return log.warn(blocked)
         end
         local prev = self.state
+        local id = self.model.id
         self:set_state(in_flight) -- "deleting"
+        requests_in_flight[id] = in_flight
         self:refresh_title()
 
-        require("codewars.api.kata").delete(self.model.id, function(derr)
-            self:set_state(prev) -- delete_done and delete_failed both REVERT
+        require("codewars.api.kata").delete(id, function(derr)
+            requests_in_flight[id] = nil -- whatever the outcome, the request is over
             if derr then
+                self:set_state(prev) -- delete_failed REVERTs
                 if derr.auth then
                     require("codewars.cache.cookie").delete()
                 end
                 self:refresh_title()
                 return log.error("Delete failed — " .. (derr.msg or "unknown error"))
             end
+            -- Terminal: a prompt still waiting on the user (a publish retry's
+            -- rename) must find the kata gone, not a draft it can publish.
+            self:set_state(kstate.step("deleting", "delete_done")) -- "deleted"
             log.info("Kata deleted.")
             self:snapshot() -- the kata is gone; nothing to warn about on close
             self:close()
