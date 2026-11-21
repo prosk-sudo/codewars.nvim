@@ -101,6 +101,11 @@ describe("cache.stash id validation", function()
     it("writes nothing and returns nil for a path-traversal id", function()
         local kumite = load_real_stash().for_kind("kumite-stash-")
         local paths = {}
+        -- The prefix glued onto the id ("kumite-stash-..") swallows one "..", so
+        -- three reach one level above the cache dir. That dir sits three levels
+        -- under CW_TEST_ROOT (cache/nvim/codewars), so even the unfixed code
+        -- stays inside the root that files_marked searches. With fewer ".." it
+        -- would not escape at all (the write fails on the missing directory).
         for _, id in ipairs({ "../../../" .. MARKER, "x/../../" .. MARKER, "/../" .. MARKER }) do
             paths[#paths + 1] = kumite.save({ id = id, code = "SECRET" })
         end
