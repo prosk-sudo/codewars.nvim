@@ -97,7 +97,10 @@ All notable changes to codewars.nvim are documented here.
   already under way when you submit no longer undoes it either: the language
   stays until Codewars' own list includes it, and the completed list now
   refreshes one request at a time: asking for it again while a refresh is
-  running waits for that one instead of starting another.
+  running waits for that one instead of starting another. A refresh that
+  lands after you signed in as someone else, or after the cache was cleared
+  by a cookie change, is dropped rather than written over the cache that is
+  there now.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

@@ -293,6 +293,95 @@ describe("cache.completed", function()
             assert.equals(2, #requests)
         end)
     end)
+
+    -- The cache on disk is the signed-in account's. A reply made for an
+    -- account that has since signed out, or for a cache that has since been
+    -- cleared, is not that account's list and must not be written as one.
+    describe("update whose account changes or whose cache is cleared during the request", function()
+        local requests, results
+        local FILE = "mem:completed.json"
+
+        before_each(function()
+            requests, results = {}, {}
+            -- Files with the methods clear() calls on them.
+            local utils = package.loaded["codewars.cache.utils"]
+            utils.cache_file = function(name)
+                local key = "mem:" .. name
+                return { key = key, exists = function() return store[key] ~= nil end, rm = function() store[key] = nil end }
+            end
+            utils.read_json = function(file) return store[file.key] end
+            utils.write_json = function(file, data) store[file.key] = vim.deepcopy(data) end
+            package.loaded["codewars.api.utils"].get = function(_, opts)
+                requests[#requests + 1] = { deliver = opts.callback }
+            end
+            store[FILE] = { timestamp = 5, items = { { id = "a1", slug = "a-one", completedLanguages = { "python" } } } }
+        end)
+
+        local function ask()
+            completed.update(function(items, err) results[#results + 1] = { items = items, err = err } end)
+        end
+
+        local function sign_in_as(name) package.loaded["codewars.config"].user.username = name end
+
+        local function reply(items, total)
+            return { data = items, totalPages = total or 1 }
+        end
+
+        local function a_kata(id) return { id = id, slug = id .. "-slug", completedLanguages = { "python" } } end
+
+        it("drops the reply when the account changed, leaving the cache as it is", function()
+            ask()
+            sign_in_as("someone-else")
+            store[FILE] = {
+                timestamp = 7,
+                items = { { id = "b1", slug = "b-one", completedLanguages = { "java" }, local_mark = true } },
+            }
+            local theirs = vim.deepcopy(store[FILE])
+            requests[1].deliver(reply({ a_kata("a2") }))
+            assert.same(theirs, store[FILE], "the late reply was merged or saved")
+            assert.equals(1, #results, "the caller was not answered")
+            assert.truthy(results[1].err and results[1].err.msg:find("account", 1, true), vim.inspect(results[1].err))
+        end)
+
+        it("drops the reply when the cache was cleared, leaving it cleared", function()
+            ask()
+            completed.clear()
+            assert.is_nil(store[FILE])
+            requests[1].deliver(reply({ a_kata("a2") }))
+            assert.is_nil(store[FILE], "the late reply undid the clear")
+            assert.truthy(results[1].err and results[1].err.msg:find("account", 1, true), vim.inspect(results[1].err))
+        end)
+
+        it("saves the reply as it does when nothing changed", function()
+            ask()
+            requests[1].deliver(reply({ a_kata("a2") }))
+            assert.is_nil(results[1].err)
+            assert.equals("a2", store[FILE].items[1].id)
+            assert.is_true(store[FILE].timestamp > 5)
+        end)
+
+        it("stops asking for more pages once the account changed", function()
+            ask()
+            sign_in_as("someone-else")
+            requests[1].deliver(reply({ a_kata("a2") }, 3))
+            assert.equals(1, #requests, "asked for the next page")
+        end)
+
+        it("starts a new refresh after a clear, which the old reply does not answer", function()
+            ask()
+            completed.clear()
+            ask()
+            assert.equals(2, #requests, "joined a refresh made before the clear")
+            requests[1].deliver(reply({ a_kata("old") }))
+            assert.equals(1, #results)
+            assert.is_not_nil(results[1].err)
+            assert.is_nil(store[FILE])
+            requests[2].deliver(reply({ a_kata("new") }))
+            assert.equals(2, #results)
+            assert.is_nil(results[2].err)
+            assert.equals("new", store[FILE].items[1].id)
+        end)
+    end)
 end)
 
 describe("cache.problemlist all-empty guard", function()

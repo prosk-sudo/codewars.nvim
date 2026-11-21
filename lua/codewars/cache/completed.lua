@@ -38,10 +38,24 @@ function completed.save_details(details)
     cache_utils.write_json(details_file(), details)
 end
 
+--- Refreshes in flight, by the account each is for, with the callers waiting
+--- on it. A refresh is its own table so that one ended after `clear()` has
+--- forgotten it cannot free, or answer, the slot of one begun since.
+---@type table<string, { callers: function[] }>
+local flights = {}
+
+--- Bumped by `clear()`. A refresh begun before it was fetching for a cache
+--- that no longer exists, and its reply must not bring that cache back.
+local generation = 0
+
 --- Remove both caches. The completed list is the signed-in user's, so it
 --- must not outlive their cookie; the kata details are not per-user but
---- are only ever rebuilt from the list, so they go too.
+--- are only ever rebuilt from the list, so they go too. A refresh already on
+--- its way is for the cookie that is gone: it is dropped when its reply
+--- lands, and a refresh asked for from now on is a new one.
 function completed.clear()
+    generation = generation + 1
+    flights = {}
     for _, f in ipairs({ list_file(), details_file() }) do
         if f:exists() then pcall(f.rm, f) end
     end
@@ -92,17 +106,17 @@ local function merge_local_marks(fetched, cached)
     return merged
 end
 
---- Callers waiting on the refresh in flight, by the account it is for. A
---- list that is replaced, never added to, as the cache's own tables are.
----@type table<string, function[]>
-local waiting = {}
-
 --- Refresh the list from Codewars, and hand `cb` the kata and any error.
 ---
 --- One refresh runs at a time per account: a call made while one is in flight
 --- sends no request and gets that refresh's result when it ends, an error
 --- included. Two replies merged one after the other race -- the newer one
 --- can clear a marker that the older, arriving later, still needed.
+---
+--- The cache on disk is the signed-in account's, so a reply is only merged
+--- and saved while that account is still the one the refresh began for and
+--- the cache has not been cleared since; otherwise it is dropped and the
+--- callers get an error.
 ---@param cb? function
 function completed.update(cb)
     local api_utils = require("codewars.api.utils")
@@ -119,12 +133,15 @@ function completed.update(cb)
         return
     end
 
-    if waiting[username] then
-        waiting[username] = vim.list_extend(vim.list_slice(waiting[username]), { cb })
+    local flight = flights[username]
+    if flight then
+        flight.callers = vim.list_extend(vim.list_slice(flight.callers), { cb })
         return
     end
-    waiting[username] = { cb }
+    flight = { callers = { cb } }
+    flights[username] = flight
 
+    local began = generation
     local all = {}
     local page = 0
     local settled = false
@@ -135,9 +152,8 @@ function completed.update(cb)
     local function settle(items, err)
         if settled then return end
         settled = true
-        local callers = waiting[username] or {}
-        waiting[username] = nil
-        for _, caller in ipairs(callers) do
+        if flights[username] == flight then flights[username] = nil end
+        for _, caller in ipairs(flight.callers) do
             local ok, failure = pcall(caller, items, err)
             if not ok then log.error("A completed-kata refresh callback failed: " .. tostring(failure)) end
         end
@@ -152,6 +168,16 @@ function completed.update(cb)
     local fetch_page
 
     local function on_page(res, err)
+        if config.user.username ~= username or generation ~= began then
+            -- Checked before anything is read from the reply, and on every
+            -- page, so a refresh for an account that is gone neither writes
+            -- over the cache that is there now, nor merges that account's
+            -- local marks into this list, nor goes on asking for pages.
+            return give_up({
+                msg = "The account changed while your completed kata were being fetched; keeping the cached list.",
+            })
+        end
+
         if err then
             -- Writing the pages fetched so far would stamp a partial list as
             -- fresh and overwrite a valid older cache, so kata completed on
