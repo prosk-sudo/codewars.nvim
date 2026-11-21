@@ -203,4 +203,16 @@ describe("api.search", function()
             assert.are.equal(SLUG, got[1][1].slug)
         end)
     end)
+
+    -- The search page is HTML: a name with an apostrophe arrives as
+    -- `&#39;`, and the kata list showed it that way.
+    describe("parse_html", function()
+        it("decodes HTML entities in kata names", function()
+            local html = ([[<div class="list-item-kata" id="%s"><span>6 kyu</span>
+                <a class="ml-2" href="/kata/%s">My Very Own Python&#39;s Split &amp; Join</a></div>]]):format(SLUG, SLUG)
+            local results = search.parse_html(html)
+            assert.are.equal(1, #results)
+            assert.are.equal("My Very Own Python's Split & Join", results[1].name)
+        end)
+    end)
 end)

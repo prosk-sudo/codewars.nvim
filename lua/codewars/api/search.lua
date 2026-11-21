@@ -150,7 +150,8 @@ function search.parse_html(html)
         if slug and name then
             entry.id = slug
             entry.slug = slug
-            entry.name = name:match("^%s*(.-)%s*$")
+            -- Scraped HTML: "Python&#39;s" is how an apostrophe arrives.
+            entry.name = require("codewars.api.page").unescape(name:match("^%s*(.-)%s*$"))
         end
 
         -- Satisfaction from tooltip: 'Satisfaction Rating: 89% of users...'

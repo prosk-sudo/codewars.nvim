@@ -51,6 +51,10 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
+  `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
+  names until its next full rebuild; the daily check corrects the ones it
+  sees sooner.
 - Signing in again with `:CW cookie` now puts your name back in the dashboard
   header. Saving the cookie cleared the detected username, but only the
   dashboard's own Cookie > Update button looked it up again, so the command
