@@ -186,6 +186,10 @@ All notable changes to codewars.nvim are documented here.
   stop for the rest of the session, silently.
 - The menu no longer jumps as the stats arrive: the row is reserved from the
   first draw rather than appearing and pushing the block down.
+- A rate limit that says when to retry as a date (`Retry-After: Wed, 21 Oct
+  2026 07:28:00 GMT`) is now honoured like one that says it in seconds,
+  instead of always waiting the longest backoff. The two obsolete date forms
+  are read too (#26).
 
 ## [0.3.4] - 2026-08-29
 

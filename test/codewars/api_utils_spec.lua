@@ -75,10 +75,10 @@ describe("api.utils", function()
             end
         end)
 
-        -- Retry-After may be an HTTP-date, which tonumber cannot read. The
-        -- server still asked for a wait, so start long rather than short.
+        -- A Retry-After we cannot read at all. The server still asked for a
+        -- wait, so start long rather than short.
         it("starts at the longest backoff when Retry-After was unparseable", function()
-            local unparseable = { retry_after_raw = "Wed, 21 Oct 2026 07:28:00 GMT" }
+            local unparseable = { retry_after_raw = "next Tuesday, probably" }
             for _ = 1, 20 do
                 local d = api_utils.retry_delay_ms(unparseable, 0)
                 assert.is_true(d >= math.floor(api_utils.MAX_EXP_BACKOFF_MS * 0.75))
@@ -147,7 +147,15 @@ describe("api.utils", function()
 
         it("keeps an unparseable Retry-After as raw", function()
             local _, err = api_utils.handle_res({
-                exit = 0, status = 429, body = "", headers = { "Retry-After: Wed, 21 Oct 2026 07:28:00 GMT" },
+                exit = 0, status = 429, body = "", headers = { "Retry-After: next Tuesday, probably" },
+            })
+            assert.is_nil(err.retry_after)
+            assert.are.equal("next Tuesday, probably", err.retry_after_raw)
+        end)
+
+        it("keeps a date that is not a valid GMT date as raw, too", function()
+            local _, err = api_utils.handle_res({
+                exit = 0, status = 429, body = "", headers = { "Retry-After: Wed, 31 Feb 2027 07:28:00 GMT" },
             })
             assert.is_nil(err.retry_after)
             assert.is_not_nil(err.retry_after_raw)
@@ -164,6 +172,95 @@ describe("api.utils", function()
             local _, e500 = api_utils.handle_res({ exit = 0, status = 500, body = "" })
             assert.is_nil(e404.rate_limited)
             assert.is_nil(e500.rate_limited)
+        end)
+    end)
+
+    -- Retry-After may also be an HTTP-date. It used to fall through to the
+    -- longest exponential backoff, which is not what the server asked for.
+    describe("Retry-After as an HTTP-date", function()
+        local DAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+        local FULL_DAYS = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" }
+        local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+
+        -- Built by hand: os.date's names follow the locale.
+        local function imf(at)
+            local t = os.date("!*t", at)
+            return ("%s, %02d %s %04d %02d:%02d:%02d GMT"):format(
+                DAYS[t.wday], t.day, MONTHS[t.month], t.year, t.hour, t.min, t.sec)
+        end
+        local function rfc850(at)
+            local t = os.date("!*t", at)
+            return ("%s, %02d-%s-%02d %02d:%02d:%02d GMT"):format(
+                FULL_DAYS[t.wday], t.day, MONTHS[t.month], t.year % 100, t.hour, t.min, t.sec)
+        end
+        local function asctime(at)
+            local t = os.date("!*t", at)
+            return ("%s %s %2d %02d:%02d:%02d %04d"):format(
+                DAYS[t.wday], MONTHS[t.month], t.day, t.hour, t.min, t.sec, t.year)
+        end
+
+        local function limited(value)
+            local _, err = api_utils.handle_res({
+                exit = 0, status = 429, body = "", headers = { "Retry-After: " .. value },
+            })
+            return err
+        end
+
+        -- The clock ticks between building the header and reading it, so
+        -- allow the second boundary to fall either side.
+        local function assert_waits(err, seconds)
+            assert.is_not_nil(err.retry_after, "the date was not read")
+            assert.is_true(err.retry_after >= seconds - 2 and err.retry_after <= seconds, err.retry_after)
+        end
+
+        it("waits until an IMF-fixdate, as seconds from now", function()
+            assert_waits(limited(imf(os.time() + 30)), 30)
+        end)
+
+        it("waits until an RFC 850 date, as seconds from now", function()
+            assert_waits(limited(rfc850(os.time() + 30)), 30)
+        end)
+
+        it("waits until an asctime date, as seconds from now", function()
+            assert_waits(limited(asctime(os.time() + 30)), 30)
+        end)
+
+        it("waits that long, not the longest backoff", function()
+            local err = limited(imf(os.time() + 20))
+            local ms = api_utils.retry_delay_ms(err, 0)
+            assert.is_true(ms >= 18000 and ms <= 20000, ms)
+        end)
+
+        it("waits no more than a seconds-form Retry-After would, under the same cap", function()
+            local err = limited(imf(os.time() + 86400))
+            assert.are.equal(api_utils.MAX_BACKOFF_MS, api_utils.retry_delay_ms(err, 0))
+            assert.are.equal(
+                api_utils.retry_delay_ms({ retry_after = 86400 }, 0),
+                api_utils.retry_delay_ms(err, 0)
+            )
+        end)
+
+        it("never waits a negative time for a date already past", function()
+            local err = limited(imf(os.time() - 3600))
+            assert.are.equal(0, err.retry_after)
+            -- Like "Retry-After: 0": nothing to honor, so the ordinary
+            -- backoff, not the longest one and not a negative wait.
+            for _ = 1, 20 do
+                local ms = api_utils.retry_delay_ms(err, 0)
+                assert.is_true(ms > 0 and ms <= api_utils.BASE_BACKOFF_MS * 1.25, ms)
+            end
+        end)
+
+        it("still carries the raw header for a date it cannot read", function()
+            local err = limited("Wed, 21 Oct 2026 07:28:00 PST")
+            assert.is_nil(err.retry_after)
+            assert.are.equal("Wed, 21 Oct 2026 07:28:00 PST", err.retry_after_raw)
+            local ms = api_utils.retry_delay_ms(err, 0)
+            assert.is_true(ms >= math.floor(api_utils.MAX_EXP_BACKOFF_MS * 0.75))
+        end)
+
+        it("leaves the seconds form alone", function()
+            assert.are.equal(7, limited("7").retry_after)
         end)
     end)
 
