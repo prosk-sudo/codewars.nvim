@@ -177,6 +177,10 @@ function utils.rescue_or_delete(bufnr, rescue_label)
         end
         pcall(utils.buf_set_opts, bufnr, { buflisted = true, buftype = "" })
         pcall(vim.api.nvim_buf_set_name, bufnr, rescue_label)
+        -- Never written to a file, whatever the workspace's :w did to the flag
+        -- (it clears it without writing). Modified is what makes :bdelete and
+        -- :q refuse, so Vim itself guards the only copy until it is written.
+        pcall(vim.api.nvim_set_option_value, "modified", true, { buf = bufnr })
     else
         vim.api.nvim_buf_delete(bufnr, { force = true, unload = false })
     end

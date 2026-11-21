@@ -88,6 +88,31 @@ describe("closing a dirty kumite", function()
         end
     end)
 
+    it("keeps a rescued buffer modified even after the workspace's :w cleared it", function()
+        -- The workspace's :w writes no file; it only clears 'modified' and
+        -- prints a hint. A rescued buffer has still never reached a file, so it
+        -- must read as modified: that is what makes :bdelete refuse (E89).
+        local ws = open("../../not-an-id")
+        for _, bufnr in ipairs({ ws.bufnr, ws.fixture_split.bufnr }) do
+            vim.api.nvim_buf_call(bufnr, function()
+                vim.cmd("silent write")
+            end)
+            assert.is_false(vim.bo[bufnr].modified, "precondition: the workspace's :w clears 'modified'")
+        end
+        close(ws)
+        for _, text in ipairs({ EDITED_CODE, EDITED_FIXTURE }) do
+            local bufnr = buffer_holding(text)
+            assert.is_not_nil(bufnr, "no rescued buffer holds " .. text)
+            assert.is_true(vim.bo[bufnr].modified, "a rescued copy that never reached a file reads as saved")
+            local ok, err = pcall(vim.cmd, "bdelete " .. bufnr)
+            assert.is_false(ok, ":bdelete discarded the only copy without a warning")
+            assert.truthy(tostring(err):find("E89", 1, true), tostring(err))
+            assert.is_true(vim.api.nvim_buf_is_loaded(bufnr))
+            vim.cmd("bdelete! " .. bufnr)
+            assert.is_false(vim.api.nvim_buf_is_loaded(bufnr), ":bdelete! is the explicit way to let it go")
+        end
+    end)
+
     it("keeps a fixture the user had toggled out of view", function()
         local ws = open("../../not-an-id")
         ws.fixture_split:hide()
