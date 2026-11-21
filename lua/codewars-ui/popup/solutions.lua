@@ -11,6 +11,8 @@ local ui_utils = require("codewars-ui.utils")
 ---@field comments_popup NuiPopup? comment thread, toggled with `c`
 ---@field show_comments boolean
 ---@field focus "code"|"comments"
+---@field id integer                 names this popup's resize augroup
+---@field _resize_group integer?     VimResized augroup, present while mounted
 local Solutions = {}
 Solutions.__index = Solutions
 
@@ -35,6 +37,8 @@ Solutions.KEY_BEST_PRACTICE = "gb"
 Solutions.KEY_CLEVER = "gv"
 
 local INFO_NS = vim.api.nvim_create_namespace("codewars_solutions_info")
+
+local instances = 0 -- popups created so far; each gets its own resize augroup
 
 function Solutions:show()
     if #self.solutions == 0 then
@@ -238,7 +242,9 @@ function Solutions:render()
     if not code_geom then
         -- Not even one bordered pane fits above the command line. Panes are
         -- already unmounted above, so a popup that no longer fits (the editor
-        -- shrank before a page turn) closes rather than hanging off-screen.
+        -- shrank) closes rather than hanging off-screen, and with nothing
+        -- left to lay out it stops listening for resizes too.
+        self:_unwatch_resize()
         return log.warn("Not enough room to show solutions; make the window taller")
     end
 
@@ -272,8 +278,76 @@ function Solutions:render()
         self:_bind(self.comments_popup.bufnr)
     end
 
+    self:_watch_resize()
     local target = (self.focus == "comments" and self.comments_popup) or self.popup
     vim.api.nvim_set_current_win(target.winid)
+end
+
+--- Listen for the editor being resized for as long as the panes are mounted.
+--- The layout is only computed in render(), so without this a terminal
+--- resized while the popup is open leaves the panes where they were, past the
+--- last row. One group per instance, created on first mount and removed in
+--- close() (or when a resize finds nothing left to lay out), so nothing
+--- outlives the popup and re-rendering never stacks a second autocmd.
+function Solutions:_watch_resize()
+    if self._resize_group then return end
+    self._resize_group = vim.api.nvim_create_augroup("codewars_solutions_" .. self.id, { clear = true })
+    -- Global, not buffer-local: VimResized is not tied to any buffer.
+    vim.api.nvim_create_autocmd("VimResized", {
+        group = self._resize_group,
+        callback = function() self:relayout() end,
+    })
+end
+
+function Solutions:_unwatch_resize()
+    if not self._resize_group then return end
+    pcall(vim.api.nvim_del_augroup_by_id, self._resize_group)
+    self._resize_group = nil
+end
+
+--- True when the pane has a live window. nui clears `winid` itself when a
+--- pane's window is closed, so the field can be nil, not just stale.
+---@param popup NuiPopup?
+---@return boolean
+local function on_screen(popup)
+    return popup ~= nil and popup.winid ~= nil and vim.api.nvim_win_is_valid(popup.winid)
+end
+
+--- A pane's window view (cursor, scroll), or nil if it is not on screen.
+---@param popup NuiPopup?
+---@return table?
+local function save_view(popup)
+    if not on_screen(popup) then return nil end
+    return vim.api.nvim_win_call(popup.winid, vim.fn.winsaveview)
+end
+
+---@param popup NuiPopup?
+---@param view table?
+local function restore_view(popup, view)
+    if not view or not on_screen(popup) then return end
+    vim.api.nvim_win_call(popup.winid, function() vim.fn.winrestview(view) end)
+end
+
+--- Lay the panes out again for the editor's current size, through the same
+--- geometry() and render() as every other redraw, keeping the user's place:
+--- the solution, the cursor and scroll of the code and comments panes, and
+--- the focused pane. The second pane appears or goes as the room allows, and
+--- when not even one pane fits render() closes the popup with its notice.
+function Solutions:relayout()
+    if not on_screen(self.popup) then
+        -- The panes went away some other way: nothing to lay out.
+        return self:_unwatch_resize()
+    end
+    local current = vim.api.nvim_get_current_win()
+    if on_screen(self.comments_popup) and current == self.comments_popup.winid then
+        self.focus = "comments"
+    elseif current == self.popup.winid then
+        self.focus = "code"
+    end
+    local code_view, comments_view = save_view(self.popup), save_view(self.comments_popup)
+    self:render()
+    restore_view(self.popup, code_view)
+    restore_view(self.comments_popup, comments_view)
 end
 
 --- True when `bufnr` belongs to one of our panes.
@@ -403,6 +477,7 @@ end
 
 function Solutions:close()
     self:_unmount_popups()
+    self:_unwatch_resize()
 end
 
 --- Accepts structured solutions (cw.Solution[]) or, for older callers
@@ -422,7 +497,9 @@ function Solutions:new(solutions, language)
             items[#items + 1] = s
         end
     end
+    instances = instances + 1
     return setmetatable({
+        id = instances, -- names this popup's resize augroup
         solutions = items,
         language = language,
         index = 1,

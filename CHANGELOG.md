@@ -81,7 +81,9 @@ All notable changes to codewars.nvim are documented here.
   When there is no room for both panes it drops the info box (or the
   comments pane) and keeps the code, and it never starts above the top row.
   On an editor too short for even one pane it says so instead of opening,
-  and `c` says when the comments do not fit (#29).
+  and `c` says when the comments do not fit. Resizing the terminal while the
+  popup is open lays it out again for the new size instead of leaving it
+  where it was, keeping your solution, cursor and focused pane (#29).
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

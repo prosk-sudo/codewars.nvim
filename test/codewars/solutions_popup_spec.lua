@@ -461,12 +461,18 @@ describe("Solutions popup", function()
             assert.are.same({}, said.warn)
         end)
 
-        it("closes a popup that no longer fits when the editor shrank before a page turn", function()
+        -- Even if no VimResized reached the popup (eventignore here stands in
+        -- for any redraw that skipped it), the next render re-checks the room.
+        it("closes a popup that no longer fits when a page turn finds the editor shrank", function()
             resize(120, 30)
             ui = Solutions:new({ sol(), sol() }, "python")
             ui:show()
             assert.is_not_nil(ui.popup)
+            local ignored = vim.o.eventignore
+            vim.o.eventignore = "VimResized"
             resize(120, 2)
+            vim.o.eventignore = ignored
+            assert.is_not_nil(ui.popup, "nothing should have re-laid it out yet")
             ui:jump_to(2)
             assert.is_nil(ui.popup)
             assert.are.equal(1, #said.warn)
@@ -516,6 +522,169 @@ describe("Solutions popup", function()
             assert.is_not_nil(ui.comments_popup)
             assert.are.same({}, said.info)
             assert.are.same({}, said.warn)
+        end)
+
+        -- The layout is computed when the popup renders. A terminal resized
+        -- while it is open used to leave the panes where they were, hanging
+        -- past the last row. Every spec here fires VimResized and calls
+        -- nothing else, then looks at the windows as they are right then.
+        describe("when the editor is resized while it is open", function()
+            local function resized()
+                vim.api.nvim_exec_autocmds("VimResized", {})
+            end
+
+            -- The solutions popup's own VimResized autocmds, whatever group
+            -- they live in.
+            local function resize_autocmds()
+                local mine = {}
+                for _, a in ipairs(vim.api.nvim_get_autocmds({ event = "VimResized" })) do
+                    if (a.group_name or ""):find("^codewars_solutions") then mine[#mine + 1] = a end
+                end
+                return mine
+            end
+
+            -- A pane's content geometry, read from the window nui draws its
+            -- border in (border row/col sit one above/left of the content).
+            local function content(popup)
+                local b = box(popup)
+                return { width = b.width - 2, height = b.height - 2, row = b.row + 1, col = b.col + 1 }
+            end
+
+            local function assert_inside(popup, rows, label)
+                local b = box(popup)
+                assert.is_true(b.row >= 0, ("%s starts above row 0 (%s)"):format(label, tostring(b.row)))
+                assert.is_true(b.row + b.height <= rows,
+                    ("%s ends at row %s, past the %d usable rows"):format(label, tostring(b.row + b.height), rows))
+            end
+
+            it("moves and shrinks the panes to the new size, with nothing else called", function()
+                resize(120, 39)
+                ui = Solutions:new({ sol() }, "python")
+                ui:show()
+                local tall = box(ui.popup).height
+                assert_inside(ui.info_popup, 39, "info box before")
+
+                resize(120, 5)
+                resized()
+
+                assert.is_not_nil(ui.popup, "the code pane should survive")
+                assert.is_true(box(ui.popup).height < tall, "the code pane kept its old height")
+                assert_inside(ui.popup, 5, "code pane")
+                assert.is_nil(ui.info_popup, "the info box does not fit in 5 rows")
+                assert.are.same({}, said.warn)
+            end)
+
+            it("brings the second pane back, at the normal-size geometry, when there is room again", function()
+                resize(120, 39)
+                ui = Solutions:new({ sol() }, "python")
+                ui:show()
+                resize(120, 5)
+                resized()
+                assert.is_nil(ui.info_popup)
+
+                resize(120, 39)
+                resized()
+                assert.are.same({ width = 96, height = 22, row = 6, col = 12 }, content(ui.popup))
+                assert.are.same({ width = 96, height = 1, row = 30, col = 12 }, content(ui.info_popup))
+            end)
+
+            it("keeps the comments pane, and the focus on it, when it still fits", function()
+                resize(120, 39)
+                ui = Solutions:new({ sol() }, "python")
+                ui:show()
+                ui:toggle_comments()
+                assert.are.equal(ui.comments_popup.winid, vim.api.nvim_get_current_win())
+
+                resize(80, 23)
+                resized()
+                -- On 80 columns the box is widened to fit the info line, so the
+                -- width comes from geometry(); the rows are the 23-row pins.
+                local want_code, _, want_comments = ui:geometry(ui.solutions[1])
+                assert.are.same(want_code, content(ui.popup))
+                assert.are.same(want_comments, content(ui.comments_popup))
+                assert.are.same({ 8, 3 }, { want_code.height, want_code.row })
+                assert.are.same({ 4, 13 }, { want_comments.height, want_comments.row })
+                assert.are.equal(ui.comments_popup.winid, vim.api.nvim_get_current_win(), "focus left the comments pane")
+            end)
+
+            it("keeps the current solution and the cursor in the code pane", function()
+                local long = {}
+                for i = 1, 100 do long[i] = ("line %d"):format(i) end
+                ui = Solutions:new({ sol(), sol({ code = table.concat(long, "\n") }) }, "python")
+                resize(120, 39)
+                ui:show()
+                ui:jump_to(2)
+                vim.api.nvim_win_set_cursor(ui.popup.winid, { 70, 0 })
+
+                resize(120, 15)
+                resized()
+                assert.are.equal(5, content(ui.popup).height, "the panes were not re-laid out for 15 rows")
+                assert.are.equal(2, ui.index)
+                assert.are.equal(" Solution 2/2 ", title(ui.popup))
+                assert.are.same({ 70, 0 }, vim.api.nvim_win_get_cursor(ui.popup.winid))
+                assert.are.equal(ui.popup.winid, vim.api.nvim_get_current_win())
+            end)
+
+            it("closes with the not-enough-room notice, once, when not even one pane fits", function()
+                resize(120, 39)
+                ui = Solutions:new({ sol() }, "python")
+                ui:show()
+                local wins = #vim.api.nvim_list_wins()
+
+                resize(120, 2)
+                resized()
+                assert.is_nil(ui.popup)
+                assert.is_nil(ui.info_popup)
+                assert.is_true(#vim.api.nvim_list_wins() < wins, "windows were left open")
+                assert.are.equal(1, #said.warn)
+                assert.truthy(said.warn[1]:find("Not enough room to show solutions", 1, true))
+                assert.are.equal(0, #resize_autocmds(), "the autocmd outlived the popup")
+            end)
+
+            it("leaves no VimResized autocmd behind once closed", function()
+                resize(120, 39)
+                ui = Solutions:new({ sol() }, "python")
+                ui:show()
+                assert.are.equal(1, #resize_autocmds())
+                ui:close()
+                assert.are.equal(0, #resize_autocmds())
+                -- And a stray resize afterwards is a no-op.
+                resized()
+                assert.is_nil(ui.popup)
+            end)
+
+            it("keeps exactly one autocmd however often it re-renders or reopens", function()
+                resize(120, 39)
+                ui = Solutions:new({ sol(), sol() }, "python")
+                ui:show()
+                ui:show()
+                ui:jump_to(2)
+                ui:toggle_comments()
+                ui:toggle_comments()
+                resized()
+                assert.are.equal(1, #resize_autocmds())
+
+                ui:close()
+                ui:show()
+                ui:show()
+                assert.are.equal(1, #resize_autocmds())
+                ui:close()
+
+                -- A second popup opened later does not inherit the first's.
+                ui = Solutions:new({ sol() }, "python")
+                ui:show()
+                assert.are.equal(1, #resize_autocmds())
+            end)
+
+            it("drops its autocmd when the panes were closed from under it", function()
+                resize(120, 39)
+                ui = Solutions:new({ sol() }, "python")
+                ui:show()
+                assert.are.equal(1, #resize_autocmds())
+                pcall(vim.api.nvim_win_close, ui.popup.winid, true)
+                resized()
+                assert.are.equal(0, #resize_autocmds())
+            end)
         end)
     end)
 
