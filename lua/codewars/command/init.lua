@@ -1190,6 +1190,27 @@ end
 -- escapes differently.
 local OPEN_SLUG_PATTERN = "^[A-Za-z0-9_%-]+$"
 
+--- The argv that opens `url` on this system, for a Neovim without vim.ui.open.
+--- Windows is whatever has("win32") says; macOS has `open`; every other
+--- system, Linux and the BSDs included, is taken to have xdg-open.
+---@param url string
+---@return string[]
+local function opener_argv(url)
+    if vim.fn.has("win32") == 1 then
+        -- `start` is a cmd.exe builtin, so there is no way around cmd.exe,
+        -- and it reads & and | inside its arguments as command separators
+        -- even from an argv table. What keeps that harmless is the slug
+        -- check in cmd.open: the URL holds nothing cmd.exe acts on. The empty
+        -- string is the window title that start would otherwise take from
+        -- the URL.
+        return { "cmd.exe", "/c", "start", "", url }
+    end
+    if vim.loop.os_uname().sysname == "Darwin" then
+        return { "open", url }
+    end
+    return { "xdg-open", url }
+end
+
 function cmd.open()
     local utils = require("codewars.utils")
     local k = utils.curr_kata()
@@ -1210,20 +1231,11 @@ function cmd.open()
     else
         -- The URL must never be spliced into a string for the shell: an argv
         -- table hands it to the opener as one argument.
-        local os_name = vim.loop.os_uname().sysname
-        local open_cmd
-        if os_name == "Darwin" then
-            open_cmd = { "open", url }
-        elseif os_name == "Linux" then
-            open_cmd = { "xdg-open", url }
-        else
-            -- `start` is a cmd.exe builtin, so there is no way around cmd.exe,
-            -- and it reads & and | inside its arguments as command separators
-            -- even from an argv table. What keeps that harmless is the slug
-            -- check above: the URL holds nothing cmd.exe acts on. The empty
-            -- string is the window title that start would otherwise take
-            -- from the URL.
-            open_cmd = { "cmd.exe", "/c", "start", "", url }
+        local open_cmd = opener_argv(url)
+        if vim.fn.executable(open_cmd[1]) ~= 1 then
+            return log.error(
+                ("Can't open the kata: `%s` is not installed. Open it yourself: %s"):format(open_cmd[1], url)
+            )
         end
         vim.fn.jobstart(open_cmd, { detach = true })
     end
