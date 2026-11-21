@@ -50,6 +50,60 @@ describe("unfinished", function()
         assert.are.same({}, listed())
     end)
 
+    -- Re-indenting is not work, but whitespace between tokens is part of the
+    -- code: "hello world" and "helloworld" are different strings.
+    it("tells a changed space inside a string literal from the starter", function()
+        unfinished.seeded("greet.py", 'def f():\n    return "hello world"')
+        file("greet.py", 'def f():\n    return "helloworld"')
+        assert.are.same({ "greet.py" }, listed())
+    end)
+
+    it("tells whitespace between tokens from the starter", function()
+        unfinished.seeded("multiply.py", "def f(x):\n    y = x + 1")
+        file("multiply.py", "def f(x):\n    y = x+1")
+        assert.are.same({ "multiply.py" }, listed())
+    end)
+
+    it("passes over a starter whose indentation, runs of spaces and blank lines changed", function()
+        unfinished.seeded("multiply.py", "def f(x):\n    y = x + 1\n    return y")
+        file("multiply.py", "def f(x):\n\n\t y  =  x +\t1  \n\n  return y\n\n")
+        assert.are.same({}, listed())
+    end)
+
+    -- Records already on disk were made by the old fingerprint, which ignored
+    -- every space; new ones say which they are.
+    it("marks the fingerprints it writes with a version", function()
+        unfinished.seeded("multiply.py", STUB)
+        local record = vim.json.decode(table.concat(vim.fn.readfile(tmp .. "/.seeded.json"), "\n"))
+        assert.truthy(record["multiply.py"].prints[1]:find("^v2:"), vim.inspect(record))
+    end)
+
+    --- A record as an earlier version wrote it: a bare sha256 of the text with
+    --- every whitespace character removed.
+    local function legacy_record(name, starter)
+        local fp = vim.fn.sha256((starter:gsub("%s+", "")))
+        vim.fn.writefile({ vim.json.encode({ [name] = { prints = { fp } } }) }, tmp .. "/.seeded.json")
+    end
+
+    it("still reads a starter recorded by the old fingerprint, as that one did", function()
+        legacy_record("multiply.py", STUB)
+        file("multiply.py", "def f(x):\n  pass\n")
+        assert.are.same({}, listed(), "an old record made every seeded file look edited")
+        file("multiply.py", "def f(x):\n    return 1")
+        assert.are.same({ "multiply.py" }, listed())
+    end)
+
+    it("keeps an old record's starter through a template toggle, beside the new one", function()
+        legacy_record("multiply.py", STUB)
+        unfinished.retemplated("multiply.py", STUB, "import logging\n\n" .. STUB)
+        file("multiply.py", "import logging\n\n" .. STUB)
+        assert.are.same({}, listed())
+        file("multiply.py", STUB)
+        assert.are.same({}, listed())
+        file("multiply.py", "import logging\n\n" .. STUB .. "\n    return 1")
+        assert.are.same({ "multiply.py" }, listed())
+    end)
+
     it("passes over a kata completed in that language, by slug or by id", function()
         file("multiply.py", "solved")
         file("5264d2b162488dc400000001.py", "solved")

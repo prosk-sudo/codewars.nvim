@@ -14,11 +14,13 @@ All notable changes to codewars.nvim are documented here.
 - `:CW unfinished` lists the kata you started and never submitted, most
   recently changed first, and opens the one you pick in the language you were
   writing it in. A kata counts once its solution file no longer holds the
-  starter it was seeded with — one you only opened is left out — and once it
-  is not completed in that language. To know the starter, the plugin now
-  records a fingerprint of it in `.seeded.json` beside your solutions whenever
-  it seeds one, resets one or toggles a template on an untouched one. Files
-  from before that cannot be checked yet: they are listed, marked
+  starter it was seeded with — one you only opened is left out; re-indenting,
+  blank lines and a final newline do not count as a change, but a space
+  between two tokens does — and once it is not completed in that language.
+  To know the starter, the plugin now records a fingerprint of it in
+  `.seeded.json` beside your solutions whenever it seeds one, resets one or
+  toggles a template on an untouched one. Files from before that cannot be
+  checked yet: they are listed, marked
   `not checked`, until you next open the kata. Rows read like the kata list's:
   rank in its colour, the kata's name, its language and how long ago you last
   changed it. A kata the cached catalogue does not hold is named from when you

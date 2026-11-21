@@ -17,12 +17,53 @@ local M = {}
 
 local RECORD = ".seeded.json"
 
---- Whitespace does not count: re-indenting a starter, or the newline an
---- editor adds at the end of a file, is not work on the kata.
+--- A fingerprint made by the current algorithm starts with this. Records
+--- written before it existed hold bare digests, made the old way.
+local PRINT_V2 = "v2:"
+
+--- The old fingerprint: every whitespace character removed. It cannot tell
+--- `"hello world"` from `"helloworld"`, so nothing writes it any more; it
+--- stays so that a record already on disk is still compared the way it was
+--- made.
+---@param text string
+---@return string
+local function legacy_fingerprint(text)
+    return vim.fn.sha256((text:gsub("%s+", "")))
+end
+
+--- Layout does not count: re-indenting a starter, blank lines, or the newline
+--- an editor adds at the end of a file are not work on the kata. Whitespace
+--- between tokens does, so each line is trimmed and its inner runs of
+--- whitespace become one space, and nothing more is dropped.
 ---@param text string
 ---@return string
 function M.fingerprint(text)
-    return vim.fn.sha256((text:gsub("%s+", "")))
+    local lines = {}
+    for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
+        line = vim.trim((line:gsub("%s+", " ")))
+        if line ~= "" then lines[#lines + 1] = line end
+    end
+    return PRINT_V2 .. vim.fn.sha256(table.concat(lines, "\n"))
+end
+
+--- Whether `text` is one of the starters `prints` stand for, each print
+--- compared by the algorithm that made it.
+---@param prints string[]
+---@param text string
+---@return boolean
+local function holds_starter(prints, text)
+    local current, legacy = M.fingerprint(text), nil
+    for _, known in ipairs(prints) do
+        if type(known) == "string" then
+            if vim.startswith(known, PRINT_V2) then
+                if known == current then return true end
+            else
+                legacy = legacy or legacy_fingerprint(text)
+                if known == legacy then return true end
+            end
+        end
+    end
+    return false
 end
 
 local function record_path()
@@ -108,11 +149,10 @@ end
 function M.retemplated(file_name, before, after)
     local data = load()
     local rec = data[file_name]
-    if not (rec and vim.tbl_contains(rec.prints, M.fingerprint(before))) then return end
-    local print_after = M.fingerprint(after)
-    if vim.tbl_contains(rec.prints, print_after) then return end
+    if not (rec and holds_starter(rec.prints, before)) then return end
+    if holds_starter(rec.prints, after) then return end
     data[file_name] = with_info({
-        prints = vim.list_extend(vim.list_slice(rec.prints, 1, #rec.prints), { print_after }),
+        prints = vim.list_extend(vim.list_slice(rec.prints, 1, #rec.prints), { M.fingerprint(after) }),
         name = rec.name,
         rank_id = rec.rank_id,
     })
@@ -169,7 +209,7 @@ function M.list(completed)
             local path = home .. "/" .. name
             local rec = record[name]
             local text = rec and read(path)
-            if not (text and vim.tbl_contains(rec.prints, M.fingerprint(text))) then
+            if not (text and holds_starter(rec.prints, text)) then
                 local stat = vim.loop.fs_stat(path)
                 entries[#entries + 1] = {
                     key = key,
