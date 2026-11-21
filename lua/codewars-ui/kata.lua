@@ -106,16 +106,24 @@ function Kata:retemplate(op)
     return true
 end
 
---- Why this kata cannot name a file, or nil when it can. The slug and a picked
---- file name become path components in storage.home (and the slug one in the
---- session cache), and either can come from a Codewars reply or from what was
+--- Why this kata cannot name a file, or nil when it can. The slug, the
+--- language and a picked file name become path components in storage.home and
+--- the session cache, and each can come from a Codewars reply or from what was
 --- typed, so each must be a plain name: nothing in it may carry a separator or
 --- `..` out of those directories.
+---
+--- Each is judged as it was given. Only nil means "not given" (the language
+--- then defaults, a file is simply not picked); `false`, `""`, a number or a
+--- table was given, and is invalid.
 ---@return string?
 function Kata:_unsafe_name()
     if not safe_name.is_slug(self.slug) then
         return ("Invalid kata slug %s: only letters, digits, '_' and '-' are allowed, so it cannot name a "
             .. "solution file."):format(vim.inspect(self.slug))
+    end
+    if not safe_name.is_slug(self.lang) then
+        return ("Invalid language %s: only letters, digits, '_' and '-' are allowed, so it cannot name a "
+            .. "solution file."):format(vim.inspect(self.lang))
     end
     local picked = self._picked_file
     if picked ~= nil and not safe_name.is_file_name(picked) then
@@ -455,8 +463,15 @@ function Kata:mount()
                 return
             end
             local fallback = kata_data.languages[1]
-            log.info(("Using %s ('%s' not available for this kata)"):format(fallback, self.lang))
+            local requested_lang = self.lang
             self.lang = fallback
+            -- Codewars chose this language, not the user: it names the session
+            -- file and the solution's extension, so it gets the same check.
+            if self:_refuse_unsafe_name() then
+                self.lang = requested_lang
+                return
+            end
+            log.info(("Using %s ('%s' not available for this kata)"):format(fallback, requested_lang))
 
             -- The duplicate check above ran with the REQUESTED language; the
             -- kata may already be open in the one we just fell back to.
@@ -822,8 +837,16 @@ end)
 function Kata:new(slug, lang, opts)
     local obj = setmetatable({}, self)
     obj.slug = slug
-    obj.lang = lang or config.lang
-    obj._picked_file = opts and opts.file or nil
+    -- Kept as given, not coerced with `or`/`and`: a `false` or `""` that was
+    -- passed on purpose is for _unsafe_name to refuse, not for a default or a
+    -- nil to hide. Only an absent (nil) value falls back or means "not given".
+    obj.lang = lang
+    if obj.lang == nil then
+        obj.lang = config.lang
+    end
+    if opts ~= nil then
+        obj._picked_file = opts.file
+    end
     obj.last_attempt_success = false
     obj.finalized = false
     return obj

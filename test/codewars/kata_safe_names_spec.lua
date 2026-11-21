@@ -87,7 +87,12 @@ local function write(path, text)
 end
 
 describe("a kata with a slug that cannot name a file", function()
-    local BAD = { "../evil", "a/b", "..", "", "a\\b", "a b", "evil.py", "../" .. HEX, HEX .. "/x", "a\nb" }
+    -- A slug that was passed but is not a string (`false`, a number, a table)
+    -- was given, and is as invalid as one with a `/` in it.
+    local BAD = {
+        "../evil", "a/b", "..", "", "a\\b", "a b", "evil.py", "../" .. HEX, HEX .. "/x", "a\nb",
+        false, true, 0, 12, {},
+    }
 
     before_each(function()
         errors, get_calls, train_calls, get_reply = {}, 0, 0, nil
@@ -133,6 +138,16 @@ describe("a kata with a slug that cannot name a file", function()
             session_cache.delete(slug, "python")
         end)
     end
+
+    it("is refused when none was passed at all", function()
+        local before = snapshot()
+        local kata = Kata:new(nil, "python")
+        assert.has_no.errors(function() kata:mount() end)
+        assert.are.equal(0, get_calls)
+        assert.are.same(before, snapshot())
+        assert.are.equal(1, #errors, vim.inspect(errors))
+        assert.truthy(errors[1]:find("slug", 1, true), errors[1])
+    end)
 
     it("is refused when Codewars is the one that sends it", function()
         get_reply = { id = HEX, slug = "../evil", languages = { "python" } }
@@ -278,7 +293,13 @@ describe("a file picked from a list", function()
         return kata
     end
 
-    for _, file in ipairs({ "../x.py", "a/b.py", "/etc/x.py", "..\\x.py", "a\\b.py", "x..py", "x.y.py", ".py", "x.py/" }) do
+    -- `file` given as `false`, `true`, a number, `""` or a table was given,
+    -- and is refused like a bad string: only an absent one means "not picked".
+    local BAD_FILES = {
+        "../x.py", "a/b.py", "/etc/x.py", "..\\x.py", "a\\b.py", "x..py", "x.y.py", ".py", "x.py/",
+        false, true, 0, "", {},
+    }
+    for _, file in ipairs(BAD_FILES) do
         local label = vim.inspect(file)
 
         it(("%s is refused on mount: no request, no file, an error naming it"):format(label), function()
@@ -331,6 +352,101 @@ describe("a file picked from a list", function()
 
         assert.are.equal(HEX .. ".py", kata._file_name)
         assert.are.equal("the id one", read(kata.file:absolute()))
+        assert.are.same({}, errors)
+    end)
+
+    -- Only a `file` that is absent means "not picked".
+    local NOT_GIVEN = {
+        function(slug) return Kata:new(slug, "python") end,
+        function(slug) return Kata:new(slug, "python", {}) end,
+        function(slug) return Kata:new(slug, "python", { file = nil }) end,
+    }
+    for form, build in ipairs(NOT_GIVEN) do
+        it(("opens the slug's own file when no file was given (form %d)"):format(form), function()
+            local slug = "not-picked-" .. form
+            local kata = build(slug)
+            kata.setup_code = "def f():\n    pass"
+
+            kata:path()
+
+            assert.are.equal(slug .. ".py", kata._file_name)
+            assert.are.equal(1, vim.fn.filereadable(home_dir .. "/" .. slug .. ".py"))
+            assert.are.same({}, errors)
+        end)
+    end
+end)
+
+-- The language is joined into the session file name and picks the solution's
+-- extension, so it is judged like the slug: as given, nil being the only way
+-- to ask for the default.
+describe("a kata with a language that cannot name a file", function()
+    before_each(function()
+        errors, get_calls, train_calls, get_reply = {}, 0, 0, nil
+    end)
+
+    for _, lang in ipairs({ false, true, 0, "", {}, "../evil", "a/b", "x y" }) do
+        local label = vim.inspect(lang)
+
+        it(("%s is refused on mount: no request, no file, an error naming it"):format(label), function()
+            local before = snapshot()
+            local kata = Kata:new("valid-braces", lang)
+            kata._on_mounted = function() end
+
+            assert.has_no.errors(function() kata:mount() end)
+
+            assert.are.equal(0, get_calls)
+            assert.are.same(before, snapshot(), "created or changed a file")
+            assert.is_nil(kata._on_mounted)
+            assert.are.equal(1, #errors, vim.inspect(errors))
+            assert.truthy(errors[1]:find("language", 1, true), errors[1])
+            assert.truthy(errors[1]:find(label, 1, true), errors[1])
+        end)
+
+        it(("%s cannot reach a file by way of Kata:path"):format(label), function()
+            local before = snapshot()
+            local ok, err = pcall(function() return Kata:new("valid-braces", lang):path() end)
+            assert.is_false(ok)
+            assert.truthy(tostring(err):find("language", 1, true), tostring(err))
+            assert.are.same(before, snapshot(), "created or changed a file")
+        end)
+    end
+
+    it("defaults to the configured language only when none was given", function()
+        local kata = Kata:new("default-lang")
+        kata.setup_code = "def f():\n    pass"
+        assert.are.equal("python", kata.lang)
+        kata:path()
+        assert.are.equal("default-lang.py", kata._file_name)
+        assert.are.same({}, errors)
+    end)
+
+    it("is refused when Codewars is the one that names the fallback language", function()
+        for _, sent in ipairs({ "../evil", "a/b", "", false, 0, {} }) do
+            errors, train_calls = {}, 0
+            get_reply = { id = HEX, slug = "valid-braces", languages = { sent } }
+            local before = snapshot()
+            local kata = Kata:new("valid-braces", "python")
+            kata._on_mounted = function() end
+
+            assert.has_no.errors(function() kata:mount() end)
+
+            assert.are.equal(0, train_calls, "went on to start a session for " .. vim.inspect(sent))
+            assert.are.same(before, snapshot(), "created or changed a file")
+            assert.is_nil(kata._on_mounted)
+            assert.are.equal("python", kata.lang, "adopted " .. vim.inspect(sent))
+            assert.are.equal(1, #errors, vim.inspect(errors))
+            assert.truthy(errors[1]:find("language", 1, true), errors[1])
+        end
+    end)
+
+    it("still falls back to a language Codewars lists that can name a file", function()
+        get_reply = { id = HEX, slug = "valid-braces", languages = { "ruby" } }
+        local kata = Kata:new("valid-braces", "python")
+
+        assert.has_no.errors(function() kata:mount() end)
+
+        assert.are.equal(1, train_calls)
+        assert.are.equal("ruby", kata.lang)
         assert.are.same({}, errors)
     end)
 end)
