@@ -22,6 +22,10 @@ local HEIGHT = 0.7
 local COMMENTS_SHARE = 0.4
 local INFO_HEIGHT = 1
 local BORDER = 2 -- rows a bordered popup costs beyond its content
+local MIN_CONTENT = 1 -- content rows a pane keeps at the least
+-- Rows the stack needs for the code pane and a second pane, both at
+-- MIN_CONTENT, each with its border.
+local MIN_STACK = 2 * (MIN_CONTENT + BORDER)
 
 -- Vote keys. Deliberately two-key: `b` and `v` are what a reader presses
 -- reflexively in a code buffer (back a word, visual select), and a vote
@@ -127,7 +131,14 @@ end
 --- comments pane under it (the info box gives way, its hints move into the
 --- comments title). Sized from the editor and CLAMPED to it: the box is
 --- at least wide enough for the info line (so its hints are never cut
---- off) and never taller than the screen or placed above row 0.
+--- off), and the stack never starts above row 0 or ends below the last
+--- usable row. Every `row` is a CONTENT row: nui draws each border one row
+--- above it, so the stack's top edge is `row - 1`.
+---
+--- Two bordered panes need MIN_STACK rows. On an editor too short for that
+--- the second pane (info box or comments) is dropped, returned as nil, and
+--- the code pane takes what fits; if even one bordered pane does not fit,
+--- it is clamped to a single content row.
 ---@param sol cw.Solution? the solution whose info line sets the minimum width
 ---@return table code_geom, table? info_geom, table? comments_geom
 function Solutions:geometry(sol)
@@ -137,18 +148,25 @@ function Solutions:geometry(sol)
     width = math.min(width, math.max(1, cols - BORDER))
     local col = math.max(0, math.floor((cols - width) / 2))
 
-    local total = math.min(math.max(6, math.floor(rows * HEIGHT)), math.max(1, rows))
-    local row = math.max(0, math.floor((rows - total) / 2))
+    local total = math.min(math.max(MIN_STACK, math.floor(rows * HEIGHT)), math.max(1, rows))
+    -- At least 1: the top border sits on `row - 1`, which must not be above
+    -- the screen. Only a stack that fills (almost) the whole editor is moved.
+    local row = math.max(1, math.floor((rows - total) / 2))
+
+    if total < MIN_STACK then
+        local code_h = math.max(MIN_CONTENT, total - BORDER)
+        return { width = width, height = code_h, row = row, col = col }, nil, nil
+    end
 
     if self.show_comments then
-        local inner = math.max(2, total - 2 * BORDER)
-        local comments_h = math.max(1, math.floor(inner * COMMENTS_SHARE))
-        local code_h = math.max(1, inner - comments_h)
+        local inner = total - 2 * BORDER
+        local comments_h = math.max(MIN_CONTENT, math.floor(inner * COMMENTS_SHARE))
+        local code_h = math.max(MIN_CONTENT, inner - comments_h)
         return { width = width, height = code_h, row = row, col = col }, nil,
             { width = width, height = comments_h, row = row + code_h + BORDER, col = col }
     end
 
-    local code_h = math.max(1, total - INFO_HEIGHT - 2 * BORDER)
+    local code_h = total - INFO_HEIGHT - 2 * BORDER
     return { width = width, height = code_h, row = row, col = col },
         { width = width, height = INFO_HEIGHT, row = row + code_h + BORDER, col = col }, nil
 end

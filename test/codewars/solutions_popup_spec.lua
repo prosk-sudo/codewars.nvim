@@ -297,6 +297,143 @@ describe("Solutions popup", function()
         end)
     end)
 
+    -- Each pane is a bordered popup, and nui draws the border one row above
+    -- the content row it is given. Two panes therefore need 6 rows at the
+    -- least (1 + 2 border, twice); the old geometry forced each content
+    -- height to 1 anyway and drew the bottom pane past the last row.
+    describe("geometry on short editors", function()
+        local BORDER = 2
+        local saved
+        before_each(function() saved = { vim.o.columns, vim.o.lines, vim.o.cmdheight } end)
+        after_each(function()
+            if ui then ui:close() end
+            ui = nil
+            vim.o.cmdheight, vim.o.columns, vim.o.lines = saved[3], saved[1], saved[2]
+        end)
+
+        -- An editor `cols` wide with `rows` usable rows (lines minus the
+        -- command line, which is what the geometry reads).
+        local function resize(cols, rows)
+            vim.o.cmdheight = 1
+            vim.o.columns = cols
+            vim.o.lines = rows + vim.o.cmdheight
+        end
+
+        local function geometry(show_comments, solution)
+            local s = Solutions:new({ sol() }, "python")
+            s.show_comments = show_comments
+            return s:geometry(solution)
+        end
+
+        -- The rows the pane really covers on screen, border included.
+        local function covered(g)
+            return { top = g.row - 1, bottom = g.row + g.height + 1 }
+        end
+
+        local function assert_on_screen(g, rows, label)
+            local c = covered(g)
+            assert.is_true(c.top >= 0, ("%s starts above row 0 (%d)"):format(label, c.top))
+            assert.is_true(c.bottom <= rows,
+                ("%s ends at row %d, past the %d usable rows"):format(label, c.bottom, rows))
+        end
+
+        it("keeps the sizes of a typical editor exactly", function()
+            resize(120, 39)
+            local code, info, comments = geometry(false)
+            assert.are.same({ width = 96, height = 22, row = 6, col = 12 }, code)
+            assert.are.same({ width = 96, height = 1, row = 30, col = 12 }, info)
+            assert.is_nil(comments)
+
+            code, info, comments = geometry(true)
+            assert.are.same({ width = 96, height = 14, row = 6, col = 12 }, code)
+            assert.is_nil(info)
+            assert.are.same({ width = 96, height = 9, row = 22, col = 12 }, comments)
+        end)
+
+        it("keeps the sizes of the default 80x24 terminal exactly", function()
+            resize(80, 23)
+            local code, info, comments = geometry(false)
+            assert.are.same({ width = 64, height = 11, row = 3, col = 8 }, code)
+            assert.are.same({ width = 64, height = 1, row = 16, col = 8 }, info)
+            assert.is_nil(comments)
+
+            code, info, comments = geometry(true)
+            assert.are.same({ width = 64, height = 8, row = 3, col = 8 }, code)
+            assert.is_nil(info)
+            assert.are.same({ width = 64, height = 4, row = 13, col = 8 }, comments)
+        end)
+
+        it("stacks both panes flush and on screen whenever the two of them fit", function()
+            for rows = 6, 60 do
+                resize(120, rows)
+                for _, show_comments in ipairs({ false, true }) do
+                    local code, info, comments = geometry(show_comments)
+                    local second, other = info, comments
+                    if show_comments then second, other = comments, info end
+                    local label = ("rows=%d comments=%s"):format(rows, tostring(show_comments))
+                    assert.is_not_nil(second, label .. ": second pane dropped although it fits")
+                    assert.is_nil(other, label .. ": the other mode's pane must stay nil")
+                    assert_on_screen(code, rows, label .. " code")
+                    assert_on_screen(second, rows, label .. " second")
+                    assert.are.equal(covered(code).bottom, covered(second).top, label .. ": not flush")
+                    assert.are.equal(code.col, second.col)
+                    assert.are.equal(code.width, second.width)
+                end
+            end
+        end)
+
+        it("drops the second pane and keeps the code pane on screen when only one fits", function()
+            for rows = 3, 5 do
+                resize(120, rows)
+                for _, show_comments in ipairs({ false, true }) do
+                    local code, info, comments = geometry(show_comments)
+                    local label = ("rows=%d comments=%s"):format(rows, tostring(show_comments))
+                    assert.is_nil(info, label .. ": info box")
+                    assert.is_nil(comments, label .. ": comments pane")
+                    assert.is_true(code.height >= 1, label .. ": code pane has no content row")
+                    assert_on_screen(code, rows, label .. " code")
+                end
+            end
+        end)
+
+        it("gives the code pane every row that fits once the second pane is dropped", function()
+            resize(120, 5)
+            assert.are.equal(5 - BORDER, (geometry(false)).height)
+            assert.are.equal(5 - BORDER, (geometry(true)).height)
+        end)
+
+        it("clamps to the smallest valid pane, without erroring, when not even one fits", function()
+            resize(120, 2)
+            for _, show_comments in ipairs({ false, true }) do
+                local ok, code, info, comments = pcall(geometry, show_comments)
+                assert.is_true(ok, tostring(code))
+                assert.are.equal(1, code.height)
+                assert.is_true(code.row >= 1, "the top border would start above row 0")
+                assert.is_nil(info)
+                assert.is_nil(comments)
+            end
+        end)
+
+        it("mounts only the code pane on a 5-row editor and the toggle does not error", function()
+            resize(120, 5)
+            ui = Solutions:new({ sol() }, "python")
+            ui:show()
+            assert.is_nil(ui.info_popup)
+            assert.is_nil(ui.comments_popup)
+            local code = box(ui.popup)
+            assert.is_true(code.row >= 0)
+            assert.is_true(code.row + code.height <= 5, "code pane runs past the last usable row")
+            -- Votes redraw the info box; with none mounted that is a no-op.
+            ui:draw_info(ui.solutions[1])
+
+            ui:toggle_comments()
+            assert.is_nil(ui.comments_popup)
+            assert.are.equal(ui.popup.winid, vim.api.nvim_get_current_win(), "focus must fall back to the code pane")
+            ui:toggle_comments()
+            assert.is_nil(ui.info_popup)
+        end)
+    end)
+
     it("still accepts a plain list of code strings", function()
         ui = Solutions:new({ "return 1 -- one", "return 2 -- two" }, "lua")
         ui:show()
