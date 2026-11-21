@@ -105,6 +105,9 @@ describe("cmd.focus", function()
     -- Same for skip, whose reply is the other path that records a focus.
     local skip_hold = false
     local held_skips = {}
+    -- The options each trainer call was given, so the cancel predicate the
+    -- command hands down can be observed.
+    local fetch_opts, skip_opts
     package.loaded["codewars.api.trainer"] = {
         STRATEGIES = {
             fundamentals = "reference_workout",
@@ -112,7 +115,8 @@ describe("cmd.focus", function()
             practice_and_repeat = "retrain_workout",
             beta = "beta_workout",
         },
-        next_kata = function(cat, lang, cb)
+        next_kata = function(cat, lang, cb, opts)
+            fetch_opts = opts
             table.insert(trainer_calls, { cat = cat, lang = lang })
             if trainer_hold then
                 table.insert(held_fetches, function()
@@ -125,7 +129,8 @@ describe("cmd.focus", function()
             end
             cb({ slug = "served-kata-" .. #trainer_calls })
         end,
-        skip = function(cat, lang, cb)
+        skip = function(cat, lang, cb, opts)
+            skip_opts = opts
             table.insert(skip_calls, { cat = cat, lang = lang })
             if skip_hold then
                 table.insert(held_skips, function()
@@ -182,6 +187,7 @@ describe("cmd.focus", function()
         held_fetches = {}
         skip_hold = false
         held_skips = {}
+        fetch_opts, skip_opts = nil, nil
         _Cw_state.katas = {}
     end)
 
@@ -575,5 +581,38 @@ describe("cmd.focus", function()
 
         cmd.focus({ _positional = { "go", "beta" } }) -- the new account's focus
         assert.are.same({ lang = "go", category = "beta", slug = "served-kata-2" }, cmd.current_focus())
+    end)
+
+    -- The trainer chains several requests per focus, and every one after the
+    -- first is sent under whichever account is signed in by then. The command
+    -- hands it a predicate so it can stop between requests, not just have its
+    -- final reply dropped.
+    it("a focus fetch is cancellable once forget_focus runs", function()
+        trainer_hold = true
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        assert.is_false(fetch_opts.cancelled())
+        cmd.forget_focus()
+        assert.is_true(fetch_opts.cancelled())
+
+        trainer_hold = false
+        for _, resolve in ipairs(held_fetches) do resolve() end
+    end)
+
+    it("a skip fetch is cancellable once forget_focus runs", function()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        skip_hold = true
+        cmd.focus_skip()
+        assert.is_false(skip_opts.cancelled())
+        cmd.forget_focus()
+        assert.is_true(skip_opts.cancelled())
+
+        skip_hold = false
+        for _, resolve in ipairs(held_skips) do resolve() end
+    end)
+
+    it("a fetch started after forget_focus is not cancelled by it", function()
+        cmd.forget_focus()
+        cmd.focus({ _positional = { "python", "rank_up" } })
+        assert.is_false(fetch_opts.cancelled())
     end)
 end)

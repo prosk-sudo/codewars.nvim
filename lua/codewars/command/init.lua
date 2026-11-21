@@ -790,6 +790,17 @@ local _last_focus = nil ---@type { lang: string, category: string, slug: string?
 -- reply if forget_focus has bumped it since.
 local _focus_gen = 0
 
+--- A predicate for the trainer: true once forget_focus has run since `gen`.
+--- Dropping the final reply is not enough, because the trainer chains
+--- requests and every one after the first is sent under whichever account is
+--- signed in by then. That includes the completed self-heal's pop, which
+--- cannot be undone, so the trainer polls this before each request.
+---@param gen integer
+---@return fun(): boolean
+local function focus_cancelled(gen)
+    return function() return gen ~= _focus_gen end
+end
+
 --- Forget the remembered focus kata. Called on an identity change: the
 --- queue it came from belongs to the previous account, so a `:CW focus
 --- skip` after signing in as someone else must not act on it. A fetch still
@@ -891,7 +902,7 @@ local function focus_run(lang, category, on_mounted)
         local lf = { lang = lang, category = category }
         _last_focus = lf
         mount_focus_kata(lf, lang, kata, on_mounted)
-    end)
+    end, { cancelled = focus_cancelled(gen) })
 end
 
 --- Validate positional args for :CW focus.
@@ -981,7 +992,7 @@ function cmd.focus_skip()
         local lf = { lang = lang, category = category }
         _last_focus = lf
         mount_focus_kata(lf, lang, kata, close_prev)
-    end)
+    end, { cancelled = focus_cancelled(gen) })
 end
 
 --- Called by the runner after a kata is finalized. The trainer queue only
