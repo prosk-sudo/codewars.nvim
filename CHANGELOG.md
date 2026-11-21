@@ -186,6 +186,8 @@ All notable changes to codewars.nvim are documented here.
   stop for the rest of the session, silently.
 - The menu no longer jumps as the stats arrive: the row is reserved from the
   first draw rather than appearing and pushing the block down.
+- A cache write that fails partway now keeps the previous cache; the file
+  itself, with its owner, permissions and read-only state, is never swapped out.
 
 ## [0.3.4] - 2026-08-29
 

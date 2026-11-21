@@ -1,4 +1,5 @@
 local cache_utils = require("codewars.cache.utils")
+local backup = require("codewars.cache.backup")
 
 --- On-disk stash for unsaved workspace edits. Kumite and kata both need one; only the filename prefix and the entry
 --- shape differ, so the mechanism lives here once.
@@ -34,17 +35,15 @@ function M.for_kind(prefix)
     ---@param id string
     ---@return table?
     function kind.get(id)
-        local path = file(id)
-        if not path:exists() then
-            return nil
-        end
-        return cache_utils.read_json(path)
+        -- No exists() check first: a stash with only its backup left is read too.
+        return cache_utils.read_json(file(id))
     end
 
     ---@param id string
     ---@return boolean removed
     function kind.delete(id)
         local path = file(id)
+        backup.drop(path)
         if not path:exists() then
             return false
         end

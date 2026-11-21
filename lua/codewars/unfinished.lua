@@ -12,6 +12,7 @@
 --- marked as such, until the kata is opened again.
 local config = require("codewars.config")
 local cache_utils = require("codewars.cache.utils")
+local backup = require("codewars.cache.backup")
 
 local M = {}
 
@@ -245,7 +246,8 @@ function M.list(completed)
     local entries = {}
     for name, kind in vim.fs.dir(home) do
         local key, ext = name:match("^(.+)%.([^.]+)$")
-        local lang = ext and lang_of[ext]
+        -- A cache backup (.seeded.json.bak) lies among the solutions; it is never one of them.
+        local lang = ext and not backup.is_backup(name) and lang_of[ext]
         local path = home .. "/" .. name
         local is_solution, stat
         if lang and not done[key .. "|" .. lang] then is_solution, stat = solution_file(path, kind) end

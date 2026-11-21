@@ -1,6 +1,7 @@
 local config = require("codewars.config")
 local log = require("codewars.logger")
 local cache_utils = require("codewars.cache.utils")
+local backup = require("codewars.cache.backup")
 
 ---@class cw.Cache.Completed
 local completed = {}
@@ -129,6 +130,7 @@ function completed.clear()
     flights = {}
     unsaved_details = {}
     for _, f in ipairs({ list_file(), details_file() }) do
+        backup.drop(f)
         if f:exists() then pcall(f.rm, f) end
     end
 end

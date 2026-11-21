@@ -2,6 +2,7 @@ local config = require("codewars.config")
 -- vim.uv arrived in 0.10; the plugin still supports 0.9.
 local uv = vim.uv or vim.loop
 local cache_utils = require("codewars.cache.utils")
+local backup = require("codewars.cache.backup")
 
 ---@class cw.Cache.Problemlist
 local problemlist = {}
@@ -250,6 +251,7 @@ local function load_checkpoint()
 end
 
 local function remove_checkpoint()
+    backup.drop(checkpoint_file())
     pcall(os.remove, tostring(checkpoint_file()))
 end
 
@@ -498,6 +500,7 @@ end
 
 function problemlist.delete()
     local f = cache_file()
+    backup.drop(f)
     if f:exists() then f:rm() end
     remove_checkpoint()
 end

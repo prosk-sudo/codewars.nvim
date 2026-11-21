@@ -1,4 +1,5 @@
 local cache_utils = require("codewars.cache.utils")
+local backup = require("codewars.cache.backup")
 
 --- Who you are, remembered between launches.
 ---
@@ -132,6 +133,7 @@ end
 ---@return boolean removed
 function M.clear()
     local f = file()
+    backup.drop(f)
     local ok, exists = pcall(function() return f:exists() end)
     if not ok or not exists then
         return false
