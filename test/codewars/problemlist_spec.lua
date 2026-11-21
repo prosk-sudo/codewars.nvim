@@ -576,3 +576,68 @@ describe("cache.problemlist daily check", function()
         assert.equals(1, #requested)
     end)
 end)
+
+-- What the kata-list build paces itself with, shared with the other lookups
+-- that have to stay under Codewars' ~60 requests a minute.
+describe("cache.problemlist pacing helpers", function()
+    local problemlist = require("codewars.cache.problemlist")
+    local uv = vim.uv or vim.loop
+    local saved, timers
+
+    before_each(function()
+        saved = {
+            defer_fn = vim.defer_fn,
+            pace = problemlist.PACE_MS,
+            max_pace = problemlist.MAX_PACE_MS,
+            cooldown = problemlist.COOLDOWN_MS,
+            max_cooldown = problemlist.MAX_COOLDOWN_MS,
+        }
+        problemlist.PACE_MS, problemlist.MAX_PACE_MS = 1100, 2000
+        problemlist.COOLDOWN_MS, problemlist.MAX_COOLDOWN_MS = 15000, 60000
+        timers = {}
+        vim.defer_fn = function(fn, ms) timers[#timers + 1] = { fn = fn, ms = ms } end
+    end)
+
+    after_each(function()
+        vim.defer_fn = saved.defer_fn
+        problemlist.PACE_MS, problemlist.MAX_PACE_MS = saved.pace, saved.max_pace
+        problemlist.COOLDOWN_MS, problemlist.MAX_COOLDOWN_MS = saved.cooldown, saved.max_cooldown
+    end)
+
+    it("doubles the cooldown after each refusal in a row, up to its ceiling", function()
+        local waits = vim.tbl_map(problemlist.cooldown_ms, { 1, 2, 3, 4 })
+        assert.are.same({ 15000, 30000, 60000, 60000 }, waits)
+    end)
+
+    it("slows the pace by a quarter after a refusal, up to its ceiling", function()
+        assert.are.equal(1375, problemlist.slower(1100))
+        assert.are.equal(2000, problemlist.slower(1900))
+    end)
+
+    it("runs the first request at once and holds each later one to the pace", function()
+        local paced = problemlist.pacer(function() return 1000 end, function() return false end)
+        local ran = 0
+        paced(function() ran = ran + 1 end)
+        assert.are.equal(0, timers[1].ms)
+        timers[1].fn()
+        paced(function() ran = ran + 1 end)
+        assert.is_true(timers[2].ms > 900 and timers[2].ms <= 1000, timers[2].ms)
+        timers[2].fn()
+        assert.are.equal(2, ran)
+    end)
+
+    it("waits out the pace before a first request when one has just been sent", function()
+        local paced = problemlist.pacer(function() return 1000 end, function() return false end, uv.now())
+        paced(function() end)
+        assert.is_true(timers[1].ms > 900 and timers[1].ms <= 1000, timers[1].ms)
+    end)
+
+    it("sends nothing once cancelled, even if it was already waiting", function()
+        local cancelled, ran = false, false
+        local paced = problemlist.pacer(function() return 1000 end, function() return cancelled end)
+        paced(function() ran = true end)
+        cancelled = true
+        timers[1].fn()
+        assert.is_false(ran)
+    end)
+end)

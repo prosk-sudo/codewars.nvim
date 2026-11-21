@@ -7,12 +7,13 @@ local kata = {}
 
 ---@param slug string
 ---@param cb? function
+---@param opts? table request options for the request layer, e.g. `retry_rate_limited = false` for a caller that paces itself; only with `cb`
 ---@return table?, cw.err?
-function kata.get(slug, cb)
+function kata.get(slug, cb, opts)
     local endpoint = urls.kata:format(slug)
 
     if cb then
-        utils.get(endpoint, { callback = cb })
+        utils.get(endpoint, vim.tbl_extend("force", opts or {}, { callback = cb }))
     else
         return utils.get(endpoint)
     end

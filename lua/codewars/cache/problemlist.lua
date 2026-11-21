@@ -44,6 +44,45 @@ problemlist.MAX_COOLDOWN_MS = 60000
 --- server that will not let a single page through.
 problemlist.MAX_COOLDOWNS = 4
 
+--- How long to wait after the `refusals`-th 429 in a row: COOLDOWN_MS,
+--- doubling each time, up to MAX_COOLDOWN_MS.
+---@param refusals integer
+---@return integer ms
+function problemlist.cooldown_ms(refusals)
+    return math.floor(math.min(problemlist.COOLDOWN_MS * 2 ^ (refusals - 1), problemlist.MAX_COOLDOWN_MS))
+end
+
+--- The pace after a 429: a quarter slower, up to MAX_PACE_MS.
+---@param pace_ms integer
+---@return integer ms
+function problemlist.slower(pace_ms)
+    return math.min(math.floor(pace_ms * 1.25), problemlist.MAX_PACE_MS)
+end
+
+--- A scheduler for paced requests: `paced(fn)` runs `fn` no sooner than
+--- `pace_ms()` after the previous one started. Always deferred, even at zero
+--- delay, so a request whose callback fires synchronously cannot recurse
+--- through a whole run. Once `cancelled()` is true nothing more is sent, even
+--- by a request already waiting its turn.
+---@param pace_ms fun(): integer read each time, so a run can slow down
+---@param cancelled fun(): boolean
+---@param since integer? when the previous request started (uv.now()), if one just did
+---@return fun(fn: function)
+function problemlist.pacer(pace_ms, cancelled, since)
+    local last_start = since
+    return function(fn)
+        local wait = 0
+        if last_start then
+            wait = math.max(0, last_start + pace_ms() - uv.now())
+        end
+        vim.defer_fn(function()
+            if cancelled() then return end
+            last_start = uv.now()
+            fn()
+        end, wait)
+    end
+end
+
 --- The cached list, and whether it is older than `cache.update_interval`.
 --- A stale list is still returned: the catalogue changes slowly and a full
 --- rebuild takes minutes, so callers show what they have and refresh in the
@@ -260,7 +299,6 @@ function problemlist.update(opts, cb)
     local rank_idx = 0
     local aborted = false
     local pace_ms = problemlist.PACE_MS
-    local last_start = nil ---@type integer?
     local cooldowns = 0
 
     -- The rank being fetched and what it has produced so far. Not in
@@ -345,17 +383,7 @@ function problemlist.update(opts, cb)
     --- Run `fn` no sooner than the pace allows since the previous request.
     --- Always deferred, even at zero delay, so a page whose callback fires
     --- synchronously cannot recurse through a whole rank.
-    local function paced(fn)
-        local wait = 0
-        if last_start then
-            wait = math.max(0, last_start + pace_ms - uv.now())
-        end
-        vim.defer_fn(function()
-            if aborted then return end
-            last_start = uv.now()
-            fn()
-        end, wait)
-    end
+    local paced = problemlist.pacer(function() return pace_ms end, function() return aborted end)
 
     local fetch_rank
 
@@ -409,8 +437,8 @@ function problemlist.update(opts, cb)
                     end
                     -- Wait the limiter out, then ask for the SAME page at a
                     -- slower pace. Ending the rank here would truncate it.
-                    local wait = math.floor(math.min(problemlist.COOLDOWN_MS * 2 ^ (cooldowns - 1), problemlist.MAX_COOLDOWN_MS))
-                    pace_ms = math.min(math.floor(pace_ms * 1.25), problemlist.MAX_PACE_MS)
+                    local wait = problemlist.cooldown_ms(cooldowns)
+                    pace_ms = problemlist.slower(pace_ms)
                     spinner:update(("Rate limited by Codewars — resuming in %ds (%d found, %s)"):format(
                         math.floor(wait / 1000), this.found, label))
                     return vim.defer_fn(function()
