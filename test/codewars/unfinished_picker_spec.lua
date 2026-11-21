@@ -5,6 +5,7 @@ describe(":CW unfinished", function()
     local config = require("codewars.config")
     local picker, opened, mounted, said, entries, catalogue, completed, updates, listed_with
     local details, asked, asked_opts, provider, recent_items, order, detect
+    local fetched, stale -- what the completed cache says of the list on disk
     local saved = {}
     local STUBBED = {
         "codewars.picker", "codewars.picker.dropdown", "codewars.cache.completed",
@@ -48,6 +49,7 @@ describe(":CW unfinished", function()
         opened, mounted, said, updates, listed_with = nil, nil, {}, 0, nil
         details, asked, asked_opts, provider, recent_items = {}, nil, nil, "telescope", {}
         order = {}
+        fetched, stale = true, false
         -- Who is signed in: known already unless a test says it is not.
         detect = function(cb)
             if config.user.username ~= "" then return cb(config.user.username) end
@@ -77,11 +79,12 @@ describe(":CW unfinished", function()
             _reset = function() end,
         }
         package.loaded["codewars.cache.completed"] = {
-            get = function() return completed, false end,
+            get = function() return completed, stale, fetched end,
             update = function(cb)
                 updates = updates + 1
                 order[#order + 1] = "fetch"
                 completed = { { slug = "fetched", completedLanguages = { "python" } } }
+                fetched = true
                 cb(completed)
             end,
             mark = function() end,
@@ -393,7 +396,7 @@ describe(":CW unfinished", function()
     it("fetches your completed list first when there is none yet", function()
         local saved_user = config.user.username
         config.user.username = "me"
-        completed = {}
+        completed, fetched = {}, false
         picker.unfinished()
         vim.wait(100, function() return opened ~= nil end)
         config.user.username = saved_user
@@ -410,7 +413,7 @@ describe(":CW unfinished", function()
         before_each(function()
             saved_user = config.user.username
             config.user.username = ""
-            completed = {}
+            completed, fetched = {}, false
         end)
 
         after_each(function()
@@ -467,11 +470,126 @@ describe(":CW unfinished", function()
         -- Offline, or before the menu was ever opened, a list on disk is
         -- still a list: nothing to detect, nothing to fetch.
         it("opens on the completed list on disk, without detecting anything", function()
-            completed = { { slug = "done", completedLanguages = { "python" } } }
+            completed, fetched = { { slug = "done", completedLanguages = { "python" } } }, true
             picker.unfinished()
             assert.is_not_nil(opened)
             assert.are.same({}, order)
             assert.are.equal("done", listed_with[1].slug)
+        end)
+    end)
+
+    -- Whether to trust the list on disk is whether a full fetch ever
+    -- completed it -- not whether it has anything in it. A kata marked solved
+    -- before the list was ever fetched leaves a cache of one kata; a user
+    -- with nothing completed has a fetched list of none.
+    describe("which completed list on disk it trusts", function()
+        local saved_user
+
+        before_each(function()
+            saved_user = config.user.username
+        end)
+
+        after_each(function()
+            config.user.username = saved_user
+        end)
+
+        local function warnings()
+            return vim.tbl_filter(function(s) return s.level == "warn" end, said)
+        end
+
+        local MARKED = { { slug = "just-marked", completedLanguages = { "python" }, local_mark = true } }
+
+        it("does not trust a cache of kata marked locally, and fetches the list first", function()
+            config.user.username = "me"
+            completed, fetched, stale = MARKED, false, true
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.are.same({ "detect", "fetch" }, order)
+            assert.are.equal("fetched", listed_with[1].slug, "judged by the one kata that was marked")
+        end)
+
+        it("asks to sign in, and opens nothing, for a cache of kata marked locally with no cookie", function()
+            config.user.username = ""
+            completed, fetched, stale = MARKED, false, true
+            detect = function(cb) cb(nil, { signed_out = true, msg = "not signed in" }) end
+            picker.unfinished()
+            vim.wait(50)
+            assert.is_nil(opened, "opened a list judged against one kata")
+            assert.is_nil(listed_with)
+            assert.are.same({ "detect" }, order)
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find(":CW cookie", 1, true), warnings()[1].msg)
+        end)
+
+        it("refuses, rather than fall back on the kata marked locally, when the fetch then fails", function()
+            config.user.username = "me"
+            completed, fetched, stale = MARKED, false, true
+            package.loaded["codewars.cache.completed"].update = function(cb)
+                order[#order + 1] = "fetch"
+                cb({}, { msg = "network down" })
+            end
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.is_nil(opened, "opened a list judged against one kata")
+            assert.is_nil(listed_with)
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find("network down", 1, true), warnings()[1].msg)
+        end)
+
+        it("refuses when the account was settled but the list then could not be fetched", function()
+            config.user.username = ""
+            completed, fetched, stale = {}, false, true
+            detect = function(cb)
+                config.user.username = "me"
+                cb("me")
+            end
+            package.loaded["codewars.cache.completed"].update = function(cb)
+                order[#order + 1] = "fetch"
+                cb({}, { msg = "HTTP 500" })
+            end
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.are.same({ "detect", "fetch" }, order)
+            assert.is_nil(opened)
+            assert.truthy(warnings()[1] and warnings()[1].msg:find("HTTP 500", 1, true), vim.inspect(said))
+        end)
+
+        it("opens on a fetched list with nothing in it, with no cookie and no account", function()
+            config.user.username = ""
+            completed, fetched, stale = {}, true, true
+            detect = function(cb) cb(nil, { signed_out = true, msg = "not signed in" }) end
+            picker.unfinished()
+            assert.is_not_nil(opened, "asked a user with nothing completed to sign in")
+            assert.are.same({}, order, "detected or fetched with a list on disk")
+            assert.are.same({}, warnings())
+            assert.are.same({}, listed_with)
+            assert.are.equal(2, #opened.cfg.finder.results)
+        end)
+
+        it("opens on a fetched list with nothing in it as it is when signed in, without fetching", function()
+            config.user.username = "me"
+            completed, fetched, stale = {}, true, false
+            picker.unfinished()
+            assert.is_not_nil(opened)
+            assert.are.same({}, order)
+            assert.are.equal(0, updates)
+        end)
+
+        it("opens at once on a stale fetched list, and refreshes it behind the picker", function()
+            config.user.username = "me"
+            completed, fetched, stale = { { slug = "done", completedLanguages = { "python" } } }, true, true
+            picker.unfinished()
+            assert.is_not_nil(opened)
+            assert.are.equal("done", listed_with[1].slug)
+            assert.are.same({ "fetch" }, order, "detected first, or did not refresh the stale list")
+        end)
+
+        it("opens on a stale fetched list with no account, without refreshing it", function()
+            config.user.username = ""
+            completed, fetched, stale = { { slug = "done", completedLanguages = { "python" } } }, true, true
+            picker.unfinished()
+            assert.is_not_nil(opened)
+            assert.are.same({}, order)
         end)
     end)
 
@@ -482,7 +600,7 @@ describe(":CW unfinished", function()
     it("does not open on an empty completed list that could not be fetched, and says why", function()
         local saved_user = config.user.username
         config.user.username = "me"
-        completed = {}
+        completed, fetched = {}, false
         package.loaded["codewars.cache.completed"].update = function(cb)
             cb({}, { msg = "The account changed while your completed kata were being fetched." })
         end

@@ -8,15 +8,25 @@ local completed = {}
 local function list_file() return cache_utils.cache_file("completed.json") end
 local function details_file() return cache_utils.cache_file("kata_details.json") end
 
----@return table[], boolean is_stale
+--- The completed kata on disk, whether they are stale, and whether they are
+--- a list at all: `is_fetched` is true when a full fetch from Codewars ever
+--- completed, however long ago and whether it found kata or none. `mark`
+--- saves a kata solved before that with a timestamp of 0, so a cache holding
+--- only kata marked locally is never fetched: it is a few kata, not the
+--- account's list, and nothing that judges by the whole list may trust it.
+--- (A list that is fetched and then has kata marked into it still is.)
+---@return table[] items
+---@return boolean is_stale
+---@return boolean is_fetched
 function completed.get()
     local raw = cache_utils.read_json(list_file())
-    if not raw or not raw.items then return {}, true end
-    local age = os.time() - (raw.timestamp or 0)
+    if not raw or not raw.items then return {}, true, false end
+    local stamp = raw.timestamp or 0
+    local age = os.time() - stamp
     -- Its own interval: the problem list can sit for weeks, but kata solved
     -- on the website should show as completed here within a day.
     local stale = age > (config.user.cache.completed_interval or 86400)
-    return raw.items, stale
+    return raw.items, stale, stamp > 0
 end
 
 ---@param data table[]

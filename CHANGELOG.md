@@ -116,7 +116,9 @@ All notable changes to codewars.nvim are documented here.
   when it does not know who you are yet. Your username is only detected when
   `:CW menu` opens, so run first it now detects it the way the menu does; with
   no cookie saved, or one Codewars no longer accepts, it asks you to sign in
-  with `:CW cookie`. A completed list already on disk is used as it is.
+  with `:CW cookie`. A completed list that was ever fetched in full is used as
+  it is, stale or with no kata in it, signed in or not; the kata a submit
+  marks before any list was fetched are not a list, so it fetches first.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

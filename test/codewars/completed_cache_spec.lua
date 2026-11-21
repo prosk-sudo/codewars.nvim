@@ -45,6 +45,64 @@ describe("cache.completed", function()
         assert.is_true(stale)
     end)
 
+    -- Whether what is on disk is the account's list, or only the kata marked
+    -- on this machine before any list was ever fetched: judged by the stamp
+    -- a fetch gives it and a mark does not.
+    describe("whether the list on disk was ever fetched", function()
+        local function fetched() return (select(3, completed.get())) end
+
+        it("is not, with nothing cached", function()
+            assert.is_false(fetched())
+        end)
+
+        it("is not, for a cache holding only what mark wrote", function()
+            completed.mark("k1", "kata-one", "python")
+            assert.is_false(fetched())
+            completed.mark("k1", "kata-one", "java")
+            assert.equals(0, store["mem:completed.json"].timestamp, "a second mark stamped it fetched")
+            assert.is_false(fetched())
+            completed.mark("k2", "kata-two", "python")
+            assert.equals(0, store["mem:completed.json"].timestamp, "a mark of another kata stamped it fetched")
+            assert.is_false(fetched())
+        end)
+
+        it("is, once a refresh has completed, with the marks kept", function()
+            completed.mark("k1", "kata-one", "python")
+            script = function() return { data = { { id = "server", completedLanguages = { "java" } } }, totalPages = 1 } end
+            completed.update(function() end)
+            local items, _, is_fetched = completed.get()
+            assert.is_true(is_fetched)
+            assert.same({ "k1", "server" }, vim.tbl_map(function(i) return i.id end, items))
+        end)
+
+        it("is, for a list with no kata in it, however long ago it was fetched", function()
+            store["mem:completed.json"] = { timestamp = os.time() - 40 * 86400, items = {} }
+            local items, stale, is_fetched = completed.get()
+            assert.same({}, items)
+            assert.is_true(stale)
+            assert.is_true(is_fetched)
+        end)
+
+        it("is still, once kata have been marked into a fetched list", function()
+            store["mem:completed.json"] = { timestamp = os.time() - 5, items = { { id = "k1", completedLanguages = { "python" } } } }
+            completed.mark("k2", "kata-two", "python")
+            completed.mark("k1", "kata-one", "java")
+            assert.is_true(fetched())
+        end)
+
+        it("is not, for a cache with no stamp at all", function()
+            store["mem:completed.json"] = { items = { { id = "k1" } } }
+            assert.is_false(fetched())
+        end)
+
+        it("is not changed by a refresh that failed", function()
+            completed.mark("k1", "kata-one", "python")
+            script = function() return nil, { msg = "boom" } end
+            completed.update(function() end)
+            assert.is_false(fetched())
+        end)
+    end)
+
     -- A kata solved in one language is already in the cache; solving it again
     -- in a second one must still be recorded, or :CW unfinished keeps listing
     -- that second solution until the next successful refresh.

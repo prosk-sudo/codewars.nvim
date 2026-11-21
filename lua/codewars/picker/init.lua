@@ -28,13 +28,26 @@ end
 --- needed did not bring a list (it failed, or was dropped because the account
 --- changed under it): `items` is then whatever is on disk, which says nothing
 --- about what this account has completed.
+---
+--- The kata list is content with any kata on disk. `opts.fetched_only` is for
+--- a caller that judges by the WHOLE list: a cache holding only the kata
+--- marked on this machine before a list was ever fetched is not one, so it
+--- is fetched unless a full fetch ever completed -- and one that did is used,
+--- empty or not, signed in or not.
 ---@param cb fun(items: table[], err: table?)
-local function ensure_completed_items(cb)
+---@param opts { fetched_only: boolean? }?
+local function ensure_completed_items(cb, opts)
     local completed_cache = require("codewars.cache.completed")
-    local items, is_stale = completed_cache.get()
+    local items, is_stale, is_fetched = completed_cache.get()
     local signed_in = config.user.username ~= ""
 
-    if vim.tbl_isempty(items) and signed_in then
+    local needs_fetch = vim.tbl_isempty(items)
+    if opts and opts.fetched_only then needs_fetch = not is_fetched end
+
+    if needs_fetch and not signed_in and opts and opts.fetched_only then
+        return cb(items, { msg = "no completed list has been fetched and you are not signed in" })
+    end
+    if needs_fetch and signed_in then
         log.info("Fetching completed kata...")
         return completed_cache.update(function(_, err)
             picker.invalidate_completed_cache()
@@ -887,19 +900,23 @@ local function unknown_account_message(err)
 end
 
 --- ensure_completed_items for :CW unfinished, which judges every file by the
---- list: an empty one means "you have completed nothing" only when the
---- account is known. config.user.username is only detected by the menu, so
---- with no list on disk the account is settled first (identity.ensure); with
---- none to be had the user is told why instead of getting every solved kata
---- listed as unfinished. A list on disk is used as it is, signed in or not.
+--- list. Whether to trust the list on disk is whether a full fetch ever
+--- completed it, not whether it has anything in it: an empty fetched list is
+--- "you have completed nothing", and a cache of kata marked before any fetch
+--- is no list at all. A fetched list is used as it is, stale or not, signed
+--- in or not. Without one the account has to be known to fetch it, and
+--- config.user.username is only detected by the menu, so it is settled first
+--- (identity.ensure); with none to be had the user is told why instead of
+--- getting every solved kata listed as unfinished.
 ---@param cb fun(items: table[], err: table?)
 local function ensure_known_completed_items(cb)
-    if not vim.tbl_isempty((require("codewars.cache.completed").get())) then
-        return ensure_completed_items(cb)
+    local _, _, is_fetched = require("codewars.cache.completed").get()
+    if is_fetched then
+        return ensure_completed_items(cb, { fetched_only = true })
     end
     require("codewars.identity").ensure(function(username, err)
         if not username then return log.warn(unknown_account_message(err)) end
-        ensure_completed_items(cb)
+        ensure_completed_items(cb, { fetched_only = true })
     end)
 end
 
