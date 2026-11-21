@@ -8,14 +8,28 @@ local state_machine = require("codewars.state_machine")
 ---     │
 ---  publish
 ---     ▼
----  publishing ──publish_done──▶ published ──unpublish──▶ draft
+---  publishing ──publish_done──▶ published
+---                                  │
+---                              unpublish
+---                                  ▼
+---  draft ◀──unpublish_done── unpublishing ──unpublish_failed──▶ REVERT
+---
+---  draft / published ──delete──▶ deleting ──delete_done / delete_failed──▶ REVERT
 ---
 --- Saving never changes publication, so `saving` reverts to whichever state
 --- entered it — that is why save_done is REVERT and not a fixed state.
+---
+--- Unpublishing and deleting are in-flight states for the same reason as
+--- saving and publishing: while the request is out every other action is
+--- refused, so a second request cannot be answered after it and put back the
+--- state it remembered. A failed request reverts; a delete that succeeds
+--- reverts too, because the workspace closes right after it.
 local REVERT = state_machine.REVERT
 
 local SAVING_LOCKED = "Saving in progress — wait for it to finish."
 local PUBLISHING_LOCKED = "Publishing in progress — wait for it to finish."
+local UNPUBLISHING_LOCKED = "Unpublishing in progress — wait for it to finish."
+local DELETING_LOCKED = "Deleting in progress — wait for it to finish."
 
 --- transitions[state][action] = next-state string, or { err = message }.
 local transitions = {
@@ -24,15 +38,15 @@ local transitions = {
         validate = "draft",
         save = "saving",
         publish = "publishing",
-        delete = "draft",
+        delete = "deleting",
         unpublish = { err = "This kata isn't published yet — nothing to unpublish." },
     },
     published = {
         edit = "published",
         validate = "published",
         save = "saving",
-        delete = "published",
-        unpublish = "draft",
+        delete = "deleting",
+        unpublish = "unpublishing",
         publish = { err = "Already published — :CW kata unpublish to take it back to a draft." },
     },
     saving = {
@@ -55,18 +69,40 @@ local transitions = {
         publish_done = "published",
         publish_failed = REVERT,
     },
+    unpublishing = {
+        edit = { err = UNPUBLISHING_LOCKED },
+        validate = { err = UNPUBLISHING_LOCKED },
+        save = { err = UNPUBLISHING_LOCKED },
+        publish = { err = UNPUBLISHING_LOCKED },
+        unpublish = { err = "Already unpublishing." },
+        delete = { err = UNPUBLISHING_LOCKED },
+        unpublish_done = "draft",
+        unpublish_failed = REVERT,
+    },
+    deleting = {
+        edit = { err = DELETING_LOCKED },
+        validate = { err = DELETING_LOCKED },
+        save = { err = DELETING_LOCKED },
+        publish = { err = DELETING_LOCKED },
+        unpublish = { err = DELETING_LOCKED },
+        delete = { err = "Already deleting." },
+        delete_done = REVERT,
+        delete_failed = REVERT,
+    },
 }
 
 ---@class cw.kata.State
 local state = state_machine.new({
     transitions = transitions,
     editable = { draft = true, published = true },
-    locked = { saving = true, publishing = true },
+    locked = { saving = true, publishing = true, unpublishing = true, deleting = true },
     labels = {
         draft = "Draft",
         saving = "Saving…",
         publishing = "Publishing…",
         published = "Published",
+        unpublishing = "Unpublishing…",
+        deleting = "Deleting…",
     },
     kind = "kata",
 })

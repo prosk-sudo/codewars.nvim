@@ -538,9 +538,10 @@ function KataEditor:adopt(model)
         model.code_challenge.description, self.versions)
 end
 
---- Lock or unlock every pane. Panes are locked while a save/publish is in
---- flight (the states codewars.kata.state marks `locked`), so the buffers
---- cannot drift from the payload already on its way to the server.
+--- Lock or unlock every pane. Panes are locked while a save/publish/
+--- unpublish/delete is in flight (the states codewars.kata.state marks
+--- `locked`), so the buffers cannot drift from the payload already on its way
+--- to the server.
 ---@param locked boolean
 function KataEditor:set_panes_locked(locked)
     ui_utils.set_bufs_modifiable(vim.tbl_values(self.bufs or {}), locked)
@@ -728,18 +729,27 @@ end
 
 --- Un-publish (hide) a published kata. Reversible by publishing again.
 function KataEditor:unpublish()
-    local next_state, err = kstate.step(self.state, "unpublish")
+    local in_flight, err = kstate.step(self.state, "unpublish")
     if err then
         return log.warn(err)
     end
+    -- Locked until the reply lands: a save started now would remember
+    -- `published` and put it back after this reply, leaving the editor
+    -- claiming Published while the server holds a draft.
+    local prev = self.state
+    self:set_state(in_flight) -- "unpublishing"
+    self:refresh_title()
+
     require("codewars.api.kata").unpublish(self.model.id, function(uerr)
         if uerr then
             if uerr.auth then
                 require("codewars.cache.cookie").delete()
             end
+            self:set_state(prev) -- unpublish_failed REVERTs
+            self:refresh_title()
             return log.error("Unpublish failed — " .. (uerr.msg or "unknown error"))
         end
-        self:set_state(next_state) -- "draft"
+        self:set_state(kstate.step("unpublishing", "unpublish_done")) -- "draft"
         self.model.published = false
         self:refresh_title()
         log.info("Unpublished — the kata is a draft again.")
@@ -761,11 +771,24 @@ function KataEditor:delete()
         if not confirmed then
             return log.info("Delete cancelled.")
         end
+        -- Locked only now, not when the prompt opened: the user may have
+        -- walked away from it, and the editor must stay usable meanwhile.
+        -- It also may have started a save in that time, so ask again.
+        local in_flight, blocked = kstate.step(self.state, "delete")
+        if blocked then
+            return log.warn(blocked)
+        end
+        local prev = self.state
+        self:set_state(in_flight) -- "deleting"
+        self:refresh_title()
+
         require("codewars.api.kata").delete(self.model.id, function(derr)
+            self:set_state(prev) -- delete_done and delete_failed both REVERT
             if derr then
                 if derr.auth then
                     require("codewars.cache.cookie").delete()
                 end
+                self:refresh_title()
                 return log.error("Delete failed — " .. (derr.msg or "unknown error"))
             end
             log.info("Kata deleted.")
