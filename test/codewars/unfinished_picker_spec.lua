@@ -4,7 +4,7 @@
 describe(":CW unfinished", function()
     local config = require("codewars.config")
     local picker, opened, mounted, said, entries, catalogue, completed, updates, listed_with
-    local details, asked
+    local details, asked, provider
     local saved = {}
     local STUBBED = {
         "codewars.picker", "codewars.picker.dropdown", "codewars.cache.completed",
@@ -44,7 +44,7 @@ describe(":CW unfinished", function()
     before_each(function()
         for _, m in ipairs(STUBBED) do saved[m] = package.loaded[m] end
         opened, mounted, said, updates, listed_with = nil, nil, {}, 0, nil
-        details, asked = {}, nil
+        details, asked, provider = {}, nil, "telescope"
         completed = { { slug = "done", completedLanguages = { "python" } } }
         catalogue = {
             { slug = "multiply", id = "id-multiply", name = "Multiply", rank_id = -8, rank_name = "8 kyu" },
@@ -63,6 +63,7 @@ describe(":CW unfinished", function()
         })
         local t = fake_telescope()
         package.loaded["codewars.picker.dropdown"] = {
+            provider = function() return provider end,
             open = function() end,
             telescope = function() return t end,
             _reset = function() end,
@@ -218,6 +219,24 @@ describe(":CW unfinished", function()
         opened.cfg.attach_mappings(1, function() end)
         opened.selected = opened.cfg.finder.entry_maker(opened.cfg.finder.results[2])
         opened.select()
+        assert.are.same({ key = "5264d2b162488dc400000001", lang = "java" }, mounted)
+    end)
+
+    -- Without telescope every picker goes through vim.ui.select: the same
+    -- rows as plain text, as the kata list's are.
+    it("opens through vim.ui.select when telescope is not the picker", function()
+        provider = "select"
+        local real_select, shown = vim.ui.select, nil
+        vim.ui.select = function(items, opts, cb) shown = { items = items, opts = opts, cb = cb } end
+        picker.unfinished()
+        vim.ui.select = real_select
+        assert.is_nil(opened, "opened telescope")
+        assert.is_not_nil(shown, "did not use vim.ui.select")
+        local first = shown.opts.format_item(shown.items[1])
+        for _, part in ipairs({ "8 kyu", "Multiply", "Python", "today" }) do
+            assert.truthy(first:find(part, 1, true), first)
+        end
+        shown.cb(shown.items[2])
         assert.are.same({ key = "5264d2b162488dc400000001", lang = "java" }, mounted)
     end)
 

@@ -800,12 +800,36 @@ local function open_unfinished(t, rows)
     end
 end
 
+--- The vim.ui.select variant: the same rows as plain text, as the kata
+--- list's are. An open select cannot be redrawn, so what the background
+--- lookup finds shows from the next open.
+---@param rows table[]
+---@return fun(new_rows: table[])
+local function select_unfinished(rows)
+    vim.ui.select(rows, {
+        prompt = ("Unfinished kata (%d)"):format(#rows),
+        format_item = function(row)
+            return vim.trim(table.concat({
+                rank_icon(row.rank_id), rank_str(row.rank_name), lang_icon(row.lang),
+                row.name, row.lang_name, row.when, row.checked and "" or NOT_CHECKED,
+            }, " "))
+        end,
+    }, function(row)
+        if row then require("codewars-ui.kata"):new(row.key, row.lang):mount() end
+    end)
+    return function() end
+end
+
 --- Kata you started and never submitted, most recently changed first, to
 --- pick back up. A file from before starters were recorded cannot be told
 --- from an untouched one, so it is listed and marked "not checked".
 function picker.unfinished()
-    local t = dropdown.telescope()
-    if not t then return end
+    local use_select = dropdown.provider() == "select"
+    local t
+    if not use_select then
+        t = dropdown.telescope()
+        if not t then return end
+    end
     ensure_completed_items(function(completed)
         local found = require("codewars.unfinished").list(completed)
         if #found == 0 then
@@ -817,7 +841,7 @@ function picker.unfinished()
             local details, now = completed_cache.get_details(), os.time()
             return vim.tbl_map(function(e) return unfinished_row(e, catalogue, details, now) end, found)
         end
-        local update = open_unfinished(t, rows())
+        local update = use_select and select_unfinished(rows()) or open_unfinished(t, rows())
 
         -- What nothing knows yet is looked up as :CW completed does, and
         -- filled in once Codewars answers rather than held up for.
