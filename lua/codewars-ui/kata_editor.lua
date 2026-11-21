@@ -695,9 +695,18 @@ function KataEditor:publish()
     end)
 end
 
+--- Both callers reach this after waiting on the user (the confirmation, then
+--- the rename prompt of a name-taken retry), so the state they checked in
+--- publish() may be stale: a save, unpublish or delete can have started
+--- meanwhile. Ask again, or the publish would go out under that request and
+--- its reply would put back a state that is no longer true.
 function KataEditor:_do_publish()
+    local in_flight, blocked = kstate.step(self.state, "publish")
+    if blocked then
+        return log.warn(blocked)
+    end
     local prev = self.state
-    self:set_state("publishing")
+    self:set_state(in_flight) -- "publishing"
     self:refresh_title()
     log.info("Publishing — Codewars runs your tests server-side, this can take a moment…")
 

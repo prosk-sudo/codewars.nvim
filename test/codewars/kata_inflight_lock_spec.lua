@@ -69,15 +69,16 @@ describe("kata.state in-flight unpublish and delete", function()
 end)
 
 describe("KataEditor while an unpublish or delete is in flight", function()
-    local real_api, real_confirm, real_warn, real_info, real_error
-    local calls, replies, warned, errors, prompt
+    local real_api, real_confirm, real_input, real_warn, real_info, real_error
+    local calls, replies, warned, errors, prompt, rename
 
     before_each(function()
         local log = require("codewars.logger")
         real_api = package.loaded["codewars.api.kata"]
         real_confirm = package.loaded["codewars-ui.popup.confirm"]
+        real_input = vim.ui.input
         real_warn, real_info, real_error = log.warn, log.info, log.error
-        calls, replies, warned, errors, prompt = {}, {}, {}, {}, nil
+        calls, replies, warned, errors, prompt, rename = {}, {}, {}, {}, nil, nil
 
         log.warn = function(msg) warned[#warned + 1] = msg end
         log.info = function() end
@@ -88,8 +89,13 @@ describe("KataEditor while an unpublish or delete is in flight", function()
         local function held(verb)
             return function(...)
                 calls[verb] = (calls[verb] or 0) + 1
-                local args = { ... }
-                replies[verb] = args[#args]
+                -- publish passes a poll token after its callback, so look
+                -- for the function rather than taking the last argument
+                for _, arg in ipairs({ ... }) do
+                    if type(arg) == "function" then
+                        replies[verb] = arg
+                    end
+                end
             end
         end
         package.loaded["codewars.api.kata"] = {
@@ -103,11 +109,14 @@ describe("KataEditor while an unpublish or delete is in flight", function()
         package.loaded["codewars-ui.popup.confirm"] = {
             open = function(_, on_answer) prompt = on_answer end,
         }
+        -- the rename prompt of the name-taken recovery, answered by the test
+        vim.ui.input = function(_, on_input) rename = on_input end
     end)
 
     after_each(function()
         local log = require("codewars.logger")
         log.warn, log.info, log.error = real_warn, real_info, real_error
+        vim.ui.input = real_input
         package.loaded["codewars.api.kata"] = real_api
         package.loaded["codewars-ui.popup.confirm"] = real_confirm
     end)
@@ -205,6 +214,65 @@ describe("KataEditor while an unpublish or delete is in flight", function()
             assert.is_nil(calls.unpublish)
             assert.are.equal("draft", ws.state)
             assert.truthy(warned[1]:find("isn't published", 1, true), warned[1])
+        end)
+    end)
+
+    describe("a publish still waiting on the user", function()
+        local function lock_warning()
+            return warned[#warned]
+        end
+
+        it("is refused when a delete started while its confirmation was open", function()
+            local ws = workspace(false)
+            ws:publish()
+            local confirm_publish = prompt
+            ws:delete()
+            prompt(true) -- the delete is confirmed, so the editor is now deleting
+
+            confirm_publish(true)
+
+            assert.is_nil(calls.publish, "a publish must not be sent while a delete is in flight")
+            assert.are.equal("deleting", ws.state)
+            assert.truthy(lock_warning():find("Deleting in progress", 1, true), lock_warning())
+        end)
+
+        it("is refused when a save started while its confirmation was open", function()
+            local ws = workspace(false)
+            ws:publish()
+            local confirm_publish = prompt
+            ws:save()
+
+            confirm_publish(true)
+
+            assert.is_nil(calls.publish)
+            assert.are.equal("saving", ws.state)
+            assert.truthy(lock_warning():find("Saving in progress", 1, true), lock_warning())
+        end)
+
+        it("is refused when a delete started while the name-taken rename prompt was open", function()
+            local ws = workspace(false)
+            ws:publish()
+            prompt(true)
+            replies.publish(nil, { msg = "name: Name is already taken" })
+            assert.is_function(rename, "the rename prompt should be open")
+            ws:delete()
+            prompt(true)
+
+            rename("Another name")
+
+            assert.are.equal(1, calls.publish, "only the first publish may have been sent")
+            assert.are.equal("deleting", ws.state)
+            assert.truthy(lock_warning():find("Deleting in progress", 1, true), lock_warning())
+        end)
+
+        it("still goes ahead when nothing else started in the meantime", function()
+            local ws = workspace(false)
+            ws:publish()
+
+            prompt(true)
+
+            assert.are.equal(1, calls.publish)
+            assert.are.equal("publishing", ws.state)
         end)
     end)
 
