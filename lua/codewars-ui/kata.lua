@@ -696,7 +696,6 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 self._submit_queued = nil
 
                 self:_open_file()
-                require("codewars.cache.recent").record(self)
 
                 local path = self.file:absolute()
                 self.bufnr = vim.fn.bufadd(path)
@@ -721,7 +720,12 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 log.info(("Switched to %s"):format(new_lang))
             end)
 
-            if not ok then
+            -- Only a switch that went through is where the user now is: a
+            -- rolled-back one leaves them in the language they were in, and
+            -- :CW recent has to say the same.
+            if ok then
+                require("codewars.cache.recent").record(self)
+            else
                 log.error("Failed to change language\n" .. tostring(change_err))
                 -- The target buffer may already exist; track it so unmount
                 -- deletes it instead of leaving a listed stray.

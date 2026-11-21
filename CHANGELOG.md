@@ -96,6 +96,9 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- A language switch that fails and is rolled back no longer puts the language
+  it failed to switch to at the top of `:CW recent`; the history is recorded
+  once the switch has gone through, so it says what the kata is open in.
 - Submitting a kata you had already solved in another language now records
   the new language as completed straight away. Only a kata missing from the
   completed cache was recorded, so the solution you had just submitted kept

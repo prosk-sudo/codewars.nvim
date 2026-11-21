@@ -148,6 +148,47 @@ describe("Kata close lifecycle", function()
         wait_gone(buf)
     end)
 
+    -- :CW recent is where the user goes back to. A switch that fails and is
+    -- rolled back leaves them in the language they were in, and the history
+    -- has to say the same.
+    describe("and :CW recent", function()
+        local recent = require("codewars.cache.recent")
+
+        local function history_of(kata)
+            return vim.tbl_map(function(e) return e.lang end, vim.tbl_filter(function(e)
+                return e.slug == kata.slug
+            end, recent.get()))
+        end
+
+        it("records the new language once the switch has succeeded", function()
+            local kata = open("python")
+            recent.record(kata)
+            switch(kata, "ruby")
+            pending[1].cb({ solutionId = "s2", projectId = "p" })
+            vim.wait(300, function() return kata.lang == "ruby" end)
+            assert.are.equal("ruby", kata.lang)
+            assert.are.same({ "ruby", "python" }, history_of(kata))
+            local buf = kata.bufnr
+            kata:unmount()
+            wait_gone(buf)
+        end)
+
+        it("leaves the history as it was when loading the target buffer fails", function()
+            local kata = open("python")
+            recent.record(kata)
+            switch(kata, "ruby")
+            vim.fn.bufadd = function() return 0 end -- the target buffer cannot be made
+            pending[1].cb({ solutionId = "s2", projectId = "p" })
+            vim.wait(200)
+            vim.fn.bufadd = nil
+            assert.are.equal("python", kata.lang, "the switch was not rolled back")
+            assert.are.same({ "python" }, history_of(kata), "a rolled-back switch was recorded")
+            local buf = kata.bufnr
+            kata:unmount()
+            wait_gone(buf)
+        end)
+    end)
+
     it("drops a language reply that arrives after the kata closed", function()
         local kata = open("python")
         switch(kata,"go")
