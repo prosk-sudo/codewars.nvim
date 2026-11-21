@@ -407,7 +407,11 @@ function Kata:mount()
             return
         end
 
-        if kata_data.slug and kata_data.slug ~= "" then
+        -- A reply with no slug field did not name the kata, so the slug asked
+        -- for, which was checked above, stands. A field that is there is
+        -- Codewars' answer, whatever it holds: "" or false is an invalid slug,
+        -- not a missing one, and is refused like any other.
+        if kata_data.slug ~= nil then
             local requested = self.slug
             self.slug = kata_data.slug
             -- Codewars chose this one, not the user: checked again, for the

@@ -150,13 +150,42 @@ describe("a kata with a slug that cannot name a file", function()
         assert.truthy(errors[1]:find("slug", 1, true), errors[1])
     end)
 
-    it("is refused when Codewars sends a slug that is not even a string", function()
-        get_reply = { id = HEX, slug = { "../evil" }, languages = { "python" } }
+    -- A reply that names the kata at all is Codewars' answer, so an empty or
+    -- non-string slug is an invalid one, not a missing one.
+    for _, sent in ipairs({ "", false, true, 0, 12, { "../evil" } }) do
+        it(("is refused when Codewars sends the slug %s"):format(vim.inspect(sent)), function()
+            get_reply = { id = HEX, slug = sent, languages = { "python" } }
+            local before = snapshot()
+            local kata = Kata:new("valid-braces", "python")
+            kata._on_mounted = function() end
+
+            assert.has_no.errors(function() kata:mount() end)
+
+            assert.are.equal(1, get_calls)
+            assert.are.equal(0, train_calls, "went on to start a session for it")
+            assert.are.same(before, snapshot(), "created or changed a file")
+            assert.is_nil(kata._on_mounted, "left the continuation armed")
+            assert.are.equal("valid-braces", kata.slug, "adopted the invalid slug")
+            assert.are.equal(1, #errors, vim.inspect(errors))
+            assert.truthy(errors[1]:find("slug", 1, true), errors[1])
+            assert.truthy(errors[1]:find(vim.inspect(sent), 1, true), errors[1])
+        end)
+    end
+
+    -- No `slug` field at all means the reply did not name the kata, which is
+    -- not the same as naming it with nothing: the slug asked for, already
+    -- checked, stands.
+    it("keeps the requested slug when Codewars sends none", function()
+        get_reply = { id = HEX, languages = { "python" } }
         local before = snapshot()
-        assert.has_no.errors(function() Kata:new("valid-braces", "python"):mount() end)
-        assert.are.equal(0, train_calls)
+        local kata = Kata:new("valid-braces", "python")
+
+        assert.has_no.errors(function() kata:mount() end)
+
+        assert.are.equal(1, train_calls, "refused a reply with no slug")
+        assert.are.equal("valid-braces", kata.slug)
+        assert.are.same({}, errors)
         assert.are.same(before, snapshot())
-        assert.are.equal(1, #errors, vim.inspect(errors))
     end)
 
     it("refuses a language that cannot name a session file", function()
