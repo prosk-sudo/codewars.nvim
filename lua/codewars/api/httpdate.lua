@@ -18,8 +18,8 @@ local LONG_DAYS = {
 }
 local MONTH_LENGTHS = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 local SECONDS_PER_DAY = 86400
---- RFC 9110: a two-digit year more than this many years ahead of now is
---- really the latest past year with those digits.
+--- RFC 9110: a two-digit year that puts the timestamp more than this many
+--- years after now is really the previous century.
 local MAX_YEARS_AHEAD = 50
 
 ---@param year integer
@@ -55,14 +55,28 @@ local function days_from_civil(year, month, day)
     return era * 146097 + day_of_era - 719468
 end
 
---- The year a two-digit RFC 850 year means: the one ending in `yy` within
---- the window from 49 years back to MAX_YEARS_AHEAD years ahead of now.
+--- A number that orders calendar moments the way time does, so two dates
+--- compare without an epoch for either (the limit below can be a 29 February
+--- in a year that has none). Each field stays under its multiplier.
+local function moment_key(year, month, day, hour, min, sec)
+    return ((((year * 13 + month) * 32 + day) * 24 + hour) * 60 + min) * 61 + sec
+end
+
+--- The year a two-digit RFC 850 year means (RFC 9110 section 5.6.7): this
+--- century, unless that puts the timestamp more than MAX_YEARS_AHEAD years
+--- after `now`, and then the previous one. The whole date and time is held
+--- against the limit, not the year alone: on 2026-11-22, 01-Dec-76 is past
+--- the limit and 21-Nov-76 is not. A timestamp exactly that far ahead is not
+--- MORE than that far ahead, so it stays in the future.
 ---@param yy integer 0-99
 ---@param now integer epoch seconds
 ---@return integer
-local function expand_year(yy, now)
-    local this_year = os.date("!*t", now).year
-    return yy + 100 * math.floor((this_year + MAX_YEARS_AHEAD - yy) / 100)
+local function expand_year(yy, month, day, hour, min, sec, now)
+    local at = os.date("!*t", now)
+    local limit = moment_key(at.year + MAX_YEARS_AHEAD, at.month, at.day, at.hour, at.min, at.sec)
+    local year = at.year - at.year % 100 + yy
+    if moment_key(year, month, day, hour, min, sec) > limit then return year - 100 end
+    return year
 end
 
 ---@return integer? year, integer? month, integer? day, integer? hour, integer? min, integer? sec
@@ -77,8 +91,9 @@ end
 local function read_rfc850(text, now)
     local weekday, day, month, yy, hour, min, sec =
         text:match("^(%a+), (%d%d)%-(%a%a%a)%-(%d%d) (%d%d):(%d%d):(%d%d) gmt$")
-    if not (weekday and LONG_DAYS[weekday]) then return nil end
-    return expand_year(tonumber(yy), now), MONTHS[month], tonumber(day), tonumber(hour), tonumber(min), tonumber(sec)
+    if not (weekday and LONG_DAYS[weekday] and MONTHS[month]) then return nil end
+    month, day, hour, min, sec = MONTHS[month], tonumber(day), tonumber(hour), tonumber(min), tonumber(sec)
+    return expand_year(tonumber(yy), month, day, hour, min, sec, now), month, day, hour, min, sec
 end
 
 --- asctime has no zone; HTTP reads it as GMT. Its day is space-padded.
