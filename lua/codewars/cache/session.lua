@@ -92,7 +92,7 @@ function session.clear_all()
         if name:match("%.json$") then
             if pcall(f.rm, f) then count = count + 1 end
         elseif backup.is_backup(name) then
-            pcall(f.rm, f)
+            uv.fs_unlink(f:absolute()) -- unlinks: a symlink goes, not its target
         end
     end
     return count

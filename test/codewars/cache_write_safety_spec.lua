@@ -140,28 +140,6 @@ describe("cache.utils write_json keeps the previous cache when a write fails", f
         assert.equals(1, #errors, vim.inspect(errors))
     end)
 
-    it("falls back to writing in place when no backup can be made", function()
-        spit(file, original)
-        vim.fn.mkdir(bak) -- a directory in the backup's place: it cannot be opened for writing
-
-        local ok = write()
-
-        assert.is_true(ok)
-        assert.same(fresh, vim.json.decode(slurp(file)))
-        assert.same({}, errors)
-    end)
-
-    it("removes a half-written backup and falls back to writing in place when the disk fills", function()
-        spit(file, original)
-        disk_full_on(original) -- only the backup copy writes the original's bytes
-
-        local ok = write()
-
-        assert.is_true(ok)
-        assert.same(fresh, vim.json.decode(slurp(file)))
-        assert.is_nil(uv.fs_stat(bak), "a half-written backup was left behind")
-    end)
-
     it("keeps the backup, and says so, when the original cannot be put back either", function()
         spit(file, original)
         disk_full_on(payload, original)

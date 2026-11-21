@@ -188,6 +188,9 @@ All notable changes to codewars.nvim are documented here.
   first draw rather than appearing and pushing the block down.
 - A cache write that fails partway now keeps the previous cache; the file
   itself, with its owner, permissions and read-only state, is never swapped out.
+  A cache that cannot be backed up first, because the directory cannot be
+  written or the disk is full, is left as it is and the write is reported as
+  failed, not done without a backup.
 
 ## [0.3.4] - 2026-08-29
 

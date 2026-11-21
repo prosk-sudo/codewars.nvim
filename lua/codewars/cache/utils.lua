@@ -24,25 +24,32 @@ local function parse(text)
     return ok and data or nil
 end
 
--- Files whose backup could not be written back, already reported: each read
--- of one would otherwise say it again.
+-- What has been reported, so that each is said once: a file whose backup could
+-- not be written back (each read of it would say it again), and a note from a write.
 local reported = {}
 
---- A backup beside `file` means a write to it did not finish. Use it when the
---- file is not usable, and clear it away when the file is fine.
+---@param key string
+---@param message string
+local function warn_once(key, message)
+    if reported[key] then return end
+    reported[key] = true
+    log.warn(message)
+end
+
+--- `path` is not usable. A good copy at its backup's name is written back into
+--- it and returned; the backup stays where it is (only a writer removes one).
 ---@param path Path
----@param data table? what `path` holds, nil when missing or not JSON
----@return table? data the same, or the backup's when that was recovered
-local function settle(path, data)
+---@return table? data the backup's, when it was recovered
+local function recover(path)
     local file = backup.file_name(path)
-    local recovered, err = backup.settle(file, data ~= nil, parse)
-    if recovered == nil then return data end
+    if not backup.has_backup(file) then return nil end
+    local recovered, err = backup.settle(file, parse)
+    if recovered == nil then return nil end
     if not err then
         reported[file] = nil
         log.warn(("Recovered %s from its backup: the last write to it did not finish."):format(file))
-    elseif not reported[file] then
-        reported[file] = true
-        log.warn(("Recovered %s from %s, but could not write it back (%s); the backup is kept."):format(
+    else
+        warn_once(file, ("Recovered %s from %s, but could not write it back (%s); the backup is kept."):format(
             file, backup.backup_path(file), err))
     end
     return recovered
@@ -53,8 +60,8 @@ end
 function M.read_json(path)
     local read, text = pcall(function() return path:read() end)
     local data = read and parse(text) or nil
-    if not backup.has_backup(backup.file_name(path)) then return data end
-    return settle(path, data)
+    if data ~= nil then return data end
+    return recover(path)
 end
 
 --- Write `data` as JSON. Returns whether it actually landed, so callers that
@@ -64,7 +71,8 @@ end
 ---
 --- A write that fails partway keeps the previous cache (see cache.backup): the
 --- file is rewritten in place, never replaced, so it keeps its owner, mode and
---- read-only state, and what was there is put back on a failure.
+--- read-only state, and what was there is put back on a failure. A cache that
+--- cannot be backed up first is not written at all, and that is reported.
 ---@param path Path
 ---@param data table
 ---@param opts { quiet: boolean? }? `quiet`: log nothing on failure, for a caller that reports it itself in its own words (and may try again, as a batch of lookups does, without a line per try)
@@ -80,12 +88,8 @@ function M.write_json(path, data, opts)
     local encoded, text = pcall(vim.json.encode, data)
     if not encoded then return fail(text) end
 
-    local file = backup.file_name(path)
-    -- A backup left by an earlier write that failed is settled first: if the
-    -- file is damaged, the backup is the good copy, and must not be backed up over.
-    if backup.has_backup(file) then M.read_json(path) end
-
-    local ok, err = backup.write(file, text)
+    local ok, err, note = backup.write(backup.file_name(path), text, parse)
+    if note and not quiet then warn_once(note, note) end
     if not ok then return fail(err) end
     return true, nil
 end

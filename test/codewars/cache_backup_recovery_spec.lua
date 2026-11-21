@@ -1,8 +1,9 @@
 -- The other half of the in-place write: <path>.bak is the previous cache while
 -- a write is under way. If a restore failed or the editor died mid-write, the
--- next read finds it and either recovers from it or clears it away. It is also
--- never mistaken for a cache entry by the scans, and goes with its cache when
--- the cache is deleted.
+-- next read finds it and recovers from it when the cache itself is no good. A
+-- reader never removes one (only a writer does), never reads one through a
+-- symlink, and the scans never mistake one for a cache entry; it goes with its
+-- cache when the cache is deleted.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop
@@ -56,7 +57,7 @@ describe("cache backups", function()
             assert.same({ kept = "yes" }, read())
 
             assert.equals(good, slurp(file), "the backup was not written back")
-            assert.is_nil(uv.fs_stat(bak))
+            assert.equals(good, slurp(bak), "a reader removed the backup; only a writer does")
             assert.equals(1, #warnings, vim.inspect(warnings))
         end)
 
@@ -66,7 +67,7 @@ describe("cache backups", function()
 
             assert.same({ kept = "yes" }, read())
             assert.equals(good, slurp(file))
-            assert.is_nil(uv.fs_stat(bak))
+            assert.equals(good, slurp(bak), "a reader removed the backup; only a writer does")
         end)
 
         it("recovers from the backup when the file is missing, with the backup's permission bits", function()
@@ -77,7 +78,7 @@ describe("cache backups", function()
 
             assert.equals(good, slurp(file))
             assert.equals(384, bit.band(uv.fs_stat(file).mode, 511))
-            assert.is_nil(uv.fs_stat(bak))
+            assert.equals(good, slurp(bak), "a reader removed the backup; only a writer does")
         end)
 
         it("says so once, not on every read", function()
@@ -90,14 +91,38 @@ describe("cache backups", function()
             assert.equals(1, #warnings, vim.inspect(warnings))
         end)
 
-        it("clears a stale backup away when the file decodes fine", function()
+        -- Another editor may be between making the backup and truncating the file:
+        -- a file that reads fine is no proof that the backup is stale.
+        it("leaves the backup alone when the file decodes fine", function()
             spit(file, vim.json.encode({ kept = "newer" }))
             spit(bak, good)
 
             assert.same({ kept = "newer" }, read())
 
-            assert.is_nil(uv.fs_stat(bak), "a stale backup was left behind")
+            assert.equals(good, slurp(bak), "a reader removed a backup that may be in use")
             assert.same({}, warnings)
+        end)
+
+        it("does not use a backup that is a symlink, and does not touch its target", function()
+            local target = tmp .. "/elsewhere.json"
+            spit(target, good)
+            spit(file, "{ torn")
+            uv.fs_symlink(target, bak)
+
+            assert.is_nil(read())
+
+            assert.equals("{ torn", slurp(file))
+            assert.equals(good, slurp(target))
+            assert.equals("link", uv.fs_lstat(bak).type)
+        end)
+
+        it("does not use a backup that is not a regular file", function()
+            spit(file, "{ torn")
+            vim.fn.mkdir(bak)
+
+            assert.is_nil(read())
+
+            assert.equals("{ torn", slurp(file))
         end)
 
         it("does not use a backup that does not decode either", function()
@@ -138,7 +163,6 @@ describe("cache backups", function()
             assert.same({ old = string.rep("o", 300) }, cache_utils.read_json(P:new(file)))
 
             assert.equals(original, slurp(file))
-            assert.is_nil(uv.fs_stat(file .. ".bak"))
         end)
     end)
 
