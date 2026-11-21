@@ -784,10 +784,18 @@ end
 -- focus pointer itself.
 local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
 
+-- Generation guard, the same idea as the picker's _kumite_gen: a focus fetch
+-- already in flight when the account changes is answered from the previous
+-- account's queue. Each fetch captures the value when it starts and drops its
+-- reply if forget_focus has bumped it since.
+local _focus_gen = 0
+
 --- Forget the remembered focus kata. Called on an identity change: the
 --- queue it came from belongs to the previous account, so a `:CW focus
---- skip` after signing in as someone else must not act on it.
+--- skip` after signing in as someone else must not act on it. A fetch still
+--- in flight is invalidated too, or its reply would remember it again.
 function cmd.forget_focus()
+    _focus_gen = _focus_gen + 1
     _last_focus = nil
 end
 
@@ -857,7 +865,9 @@ end
 local function focus_run(lang, category, on_mounted)
     if LOCAL_CATEGORIES[category] then
         -- No server queue behind this one, so a stale record here can never
-        -- cause a dequeue; resolve it directly.
+        -- cause a dequeue; resolve it directly. Nothing is in flight either
+        -- (the pick and the record happen in the same tick), so there is no
+        -- reply for forget_focus to race with.
         local kata = open_random_kata(lang, on_mounted)
         if kata then
             _last_focus = { lang = lang, category = category, slug = kata.slug, kata = kata }
@@ -869,10 +879,12 @@ local function focus_run(lang, category, on_mounted)
         return log.warn("Already fetching a focus kata — try again in a moment.")
     end
     _focus_inflight = true
+    local gen = _focus_gen
 
     log.info(("Fetching the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").next_kata(category, lang, function(kata, err)
         _focus_inflight = false
+        if gen ~= _focus_gen then return end
         if err then return log.err(err) end
         -- Only now is this the current focus. Recording it earlier is what
         -- let a rejected second request point a later skip at the wrong queue.
@@ -959,10 +971,12 @@ function cmd.focus_skip()
         return log.warn("Already fetching a focus kata — try again in a moment.")
     end
     _focus_inflight = true
+    local gen = _focus_gen
 
     log.info(("Skipping the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").skip(category, lang, function(kata, err)
         _focus_inflight = false
+        if gen ~= _focus_gen then return end
         if err then return log.err(err) end
         local lf = { lang = lang, category = category }
         _last_focus = lf
