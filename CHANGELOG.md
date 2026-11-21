@@ -47,10 +47,10 @@ All notable changes to codewars.nvim are documented here.
   "Submitting..." while you guessed when to retry. If the registration fails,
   or another run has started by the time it lands, nothing is submitted and
   you are told why.
-- `:CW recent` (also Menu > Katas > Recent): the kata you opened lately,
-  newest first, each marked completed or in progress, to pick up where you
-  left off. Codewars has no "in progress" API, so opens are recorded locally
-  (last 50, per kata and language) and matched against your completed kata.
+- `:CW recent` (also Menu > Katas > Reopen Last Kata, `r`) takes you straight
+  back into the kata you opened last, in the language you last used; one that
+  is still open in a tab is brought forward. Opens are recorded locally (last
+  50, per kata and language).
 
 ### Changed
 - `:CW completed` lists your most recently completed kata first. A new

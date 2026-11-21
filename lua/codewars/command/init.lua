@@ -59,7 +59,7 @@ function cmd._help_lines()
         { "next [lang] [kyu]", "Next unsolved kata matching your list filters" },
         { "focus [lang] [category]", "Choose Today's Focus (re-run returns the same kata)" },
         { "focus skip", "Skip the current focus kata and open the next" },
-        { "recent",         "Recently opened kata (in progress / completed)" },
+        { "recent",         "Reopen the kata you opened last" },
         { "test",           "Quick test with example fixtures" },
         { "attempt",        "Full attempt with all tests" },
         { "submit",         "Finalize solution (after passing attempt)" },
@@ -690,8 +690,18 @@ local function parse_kyu(values)
     return ranks
 end
 
+--- Back into the kata you opened last, in the language you last used. One
+--- that is still open is brought forward rather than fetched again.
 function cmd.recent()
-    require("codewars.picker").recent()
+    local last = require("codewars.cache.recent").get()[1]
+    if not last then
+        return log.info("No recent kata yet. Open one with :CW train, :CW list or :CW focus.")
+    end
+    local tabp = require("codewars.utils").detect_duplicate_kata(last.slug, last.lang)
+    if tabp then
+        return vim.api.nvim_set_current_tabpage(tabp)
+    end
+    require("codewars-ui.kata"):new(last.slug, last.lang):mount()
 end
 
 --- Open a random kata from the cached problem list (client-side).

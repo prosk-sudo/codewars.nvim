@@ -10,7 +10,7 @@ Run `:CW help` inside Neovim for a quick reference.
 | `:CW random [language]` | Open a random kata |
 | `:CW focus [language] [category]` | Choose Today's Focus. `fundamentals`, `rank_up`, `practice_and_repeat`, `beta` use the server-side trainer; `random` picks locally from the cached problem list. No args opens the pickers; re-running returns the same kata until you solve or skip it |
 | `:CW focus skip` | Skip the current focus kata and open the next one (uses the last `:CW focus` language + category) |
-| `:CW recent` | Kata you opened lately, newest first, each marked completed or in progress; pick one to reopen it in the same language. Also Menu > Katas > Recent (`r`). History is kept locally (last 50) |
+| `:CW recent` | Reopen the kata you opened last, in the language you last used; one still open in a tab is brought forward. Also Menu > Katas > Reopen Last Kata (`r`) |
 | `:CW test` | Quick test with example fixtures |
 | `:CW attempt` | Full attempt with all tests (random + hidden) |
 | `:CW submit` | Finalize solution (after passing attempt) |

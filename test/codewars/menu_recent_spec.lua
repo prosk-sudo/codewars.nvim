@@ -16,10 +16,10 @@ describe("menu katas page", function()
     package.loaded["codewars-ui.renderer.menu"] = nil
     local Menu = require("codewars-ui.renderer.menu")
 
-    it("has a Recent entry on r that opens :CW recent", function()
+    it("has a Reopen Last Kata entry on r that runs :CW recent", function()
         local recent
         for _, button in ipairs(Menu:init().pages.katas) do
-            if button.label == "Recent" then recent = button end
+            if button.label == "Reopen Last Kata" then recent = button end
         end
         assert.is_not_nil(recent)
         assert.are.equal("r", recent.sc)

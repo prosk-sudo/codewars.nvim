@@ -654,53 +654,6 @@ function picker.completed()
     end
 end
 
----@param seconds integer
----@return string # compact age like "5m", "3h", "26d", "2y"
-local function ago(seconds)
-    local diff = math.max(0, seconds)
-    if diff < 3600 then return math.floor(diff / 60) .. "m" end
-    if diff < 86400 then return math.floor(diff / 3600) .. "h" end
-    if diff < 86400 * 365 then return math.floor(diff / 86400) .. "d" end
-    return math.floor(diff / (86400 * 365)) .. "y"
-end
-
---- Kata you opened lately, newest first, marked completed or in progress.
---- Picking one reopens it in the same language (its file is reused).
-function picker.recent()
-    local items = require("codewars.cache.recent").get()
-    if #items == 0 then
-        return log.info("No recent kata yet. Open one with :CW train, :CW list or :CW focus.")
-    end
-
-    ensure_completed_set(function(completed_set)
-        local icons = require("codewars.icons").get()
-        local now = os.time()
-        local entries = {}
-        for _, e in ipairs(items) do
-            local done = completed_set[e.slug] == true
-            local rank = theme.rank_str(e.rank)
-            table.insert(entries, {
-                label = ("%-6s %s  %s  %s"):format(
-                    rank, e.name or e.slug, e.lang, ago(now - (e.opened_at or now))),
-                value = e,
-                icon = done and icons.completed or icons.recent,
-                icon_hl = done and "codewars_completed" or "codewars_warning",
-                ordinal = ("%s %s %s"):format(e.name or "", e.slug, e.lang),
-            })
-        end
-
-        dropdown.open({
-            prompt_title = "Recent kata",
-            entries = entries,
-            width = 80,
-            height = math.min(#entries + 4, 25),
-            on_select = function(e)
-                require("codewars-ui.kata"):new(e.slug, e.lang):mount()
-            end,
-        })
-    end)
-end
-
 local function lang_icon(slug)
     local icons = require("codewars.icons").get()
     return icons["lang_" .. slug] or "#"
