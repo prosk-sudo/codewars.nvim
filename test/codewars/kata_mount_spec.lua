@@ -132,4 +132,25 @@ describe("closing with unsaved work", function()
         assert.is_not_nil(captured, "a dirty close must stash")
         assert.are.equal("EDITED description", captured.code_challenge.description)
     end)
+
+    it("lets the user :write a pane that was rescued because the stash failed", function()
+        -- The pane's BufWriteCmd only prints a hint and clears 'modified'. Left
+        -- on a rescued pane it swallowed the first :write of the one remaining
+        -- copy and the text was closed away unwritten.
+        local m = model()
+        m.id = "../../not-an-id" -- refused by the stash, so nothing is stashed
+        ws = KataEditor:new(m):mount()
+        vim.api.nvim_buf_set_lines(ws.bufs.answer, 0, -1, false, { "def hi(): return 2" })
+        local editors = _Cw_state.kata_editors
+        ws:_unmount()
+        vim.wait(1000, function() return #_Cw_state.kata_editors < #editors end)
+
+        local target = vim.fn.tempname()
+        vim.api.nvim_buf_call(ws.bufs.answer, function()
+            vim.cmd("silent write " .. vim.fn.fnameescape(target))
+        end)
+        assert.are.equal(1, vim.fn.filereadable(target), ":write wrote nothing")
+        assert.are.same({ "def hi(): return 2" }, vim.fn.readfile(target))
+        vim.fn.delete(target)
+    end)
 end)

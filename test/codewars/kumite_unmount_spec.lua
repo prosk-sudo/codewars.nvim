@@ -69,6 +69,25 @@ describe("closing a dirty kumite", function()
         assert.truthy(vim.api.nvim_buf_get_name(fixture):find("RESCUED", 1, true))
     end)
 
+    it("lets the user :write the rescued code and fixture to a real file", function()
+        -- The workspace's BufWriteCmd only prints a hint and clears 'modified'.
+        -- Kept on a rescued buffer it swallowed the first :write of the one
+        -- remaining copy, reported nothing, and the text was closed away.
+        local ws = open("../../not-an-id")
+        close(ws)
+        for _, text in ipairs({ EDITED_CODE, EDITED_FIXTURE }) do
+            local bufnr = buffer_holding(text)
+            assert.is_not_nil(bufnr, "no rescued buffer holds " .. text)
+            local target = vim.fn.tempname()
+            vim.api.nvim_buf_call(bufnr, function()
+                vim.cmd("silent write " .. vim.fn.fnameescape(target))
+            end)
+            assert.are.equal(1, vim.fn.filereadable(target), ":write wrote nothing for " .. text)
+            assert.are.same(vim.split(text, "\n"), vim.fn.readfile(target))
+            vim.fn.delete(target)
+        end
+    end)
+
     it("keeps a fixture the user had toggled out of view", function()
         local ws = open("../../not-an-id")
         ws.fixture_split:hide()
