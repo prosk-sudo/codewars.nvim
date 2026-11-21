@@ -1,6 +1,22 @@
 -- Minimal init for running tests with plenary.nvim
 -- Usage: nvim --headless -u test/minimal_init.lua -c "PlenaryBustedDirectory test/ {minimal_init = 'test/minimal_init.lua'}"
 
+-- The plugin keeps the cookie, caches and kata stashes under
+-- stdpath("cache") and solutions under stdpath("data"). Any spec that saved
+-- something without redirecting storage itself wrote into the developer's
+-- real ones (a run rewrote a kata stash in the real cache). Every spec
+-- process gets its own throwaway root instead: stdpath() reads these on
+-- each call, and tempname() lives under Neovim's own temp dir, which is
+-- removed when the process exits. Set before anything loads the plugin,
+-- whose storage defaults are computed when its config is first required.
+local test_root = vim.fn.tempname()
+vim.env.CW_TEST_ROOT = test_root
+for _, kind in ipairs({ "CACHE", "DATA", "STATE" }) do
+    local dir = test_root .. "/" .. kind:lower()
+    vim.fn.mkdir(dir, "p")
+    vim.env["XDG_" .. kind .. "_HOME"] = dir
+end
+
 local plenary_dir = os.getenv("PLENARY_DIR") or "/tmp/plenary.nvim"
 local nui_dir = os.getenv("NUI_DIR") or "/tmp/nui.nvim"
 
