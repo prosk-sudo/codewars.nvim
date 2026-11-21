@@ -50,23 +50,36 @@ describe("unfinished", function()
         assert.are.same({}, listed())
     end)
 
-    -- Re-indenting is not work, but whitespace between tokens is part of the
-    -- code: "hello world" and "helloworld" are different strings.
+    -- Indentation, trailing spaces, blank lines and the final newline are not
+    -- work on the kata. Anything else is, down to one space inside a string.
     it("tells a changed space inside a string literal from the starter", function()
         unfinished.seeded("greet.py", 'def f():\n    return "hello world"')
         file("greet.py", 'def f():\n    return "helloworld"')
         assert.are.same({ "greet.py" }, listed())
     end)
 
-    it("tells whitespace between tokens from the starter", function()
-        unfinished.seeded("multiply.py", "def f(x):\n    y = x + 1")
-        file("multiply.py", "def f(x):\n    y = x+1")
-        assert.are.same({ "multiply.py" }, listed())
+    it("tells two spaces from one inside a string literal, either way round", function()
+        unfinished.seeded("greet.py", 'def f():\n    return "hello  world"')
+        file("greet.py", 'def f():\n    return "hello world"')
+        assert.are.same({ "greet.py" }, listed())
+        unfinished.seeded("greet.py", 'def f():\n    return "hello world"')
+        file("greet.py", 'def f():\n    return "hello  world"')
+        assert.are.same({ "greet.py" }, listed())
     end)
 
-    it("passes over a starter whose indentation, runs of spaces and blank lines changed", function()
+    it("tells whitespace between tokens from the starter", function()
+        unfinished.seeded("multiply.py", "def f(x):\n    y = x + 1")
+        for _, changed in ipairs({ "y = x+1", "y  =  x + 1", "y = x\t+ 1" }) do
+            file("multiply.py", "def f(x):\n    " .. changed)
+            assert.are.same({ "multiply.py" }, listed(), changed)
+        end
+    end)
+
+    it("passes over a starter whose indentation, trailing spaces, blank lines and final newline changed", function()
         unfinished.seeded("multiply.py", "def f(x):\n    y = x + 1\n    return y")
-        file("multiply.py", "def f(x):\n\n\t y  =  x +\t1  \n\n  return y\n\n")
+        file("multiply.py", "def f(x):\n\n\t y = x + 1  \n\n  return y\n\n")
+        assert.are.same({}, listed())
+        file("multiply.py", "def f(x):\r\n  y = x + 1\r\n  return y\r\n")
         assert.are.same({}, listed())
     end)
 

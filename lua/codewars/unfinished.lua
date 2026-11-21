@@ -31,16 +31,19 @@ local function legacy_fingerprint(text)
     return vim.fn.sha256((text:gsub("%s+", "")))
 end
 
---- Layout does not count: re-indenting a starter, blank lines, or the newline
---- an editor adds at the end of a file are not work on the kata. Whitespace
---- between tokens does, so each line is trimmed and its inner runs of
---- whitespace become one space, and nothing more is dropped.
+--- Indentation, trailing spaces, blank lines and the final newline are not
+--- work on the kata, so re-indenting an untouched starter, or an editor adding
+--- a newline, does not make it look started. Anything else is: each line is
+--- kept exactly between its first and last non-blank character, so a space
+--- inside a string or between two tokens counts. (That includes a change to
+--- the indentation of a line inside a multi-line string, which is
+--- deliberately not told apart from re-indenting.)
 ---@param text string
 ---@return string
 function M.fingerprint(text)
     local lines = {}
     for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
-        line = vim.trim((line:gsub("%s+", " ")))
+        line = vim.trim(line)
         if line ~= "" then lines[#lines + 1] = line end
     end
     return PRINT_V2 .. vim.fn.sha256(table.concat(lines, "\n"))
