@@ -213,11 +213,44 @@ describe("Cookie file permissions", function()
         assert.equals(OLD, Path:new(path):read())
     end)
 
+    -- fs_write says how many bytes it stored, which can be fewer than it was
+    -- given. Count only the cookie's own text: other cache files are written
+    -- through the same call while a save is cleaning up after itself.
+    local function is_cookie_text(data)
+        return data ~= "" and STR:sub(-#data) == data
+    end
+
+    it("writes the whole cookie when the filesystem takes it in pieces", function()
+        local calls = 0
+        vim.loop.fs_write = function(fd, data, ...)
+            if is_cookie_text(data) then
+                calls = calls + 1
+                data = data:sub(1, 5)
+            end
+            return real.fs_write(fd, data, ...)
+        end
+
+        assert.is_nil(Cookie.set(STR))
+        restore()
+
+        assert.is_true(calls > 1)
+        assert.equals(STR, Path:new(path):read())
+        assert.equals("xyz", Cookie.get().session_id)
+    end)
+
     -- Better the old session than none, and never a leaked descriptor or a
     -- half-written file next to the cookie. A saved session is only replaced
     -- once the new one is complete.
-    for _, step in ipairs({ "fs_fchmod", "fs_write", "fs_rename" }) do
-        it(("keeps the saved cookie, closes the file and leaves no temporary file when %s fails"):format(step), function()
+    local failures = {
+        { step = "fs_fchmod", fails = function() return nil, "EIO: i/o error" end, message = "EIO" },
+        { step = "fs_write", fails = function() return nil, "EIO: i/o error" end, message = "EIO" },
+        { step = "fs_rename", fails = function() return nil, "EIO: i/o error" end, message = "EIO" },
+        -- A call that stores nothing would otherwise be retried for ever.
+        { step = "fs_write", fails = function() return 0 end, message = "short write", label = "fs_write stores nothing" },
+    }
+    for _, failure in ipairs(failures) do
+        local label = failure.label or (failure.step .. " fails")
+        it(("keeps the saved cookie, closes the file and leaves no temporary file when %s"):format(label), function()
             precreate(420, OLD)
             local opened, closed = {}, {}
             vim.loop.fs_open = function(p, ...)
@@ -229,13 +262,13 @@ describe("Cookie file permissions", function()
                 closed[#closed + 1] = fd
                 return real.fs_close(fd, ...)
             end
-            vim.loop[step] = function() return nil, "EIO: i/o error" end
+            vim.loop[failure.step] = failure.fails
 
             local ok, err = pcall(Cookie.set, STR)
             restore()
 
             assert.is_false(ok)
-            assert.is_truthy(tostring(err):find("EIO", 1, true))
+            assert.is_truthy(tostring(err):find(failure.message, 1, true))
             assert.equals(OLD, Path:new(path):read())
             assert.are.same({ "cookie" }, vim.fn.readdir(dir:absolute()))
             assert.equals(1, #opened)

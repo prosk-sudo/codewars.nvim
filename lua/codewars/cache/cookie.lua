@@ -179,7 +179,16 @@ local function write_private(path, str)
     local fd = assert(uv.fs_open(tmp, "wx", OWNER_ONLY))
     local ok, err = pcall(function()
         assert(uv.fs_fchmod(fd, OWNER_ONLY))
-        assert(uv.fs_write(fd, str, -1))
+        -- fs_write returns how many bytes it stored, which can be fewer than
+        -- it was given. Renaming a part-written file over the saved cookie
+        -- would lose the session, so keep going until all of it is out, and
+        -- give up on a call that stores nothing rather than retrying for ever.
+        local written = 0
+        while written < #str do
+            local count = assert(uv.fs_write(fd, str:sub(written + 1), written))
+            assert(count > 0, "short write: could not store the whole cookie")
+            written = written + count
+        end
     end)
     -- Closed whether or not the writes worked, so a failure leaks nothing.
     local closed, close_err = uv.fs_close(fd)
