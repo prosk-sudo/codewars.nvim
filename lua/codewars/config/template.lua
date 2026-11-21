@@ -156,6 +156,8 @@ local M = {
     ---@type table
     --- Override default highlight colors. Example:
     --- theme = { codewars_header = { fg = "#ff0000" } }
+    --- Or follow your colorscheme with `link` (see CONFIGS.md):
+    --- theme = { codewars_breadcrumb = { link = "Comment" } }
     theme = {},
 
     ---@type table

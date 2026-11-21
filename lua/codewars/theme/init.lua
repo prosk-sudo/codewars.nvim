@@ -103,13 +103,51 @@ local highlights = {
     codewars_lang_cfml = { fg = "#ED2CD6" },        -- CFML magenta
 }
 
+--- A highlight link cannot carry attributes, so `{ link = "X", bold = true }`
+--- becomes X's colors plus the style keys. Only the foreground is taken, never
+--- the background, so a float keeps its own. Read from the colorscheme as it is
+--- now; apply() runs again after every `:colorscheme`.
+---@param target string highlight group to take the colors from
+---@param style table attributes to set on top (an explicit fg wins)
+---@return table
+local function resolve(target, style)
+    local base = vim.api.nvim_get_hl(0, { name = target, link = false })
+    return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
+end
+
+--- The definition to set for one group.
+--- A `link` override replaces the default spec instead of merging into it:
+--- merged, `{ fg = "#b1361e", bold = true, link = "Comment" }` is both a link
+--- and a color. Any other override merges over the default as before.
+---@param spec table the default definition
+---@param override table? the user's `theme[name]`
+---@return table
+local function build(spec, override)
+    if not override then
+        return spec
+    end
+    if not override.link then
+        return vim.tbl_deep_extend("force", spec, override)
+    end
+
+    local style = {}
+    for key, value in pairs(override) do
+        if key ~= "link" then
+            style[key] = value
+        end
+    end
+    if next(style) == nil then
+        return { link = override.link }
+    end
+    return resolve(override.link, style)
+end
+
 local function apply()
     local config = require("codewars.config")
     local overrides = config.user.theme or {}
 
-    for name, val in pairs(highlights) do
-        local hl = vim.tbl_deep_extend("force", val, overrides[name] or {})
-        vim.api.nvim_set_hl(0, name, hl)
+    for name, spec in pairs(highlights) do
+        vim.api.nvim_set_hl(0, name, build(spec, overrides[name]))
     end
 end
 

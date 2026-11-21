@@ -76,6 +76,39 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
             assert.is_true(h.bold) -- kept from the default spec
             assert.is_nil(h.link)
         end)
+
+        it("a link-only override becomes a real link", function()
+            config_stub.user = { theme = { codewars_header = { link = "Comment" } } }
+            theme.setup()
+            local h = raw("codewars_header")
+            assert.are.equal("Comment", h.link)
+            -- replaced, not merged: nothing of the default spec is left
+            assert.is_nil(h.fg)
+            assert.is_nil(h.bold)
+            assert.are.equal(0x778899, resolved("codewars_header").fg)
+        end)
+
+        it("a link plus style keys takes the target fg and the style", function()
+            config_stub.user = { theme = { codewars_breadcrumb = { link = "Title", italic = true } } }
+            theme.setup()
+            local h = raw("codewars_breadcrumb")
+            assert.are.equal(0x112233, h.fg)
+            assert.is_true(h.italic)
+            assert.is_nil(h.link)
+            assert.is_nil(h.bg) -- never the target's background
+        end)
+
+        it("a link plus style keys carries the target ctermfg", function()
+            config_stub.user = { theme = { codewars_breadcrumb = { link = "Comment", bold = true } } }
+            theme.setup()
+            assert.are.equal(244, raw("codewars_breadcrumb").ctermfg)
+        end)
+
+        it("an explicit fg beats the link target's fg", function()
+            config_stub.user = { theme = { codewars_breadcrumb = { link = "Comment", fg = "#ff0000", bold = true } } }
+            theme.setup()
+            assert.are.equal(0xff0000, raw("codewars_breadcrumb").fg)
+        end)
     end)
 
     describe("on :colorscheme", function()
@@ -92,6 +125,26 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
             vim.cmd.colorscheme("default")
             local h = raw("codewars_header")
             assert.are.equal(0x00ff00, h.fg)
+            assert.is_true(h.bold)
+        end)
+
+        it("keeps a link override a link", function()
+            config_stub.user = { theme = { codewars_header = { link = "Comment" } } }
+            theme.setup()
+            use_colorscheme(0xaabbcc)
+            assert.are.equal("Comment", raw("codewars_header").link)
+            assert.is_nil(raw("codewars_header").fg) -- still replaced, not merged
+            assert.are.equal(0xaabbcc, resolved("codewars_header").fg)
+        end)
+
+        it("re-resolves a link plus style override from the new colorscheme", function()
+            config_stub.user = { theme = { codewars_breadcrumb = { link = "Comment", bold = true } } }
+            theme.setup()
+            assert.are.equal(0x778899, raw("codewars_breadcrumb").fg)
+            use_colorscheme(0xaabbcc)
+            local h = raw("codewars_breadcrumb")
+            assert.are.equal(0xaabbcc, h.fg)
+            assert.are.equal(99, h.ctermfg)
             assert.is_true(h.bold)
         end)
     end)
