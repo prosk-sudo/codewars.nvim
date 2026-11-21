@@ -74,12 +74,125 @@ function problemlist.building()
     return build and build.found or nil
 end
 
---- Rebuild the list in the background when it is stale. Returns true when a
---- refresh was started (or is already running). Silent otherwise.
+local DEFAULT_CHECK_INTERVAL = 24 * 60 * 60
+
+---@return integer seconds between looks for new and changed kata
+local function check_interval()
+    return (config.user.cache or {}).check_interval or DEFAULT_CHECK_INTERVAL
+end
+
+--- Pages of the "Newest" listing one look reads at most. A day's worth of
+--- new and changed kata fits in one or two; past this many, whatever is
+--- older is left to the next full rebuild.
+problemlist.CHECK_MAX_PAGES = 5
+
+--- Whether two entries for the same kata differ in what the list shows.
+--- Satisfaction moves with every vote: it is carried along, but counting it
+--- would read every look to its page limit.
+local function differs(old, new)
+    if old.name ~= new.name or old.rank_id ~= new.rank_id then return true end
+    local before, after = old.languages or {}, new.languages or {}
+    if #before ~= #after then return true end
+    local had = {}
+    for _, lang in ipairs(before) do had[lang] = true end
+    for _, lang in ipairs(after) do
+        if not had[lang] then return true end
+    end
+    return false
+end
+
+local checking = false
+
+--- Merge in the kata published or changed since the list was built or last
+--- looked at, in the background.
+---
+--- A full build is ~290 pages under a rate limit -- minutes -- to pick up
+--- what is usually a handful of new kata. Codewars' "Newest" listing puts
+--- them first, so this reads it until a page brings nothing the list does
+--- not already have. Kept to CHECK_MAX_PAGES; the full rebuild every
+--- `cache.update_interval` still catches anything this misses.
+---@return boolean started false when not due, already running, or there is no list
+function problemlist.check_for_new()
+    if build or checking then return false end
+    local data = cache_utils.read_json(cache_file())
+    if type(data) ~= "table" or type(data.items) ~= "table" then return false end
+    local last = tonumber(data.checked_at) or tonumber(data.timestamp) or 0
+    if os.time() - last <= check_interval() then return false end
+    checking = true
+
+    local log = require("codewars.logger")
+    local search = require("codewars.api.search")
+    local items = data.items
+    local index = {}
+    for i, item in ipairs(items) do
+        local key = item.id or item.slug
+        if key then index[key] = i end
+    end
+    local added, updated = 0, 0
+
+    --- Only a look that finished is recorded: a failed one leaves
+    --- checked_at alone, so the next open tries again.
+    local function finish(ok)
+        checking = false
+        if not ok then return end
+        -- A full build that ran meanwhile wrote a newer list; this one,
+        -- read before it, would put the old one back.
+        local current = cache_utils.read_json(cache_file())
+        if build or type(current) ~= "table" or current.timestamp ~= data.timestamp then
+            return
+        end
+        data.checked_at = os.time()
+        cache_utils.write_json(cache_file(), data)
+        if added + updated > 0 then
+            log.info(("Kata list: %d new, %d updated"):format(added, updated))
+        end
+    end
+
+    local function look(page)
+        search.fetch_page({
+            language = "", -- every kata, as the full build has
+            order = "sort_date+desc", -- the site's "Newest"
+        }, page, function(results, has_more, err)
+            if err then
+                log.debug("kata list check failed: " .. tostring(err.msg))
+                return finish(false)
+            end
+            local changes = 0
+            for _, entry in ipairs(results or {}) do
+                local key = entry.id or entry.slug
+                local at = key and index[key]
+                if key and not at then
+                    items[#items + 1] = entry
+                    index[key] = #items
+                    added, changes = added + 1, changes + 1
+                elseif at and differs(items[at], entry) then
+                    items[at] = vim.tbl_extend("force", items[at], entry)
+                    updated, changes = updated + 1, changes + 1
+                end
+            end
+            if changes == 0 or not has_more or page + 1 >= problemlist.CHECK_MAX_PAGES then
+                return finish(true)
+            end
+            vim.defer_fn(function() look(page + 1) end, problemlist.PACE_MS)
+        end)
+    end
+
+    -- Deferred: the caller is opening a picker and must not wait on this.
+    vim.defer_fn(function() look(0) end, 0)
+    return true
+end
+
+--- Rebuild the list in the background when it is stale; otherwise look for
+--- new and changed kata once a day. Returns true when a rebuild was started
+--- (or is already running). Silent otherwise.
 ---@return boolean
 function problemlist.refresh_if_stale()
     local items, stale, age = problemlist.get()
-    if not items or not stale then return false end
+    if not items then return false end
+    if not stale then
+        problemlist.check_for_new()
+        return false
+    end
     if build then return true end
     local days = math.floor((age or 0) / 86400)
     require("codewars.logger").info(("Problem list is %d days old — refreshing in the background."):format(days))
