@@ -106,13 +106,24 @@ describe("the recently completed sort", function()
         assert.is_nil(entry(menu, "Recently completed"))
     end)
 
+    --- Choose `label` in a Sort menu, then let the list it schedules to
+    --- reopen land on the stubbed vim.ui.select. Left pending, that callback
+    --- fires after the last after_each has put the real vim.ui.select back:
+    --- it blocks on a prompt nobody answers until plenary's timeout kills
+    --- the spec process, which makes the whole suite exit 1 with every test
+    --- green.
+    local function choose_sort(menu, label)
+        local before = #selects
+        menu.on_select(entry(menu, label).value)
+        vim.wait(200, function() return #selects > before end)
+        assert.is_true(#selects > before, "choosing a sort did not reopen the list")
+    end
+
     it("is never remembered for :CW list or :CW next", function()
-        local menu = sort_menu_for(solved)
-        menu.on_select(entry(menu, "Name (A-Z)").value)
+        choose_sort(sort_menu_for(solved), "Name (A-Z)")
         assert.are.equal("name", picker.current_filters().sort)
 
-        menu = sort_menu_for(solved)
-        menu.on_select(entry(menu, "Recently completed").value)
+        choose_sort(sort_menu_for(solved), "Recently completed")
         assert.are.equal("name", picker.current_filters().sort)
     end)
 end)
