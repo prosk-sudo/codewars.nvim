@@ -312,12 +312,18 @@ function Kata:_abandon_mount()
     self._on_mounted = nil
 end
 
---- This kata is already open in a tab: there is one per kata and language,
---- and the runner and the rest of the plugin look the kata up by it, so a
---- second mount goes to that tab instead of opening another. A file picked
---- from a list is the one case where that can be a different file than the
---- user asked for -- `<slug>.py` open, `<id>.py` picked -- and then the tab
---- is not silently passed off as the pick.
+--- This kata is already open in a tab: there is one per kata and language
+--- (detect_duplicate_kata, :CW recent and the focus layer are built on it),
+--- so a second mount goes to that tab instead of opening another. A file
+--- picked from a list is the one case where that can be a different file
+--- than the user asked for -- `<slug>.py` open, `<id>.py` picked -- and then
+--- the tab is not silently passed off as the pick.
+---
+--- Known limitation, accepted: the warning explains the outcome but the
+--- picked file is not opened. It only arises when one kata has both an
+--- id-named and a slug-named file for the same language, which only files
+--- from old plugin versions can be. Closing the open tab and picking again
+--- opens the picked file.
 ---@param tabp integer
 ---@param open cw.ui.Kata? the instance open in that tab
 function Kata:_go_to_open_tab(tabp, open)
