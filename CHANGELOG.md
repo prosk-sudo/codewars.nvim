@@ -131,7 +131,8 @@ All notable changes to codewars.nvim are documented here.
   and renamed into place -- so a write that fails halfway, a full disk say,
   keeps the previous cache, the kata marked locally in it included, where it
   used to leave an empty or partial file. A replaced file keeps its
-  permissions exactly, a group-writable one included.
+  permissions exactly, a group-writable one included, and its owner and
+  group where the system lets the user set them.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

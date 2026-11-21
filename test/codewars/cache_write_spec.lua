@@ -63,19 +63,19 @@ describe("cache.utils write_json", function()
     end)
 
     describe("replaces the file whole, or not at all", function()
-        local path, original, real_write, real_rename, real_open, real_fchmod
+        local path, original, real_write, real_rename, real_open, real_fchmod, real_fchown
 
         before_each(function()
             path = P:new(tmp .. "/cache.json")
             assert.is_true((cache_utils.write_json(path, { items = { "the", "old", "cache" } })))
             original = bytes(path.filename)
             real_write, real_rename = uv.fs_write, uv.fs_rename
-            real_open, real_fchmod = uv.fs_open, uv.fs_fchmod
+            real_open, real_fchmod, real_fchown = uv.fs_open, uv.fs_fchmod, uv.fs_fchown
         end)
 
         after_each(function()
             uv.fs_write, uv.fs_rename = real_write, real_rename
-            uv.fs_open, uv.fs_fchmod = real_open, real_fchmod
+            uv.fs_open, uv.fs_fchmod, uv.fs_fchown = real_open, real_fchmod, real_fchown
         end)
 
         --- Make every file the process creates lose the bits of `umask`, as
@@ -160,6 +160,40 @@ describe("cache.utils write_json", function()
             assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
             assert.equals(tonumber("664", 8), mode_of(path.filename))
             assert.same({ items = { "new" } }, cache_utils.read_json(path))
+        end)
+
+        -- A new inode belongs to whoever made it. A cache shared through a
+        -- project group has to stay in that group when it is refreshed.
+        it("gives the replacement the owner and group of the file it replaces", function()
+            local stat = uv.fs_stat(path.filename)
+            local given
+            uv.fs_fchown = function(fd, uid, gid)
+                given = { uid = uid, gid = gid }
+                return real_fchown(fd, uid, gid)
+            end
+            assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
+            assert.same({ uid = stat.uid, gid = stat.gid }, given)
+        end)
+
+        -- An unprivileged user usually cannot give a file away, and a cache in
+        -- one's own cache directory has no one to give it to: when it fails,
+        -- the write goes on, mode and all.
+        it("goes on with the write when the owner cannot be set", function()
+            assert(uv.fs_chmod(path.filename, tonumber("664", 8)))
+            uv.fs_fchown = function() return nil, "EPERM: operation not permitted" end
+            with_umask(tonumber("022", 8))
+            local ok = cache_utils.write_json(path, { items = { "new" } })
+            assert.is_true(ok)
+            assert.same({ items = { "new" } }, cache_utils.read_json(path))
+            assert.equals(tonumber("664", 8), mode_of(path.filename))
+            assert.are.same({ "cache.json" }, listing())
+            assert.are.same({}, errors, "a best-effort step was logged as an error")
+        end)
+
+        it("leaves the owner of a new file to whoever creates it", function()
+            uv.fs_fchown = function() error("set the owner of a new file") end
+            local fresh = P:new(tmp .. "/fresh.json")
+            assert.is_true((cache_utils.write_json(fresh, { a = 1 })))
         end)
 
         it("keeps the old file, with no temp file, when the mode cannot be set", function()

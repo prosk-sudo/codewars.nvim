@@ -92,6 +92,12 @@ function M.write_json(path, data, opts)
         local set, chmod_err = uv.fs_fchmod(fd, mode)
         if not set then written, write_err = false, tostring(chmod_err or "could not set the file's mode") end
     end
+    -- The new inode is owned by whoever made it, and a cache shared through
+    -- a project group would leave that group. So hand it back to the file's
+    -- owner and group -- best effort: an unprivileged user usually cannot
+    -- give a file away, and the caches in one's own cache directory have
+    -- nobody to give them to, so a refusal is not a failed write.
+    if written and existing then uv.fs_fchown(fd, existing.uid, existing.gid) end
     if written then written, write_err = write_all(fd, encoded) end
     local closed, close_err = uv.fs_close(fd)
     if written and not closed then written, write_err = false, tostring(close_err) end
