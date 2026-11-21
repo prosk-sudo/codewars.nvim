@@ -71,13 +71,16 @@ end
 --- back to a replacement.
 ---@param dest string
 ---@param text string
+---@param full_mode integer? the file's mode, special bits included, to put back
 ---@return boolean ok
 ---@return string? err
-local function write_in_place(dest, text)
+local function write_in_place(dest, text, full_mode)
     local uv = vim.uv or vim.loop
     local fd, open_err = uv.fs_open(dest, "w", 438)
     if not fd then return false, tostring(open_err) end
     local ok, err = write_all(fd, text)
+    -- Writing a file can clear its setuid and setgid bits for an ordinary user.
+    if ok and full_mode then uv.fs_fchmod(fd, full_mode) end
     local closed, close_err = uv.fs_close(fd)
     if ok and not closed then ok, err = false, tostring(close_err) end
     return ok, err
@@ -121,31 +124,52 @@ function M.write_json(path, data, opts)
     -- Beside the file that is really there, so the rename stays on one volume.
     dest = uv.fs_realpath(dest) or dest
     local existing = uv.fs_stat(dest)
-    local mode = existing and bit.band(existing.mode, tonumber("777", 8)) or 438
+    -- The permission bits to create it with, and the whole mode (setuid,
+    -- setgid and sticky bits too) to give it once it exists.
+    local perms = existing and bit.band(existing.mode, tonumber("777", 8)) or 438
+    local full_mode = existing and bit.band(existing.mode, tonumber("7777", 8))
     local temp = ("%s.tmp.%d.%d"):format(dest, uv.os_getpid(), uv.hrtime())
 
-    local fd, open_err = uv.fs_open(temp, "wx", mode)
-    if not fd then return fail(open_err) end
+    local fd, open_err = uv.fs_open(temp, "wx", perms)
+    if not fd then
+        -- Nothing can be created beside the file (a directory one may not
+        -- write to, say). The file itself may still be writable, so write
+        -- that, as Vim does; a new file has nothing to write in place.
+        if not existing then return fail(open_err) end
+        local in_place, place_err = write_in_place(dest, encoded, full_mode)
+        if not in_place then return fail(place_err) end
+        return true, nil
+    end
+
+    -- Ownership first, and only on a replacement: a new file belongs to whoever
+    -- made it. It is kept if it can be (keep_owner); if not, this inode would
+    -- be the wrong owner, so it is abandoned and the file written in place.
+    -- Before the bytes and the mode, because changing the owner clears setuid
+    -- and setgid.
+    if existing and not keep_owner(fd, existing) then
+        uv.fs_close(fd)
+        uv.fs_unlink(temp)
+        local in_place, place_err = write_in_place(dest, encoded, full_mode)
+        if not in_place then return fail(place_err) end
+        return true, nil
+    end
+
+    -- The bytes go in first: writing a file can clear its setuid and setgid
+    -- bits for an ordinary user, so the mode is set after them.
+    local written, write_err = write_all(fd, encoded)
 
     -- fs_open's mode is masked by the umask a second time, which would strip
     -- bits the file already had (a group-writable cache refreshed under
     -- umask 022 came back 0644). Set the exact mode instead -- but only on a
-    -- replacement: a new file gets the default, umask and all.
-    local written, write_err = true, nil
-    if existing then
-        local set, chmod_err = uv.fs_fchmod(fd, mode)
+    -- replacement: a new file gets the default, umask and all. The special
+    -- bits go with it; the system may refuse them (the kernel clears setgid
+    -- for a group the user is not in, BSDs refuse a sticky bit to an
+    -- ordinary user), and then the ordinary bits are what is kept.
+    if written and existing then
+        local set, chmod_err = uv.fs_fchmod(fd, full_mode)
+        if not set and full_mode ~= perms then set, chmod_err = uv.fs_fchmod(fd, perms) end
         if not set then written, write_err = false, tostring(chmod_err or "could not set the file's mode") end
     end
-    -- Ownership is kept if it can be (keep_owner); if not, this inode would
-    -- be the wrong owner, so it is abandoned and the file written in place.
-    if written and existing and not keep_owner(fd, existing) then
-        uv.fs_close(fd)
-        uv.fs_unlink(temp)
-        local in_place, place_err = write_in_place(dest, encoded)
-        if not in_place then return fail(place_err) end
-        return true, nil
-    end
-    if written then written, write_err = write_all(fd, encoded) end
     local closed, close_err = uv.fs_close(fd)
     if written and not closed then written, write_err = false, tostring(close_err) end
     if not written then

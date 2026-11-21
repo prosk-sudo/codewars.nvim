@@ -64,6 +64,7 @@ describe("cache.utils write_json", function()
 
     describe("replaces the file whole, or not at all", function()
         local path, original, real_write, real_rename, real_open, real_fchmod, real_fchown
+        local function real_fstat_mode(fd) return uv.fs_fstat(fd).mode end
 
         before_each(function()
             path = P:new(tmp .. "/cache.json")
@@ -88,6 +89,17 @@ describe("cache.utils write_json", function()
         end
 
         local function mode_of(file) return bit.band(uv.fs_stat(file).mode, tonumber("777", 8)) end
+
+        --- Writing a file clears its setuid and setgid bits for an ordinary
+        --- user on some systems (always for setuid, for setgid when the file
+        --- is group-executable); simulate it, since this one may not.
+        local function clearing_special_bits_on_write()
+            uv.fs_write = function(fd, data, offset)
+                local count, err = real_write(fd, data, offset)
+                real_fchmod(fd, bit.band(real_fstat_mode(fd), tonumber("777", 8)))
+                return count, err
+            end
+        end
 
         it("leaves a successful write's file in place and no temp file behind", function()
             assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
@@ -150,6 +162,35 @@ describe("cache.utils write_json", function()
             assert(uv.fs_chmod(path.filename, tonumber("600", 8)))
             assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
             assert.equals(tonumber("600", 8), bit.band(uv.fs_stat(path.filename).mode, tonumber("777", 8)))
+        end)
+
+        -- The special bits are part of the mode: a shared cache directory's
+        -- files are often setgid. (The kernel may still clear setgid for a
+        -- group the user is not in.)
+        it("keeps a setgid bit, even where writing the file clears it", function()
+            assert(uv.fs_chmod(path.filename, tonumber("2664", 8)))
+            clearing_special_bits_on_write()
+            assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
+            assert.equals(tonumber("2664", 8), bit.band(uv.fs_stat(path.filename).mode, tonumber("7777", 8)))
+        end)
+
+        it("keeps a sticky bit, where the system lets the user set one", function()
+            if not uv.fs_chmod(path.filename, tonumber("1664", 8)) then
+                return pending("this system does not let an ordinary user set the sticky bit on a file")
+            end
+            assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
+            assert.equals(tonumber("1664", 8), bit.band(uv.fs_stat(path.filename).mode, tonumber("7777", 8)))
+        end)
+
+        it("keeps the ordinary bits when the system refuses to set the special ones", function()
+            assert(uv.fs_chmod(path.filename, tonumber("2664", 8)))
+            uv.fs_fchmod = function(fd, mode)
+                if bit.band(mode, tonumber("7000", 8)) ~= 0 then return nil, "EFTYPE: inappropriate file type" end
+                return real_fchmod(fd, mode)
+            end
+            assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
+            assert.equals(tonumber("664", 8), mode_of(path.filename))
+            assert.same({ items = { "new" } }, cache_utils.read_json(path))
         end)
 
         -- fs_open's mode is masked by the umask again, so a file shared by a
@@ -272,6 +313,53 @@ describe("cache.utils write_json", function()
                     assert.is_false(ok)
                     assert.truthy(tostring(err):find("EACCES", 1, true), err)
                     assert.equals(original, bytes(path.filename))
+                    assert.are.same({ "cache.json" }, listing())
+                end)
+            end)
+
+            -- A file one may write to in a directory one may not: nothing can
+            -- be created beside it, but the file itself can be written.
+            describe("when nothing can be created beside the file", function()
+                before_each(function()
+                    uv.fs_open = function(file, flags, mode, ...)
+                        if flags == "wx" then return nil, "EACCES: permission denied" end
+                        return real_open(file, flags, mode, ...)
+                    end
+                end)
+
+                it("writes the existing file in place instead, keeping its inode", function()
+                    local before = inode()
+                    assert.is_true((cache_utils.write_json(path, { items = { "written", "in", "place" } })))
+                    assert.are.equal(before, inode(), "replaced the file")
+                    assert.same({ items = { "written", "in", "place" } }, cache_utils.read_json(path))
+                    assert.are.same({ "cache.json" }, listing())
+                    assert.are.same({}, errors, "a fallback was logged as an error")
+                end)
+
+                it("puts back a setgid bit that writing the file cleared", function()
+                    assert(uv.fs_chmod(path.filename, tonumber("2664", 8)))
+                    clearing_special_bits_on_write()
+                    assert.is_true((cache_utils.write_json(path, { items = { "written" } })))
+                    assert.equals(tonumber("2664", 8), bit.band(uv.fs_stat(path.filename).mode, tonumber("7777", 8)))
+                end)
+
+                it("reports a failure when the file itself cannot be written either", function()
+                    local plain_open = uv.fs_open
+                    uv.fs_open = function(file, flags, mode, ...)
+                        if flags == "w" then return nil, "EACCES: permission denied" end
+                        return plain_open(file, flags, mode, ...)
+                    end
+                    local ok, err = cache_utils.write_json(path, { items = { "new" } }, { quiet = true })
+                    assert.is_false(ok)
+                    assert.truthy(tostring(err):find("EACCES", 1, true), err)
+                    assert.equals(original, bytes(path.filename))
+                end)
+
+                it("reports a failure for a new file, which has nothing to write in place", function()
+                    local fresh = P:new(tmp .. "/fresh.json")
+                    local ok, err = cache_utils.write_json(fresh, { a = 1 }, { quiet = true })
+                    assert.is_false(ok)
+                    assert.truthy(tostring(err):find("EACCES", 1, true), err)
                     assert.are.same({ "cache.json" }, listing())
                 end)
             end)
