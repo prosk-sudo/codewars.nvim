@@ -1157,6 +1157,14 @@ function cmd.template_status()
     log.info(table.concat(parts, " "))
 end
 
+-- Letters, digits, hyphen and underscore: every Codewars slug and the 24-hex
+-- id are made of these. The slug comes from the server and ends up in a URL
+-- that an OS opener receives, and the Windows opener, cmd.exe, acts on & | ^ %
+-- and quotes even inside a single argv element (vim.ui.open uses it too). A
+-- slug outside this set is refused rather than escaped, since each shell
+-- escapes differently.
+local OPEN_SLUG_PATTERN = "^[A-Za-z0-9_%-]+$"
+
 function cmd.open()
     local utils = require("codewars.utils")
     local k = utils.curr_kata()
@@ -1164,18 +1172,33 @@ function cmd.open()
         return
     end
 
-    local url = "https://www.codewars.com/kata/" .. k.slug
+    local slug = k.slug
+    if type(slug) ~= "string" or not slug:match(OPEN_SLUG_PATTERN) then
+        return log.error(
+            ("Won't open this kata: its slug %q has characters other than letters, digits, - and _"):format(tostring(slug))
+        )
+    end
+
+    local url = "https://www.codewars.com/kata/" .. slug
     if vim.ui.open then
         vim.ui.open(url)
     else
+        -- The URL must never be spliced into a string for the shell: an argv
+        -- table hands it to the opener as one argument.
         local os_name = vim.loop.os_uname().sysname
         local open_cmd
         if os_name == "Darwin" then
-            open_cmd = ("open '%s'"):format(url)
+            open_cmd = { "open", url }
         elseif os_name == "Linux" then
-            open_cmd = ("xdg-open '%s'"):format(url)
+            open_cmd = { "xdg-open", url }
         else
-            open_cmd = ('start "" "%s"'):format(url)
+            -- `start` is a cmd.exe builtin, so there is no way around cmd.exe,
+            -- and it reads & and | inside its arguments as command separators
+            -- even from an argv table. What keeps that harmless is the slug
+            -- check above: the URL holds nothing cmd.exe acts on. The empty
+            -- string is the window title that start would otherwise take
+            -- from the URL.
+            open_cmd = { "cmd.exe", "/c", "start", "", url }
         end
         vim.fn.jobstart(open_cmd, { detach = true })
     end
