@@ -103,26 +103,21 @@ local highlights = {
     codewars_lang_cfml = { fg = "#ED2CD6" },        -- CFML magenta
 }
 
---- A highlight link cannot carry attributes, so `{ link = "X", bold = true }`
---- becomes X's colors plus the style keys. Only the foreground is taken, never
---- the background, so a float keeps its own. Read from the colorscheme as it is
---- now; apply() runs again after every `:colorscheme`.
----@param target string highlight group to take the colors from
----@param style table attributes to set on top (an explicit fg wins)
----@return table
-local function resolve(target, style)
-    local base = vim.api.nvim_get_hl(0, { name = target, link = false })
-    return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
-end
+local colors
 
---- The definition to set for one group.
+--- The definition to set for one codewars group.
 --- A `link` override replaces the default spec instead of merging into it:
 --- merged, `{ fg = "#b1361e", bold = true, link = "Comment" }` is both a link
 --- and a color. Any other override merges over the default as before.
----@param spec table the default definition
----@param override table? the user's `theme[name]`
+--- A link cannot carry attributes, so `{ link = "X", bold = true }` becomes X's
+--- foreground with the style keys on top (an explicit fg wins). Only the
+--- foreground is taken, never the background, so a float keeps its own.
+---@param name string a key of `highlights`
+---@param overrides table the user's `theme`
+---@param seen table<string, true> the groups on the chain of links that led here
 ---@return table
-local function build(spec, override)
+local function definition(name, overrides, seen)
+    local spec, override = highlights[name], overrides[name]
     if not override then
         return spec
     end
@@ -139,15 +134,46 @@ local function build(spec, override)
     if next(style) == nil then
         return { link = override.link }
     end
-    return resolve(override.link, style)
+    local base = colors(override.link, overrides, seen)
+    return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
+end
+
+--- The foreground (fg, ctermfg) that `target` has once apply() has run.
+--- A codewars group is worked out from its default and the user's override,
+--- not read back from Neovim: apply() visits the groups in no particular
+--- order, so the target may not be set yet, and straight after a `:colorscheme`
+--- it holds nothing. Any other group is read from the colorscheme as it is now;
+--- apply() runs again after every `:colorscheme`.
+--- A link that leads back to a group already on the chain (a -> b -> a, or
+--- a -> a) has no color to give. Every group in such a cycle keeps only its own
+--- style keys, whichever of them is being applied.
+---@param target string
+---@param overrides table the user's `theme`
+---@param seen table<string, true> the groups on the chain of links that led here
+---@return table
+colors = function(target, overrides, seen)
+    if not highlights[target] then
+        local base = vim.api.nvim_get_hl(0, { name = target, link = false })
+        return { fg = base.fg, ctermfg = base.ctermfg }
+    end
+    if seen[target] then
+        return {}
+    end
+
+    local chain = vim.tbl_extend("force", seen, { [target] = true })
+    local def = definition(target, overrides, chain)
+    if def.link then
+        return colors(def.link, overrides, chain)
+    end
+    return { fg = def.fg, ctermfg = def.ctermfg }
 end
 
 local function apply()
     local config = require("codewars.config")
     local overrides = config.user.theme or {}
 
-    for name, spec in pairs(highlights) do
-        vim.api.nvim_set_hl(0, name, build(spec, overrides[name]))
+    for name in pairs(highlights) do
+        vim.api.nvim_set_hl(0, name, definition(name, overrides, { [name] = true }))
     end
 end
 
