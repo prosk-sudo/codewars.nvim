@@ -97,6 +97,15 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- A kata slug, or a solution file picked from `:CW unfinished`, is no longer
+  trusted to be a file name. A slug that Codewars sent or that was typed,
+  holding a `/`, `..` or any character but ASCII letters, digits, `_` and
+  `-`, could have created or opened a file outside your solutions directory,
+  and written a session cache file outside the cache's own folder; the same
+  went for a picked file name, and for a kata id used to find an older
+  `<id>.py`. The kata now does not open: nothing is created and an error
+  names the slug or file name. A file named after a kata's id is only looked
+  up when the id is exactly 24 hexadecimal characters.
 - A language switch that fails and is rolled back no longer puts the language
   it failed to switch to at the top of `:CW recent`; the history is recorded
   once the switch has gone through, so it says what the kata is open in.

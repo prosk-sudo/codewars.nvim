@@ -6,6 +6,7 @@ local utils = require("codewars.utils")
 local ui_utils = require("codewars-ui.utils")
 local log = require("codewars.logger")
 local session_cache = require("codewars.cache.session")
+local safe_name = require("codewars.safe_name")
 
 ---@class cw.ui.Kata
 ---@field slug string
@@ -105,6 +106,37 @@ function Kata:retemplate(op)
     return true
 end
 
+--- Why this kata cannot name a file, or nil when it can. The slug and a picked
+--- file name become path components in storage.home (and the slug one in the
+--- session cache), and either can come from a Codewars reply or from what was
+--- typed, so each must be a plain name: nothing in it may carry a separator or
+--- `..` out of those directories.
+---@return string?
+function Kata:_unsafe_name()
+    if not safe_name.is_slug(self.slug) then
+        return ("Invalid kata slug %s: only letters, digits, '_' and '-' are allowed, so it cannot name a "
+            .. "solution file."):format(vim.inspect(self.slug))
+    end
+    local picked = self._picked_file
+    if picked ~= nil and not safe_name.is_file_name(picked) then
+        return ("Invalid solution file name %s: it must be a plain file name of letters, digits, '_' and '-' "
+            .. "with an extension, in %s."):format(vim.inspect(picked), tostring(config.storage.home))
+    end
+end
+
+--- Refuse this mount when `_unsafe_name` finds a problem: say what it is and
+--- give the mount up, so no file is created or opened and no request is made.
+---@return boolean refused
+function Kata:_refuse_unsafe_name()
+    local problem = self:_unsafe_name()
+    if not problem then
+        return false
+    end
+    log.error(problem)
+    self:_abandon_mount()
+    return true
+end
+
 --- The file the user chose from a list of solution files, when there is one
 --- to open in `lang`: it still exists, and is for this language -- a switch to
 --- another language has its own file to open.
@@ -117,6 +149,21 @@ function Kata:_picked_file_name(lang)
     return picked
 end
 
+--- The file an older version named after the kata's id, when this kata has
+--- one in `lang` and none by its slug. Only a real id can name it: the id is
+--- joined into a path, so one with a separator in it must not.
+---@param lang table an entry from config.langs
+---@return string?
+function Kata:_legacy_file_name(lang)
+    if self.kata_id == self.slug or not require("codewars.api.kata").is_server_id(self.kata_id) then
+        return nil
+    end
+    local by_id = ("%s.%s"):format(self.kata_id, lang.ft)
+    if config.storage.home:joinpath(by_id):exists() then
+        return by_id
+    end
+end
+
 --- The solution file a kata opens when nothing says which: the one named
 --- after its slug.
 ---@param lang table an entry from config.langs
@@ -126,10 +173,8 @@ function Kata:_default_file_name(lang)
     -- Older versions named a kata opened by its id after the id. The kata has
     -- its slug by now, so look for that file too, or the work in it never
     -- shows and a fresh starter is seeded beside it.
-    local by_id = self.kata_id and self.kata_id ~= self.slug and ("%s.%s"):format(self.kata_id, lang.ft)
-    if by_id and not config.storage.home:joinpath(by_slug):exists()
-        and config.storage.home:joinpath(by_id):exists() then
-        return by_id
+    if not config.storage.home:joinpath(by_slug):exists() then
+        return self:_legacy_file_name(lang) or by_slug
     end
     return by_slug
 end
@@ -139,6 +184,12 @@ end
 --- :CW unfinished can tell a kata you are working in from one you only opened.
 ---@return boolean existed
 function Kata:_open_file()
+    -- The last line of defence: mount() has refused these already, but this is
+    -- where a name becomes a path, and a kata built any other way gets here.
+    local problem = self:_unsafe_name()
+    if problem then
+        error(problem, 0)
+    end
     local lang = utils.get_lang(self.lang)
     assert(lang, "Unsupported language: " .. self.lang)
     self._file_name = self:_picked_file_name(lang) or self:_default_file_name(lang)
@@ -339,6 +390,9 @@ function Kata:_go_to_open_tab(tabp, open)
 end
 
 function Kata:mount()
+    if self:_refuse_unsafe_name() then
+        return self
+    end
     log.info(("Loading kata %s..."):format(self.slug))
 
     local kata_api = require("codewars.api.kata")
@@ -354,7 +408,14 @@ function Kata:mount()
         end
 
         if kata_data.slug and kata_data.slug ~= "" then
+            local requested = self.slug
             self.slug = kata_data.slug
+            -- Codewars chose this one, not the user: checked again, for the
+            -- same reason, before it names a file or a session.
+            if self:_refuse_unsafe_name() then
+                self.slug = requested
+                return
+            end
         end
 
         local tabp, open = utils.detect_duplicate_kata(self.slug, self.lang)

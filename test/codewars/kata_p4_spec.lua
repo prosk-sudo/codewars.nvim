@@ -50,6 +50,37 @@ describe("kata.is_server_id", function()
         assert.is_false(kata.is_server_id(nil))
         assert.is_false(kata.is_server_id(string.rep("z", 24)))
     end)
+
+    -- The id is used as a file name (`<id>.py`), so "contains 24 hex
+    -- characters" is not enough: the whole string must be them.
+    it("accepts exactly 24 hex characters, upper or lower case", function()
+        assert.is_true(kata.is_server_id(string.rep("a", 24)))
+        assert.is_true(kata.is_server_id(string.rep("F", 24)))
+        assert.is_true(kata.is_server_id(string.rep("0", 24)))
+    end)
+
+    it("rejects an id with anything around the 24 hex characters", function()
+        assert.is_false(kata.is_server_id("../" .. KATA_ID))
+        assert.is_false(kata.is_server_id(KATA_ID .. "/x"))
+        assert.is_false(kata.is_server_id("../" .. KATA_ID .. "/x"))
+        assert.is_false(kata.is_server_id(" " .. KATA_ID))
+        assert.is_false(kata.is_server_id(KATA_ID .. "\n"))
+        assert.is_false(kata.is_server_id("\n" .. KATA_ID))
+        assert.is_false(kata.is_server_id(KATA_ID .. KATA_ID))
+    end)
+
+    it("rejects 23 and 25 hex characters, and one non-hex character among 24", function()
+        assert.is_false(kata.is_server_id(string.rep("a", 23)))
+        assert.is_false(kata.is_server_id(string.rep("a", 25)))
+        assert.is_false(kata.is_server_id(string.rep("a", 23) .. "g"))
+        assert.is_false(kata.is_server_id(""))
+    end)
+
+    it("rejects what is not a string", function()
+        assert.is_false(kata.is_server_id(123))
+        assert.is_false(kata.is_server_id({ KATA_ID }))
+        assert.is_false(kata.is_server_id(true))
+    end)
 end)
 
 describe("kata pickers", function()
