@@ -47,6 +47,51 @@ function completed.clear()
     end
 end
 
+--- `item`, a kata as the server described it, with the languages `mark`
+--- added to the cached copy that the server does not list yet. `local_langs`
+--- then holds just those: once the server lists a language it leaves it, and
+--- with none left the field is gone. An item with nothing pending comes back
+--- as it is.
+---@param item table
+---@param local_langs string[]?
+---@return table
+local function with_pending_languages(item, local_langs)
+    local have = item.completedLanguages or {}
+    local pending = vim.tbl_filter(function(lang)
+        return not vim.tbl_contains(have, lang)
+    end, local_langs or {})
+    if #pending == 0 then return item end
+    return vim.tbl_extend("force", item, {
+        completedLanguages = vim.list_extend(vim.list_slice(have), pending),
+        local_langs = pending,
+    })
+end
+
+--- The refreshed list, plus what was marked locally while its request was out
+--- and so is not in the reply: a kata it lacks altogether, and a language it
+--- does not list yet for a kata it has. Neither is un-completed until the
+--- server has caught up.
+---@param fetched table[] the reply's items
+---@param cached table[] the cache as it is now
+---@return table[]
+local function merge_local_marks(fetched, cached)
+    local pending_langs, seen = {}, {}
+    for _, item in ipairs(cached) do
+        pending_langs[item.id] = item.local_langs
+    end
+    local merged = {}
+    for _, item in ipairs(fetched) do
+        seen[item.id] = true
+        merged[#merged + 1] = with_pending_languages(item, pending_langs[item.id])
+    end
+    for _, item in ipairs(cached) do
+        if item.local_mark and not seen[item.id] then
+            table.insert(merged, 1, item)
+        end
+    end
+    return merged
+end
+
 ---@param cb? function
 function completed.update(cb)
     local api_utils = require("codewars.api.utils")
@@ -101,13 +146,9 @@ function completed.update(cb)
                     -- A kata marked complete locally while this refresh was
                     -- in flight is not in the fetched pages yet; keep it
                     -- rather than un-completing it until the next refresh.
-                    local fetched = {}
-                    for _, item in ipairs(all) do fetched[item.id] = true end
-                    for _, item in ipairs((completed.get())) do
-                        if item.local_mark and not fetched[item.id] then
-                            table.insert(all, 1, item)
-                        end
-                    end
+                    -- Read now, not when the refresh began: a kata marked
+                    -- since then is in the cache and not in this reply.
+                    all = merge_local_marks(all, (completed.get()))
                     completed.save(all)
                     log.info(("Fetched %d completed kata"):format(#all))
                     if cb then cb(all) end
@@ -136,8 +177,11 @@ function completed.mark(kata_id, slug, lang)
             -- keep showing as unfinished until the next refresh.
             local langs = item.completedLanguages or {}
             if not lang or vim.tbl_contains(langs, lang) then return end
+            -- Remembered as added here too, for a refresh whose reply was
+            -- made before the submit and so does not list it yet.
             local updated = vim.tbl_extend("force", item, {
                 completedLanguages = vim.list_extend(vim.list_slice(langs), { lang }),
+                local_langs = vim.list_extend(vim.list_slice(item.local_langs or {}), { lang }),
             })
             local with_language = vim.list_slice(items)
             with_language[i] = updated
@@ -151,6 +195,7 @@ function completed.mark(kata_id, slug, lang)
         completedLanguages = lang and { lang } or {},
         completedAt = os.date("!%Y-%m-%dT%H:%M:%S.000Z"),
         local_mark = true,
+        local_langs = lang and { lang } or nil,
     }
     completed.save(vim.list_extend({ marked }, items), raw.timestamp or 0)
 end

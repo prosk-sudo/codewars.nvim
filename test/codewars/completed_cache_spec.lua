@@ -119,6 +119,75 @@ describe("cache.completed", function()
         assert.same({ "new", "server" }, ids)
         assert.is_true(store["mem:completed.json"].timestamp > 0)
     end)
+
+    -- A refresh's reply is a picture of the server from before a submit that
+    -- landed while it was out; a language marked meanwhile must outlive it.
+    describe("update with a language marked while the refresh was in flight", function()
+        local function server_item(languages)
+            return { id = "k1", slug = "kata-one", completedLanguages = languages }
+        end
+
+        local function cache_k1()
+            store["mem:completed.json"] = { timestamp = os.time(), items = { server_item({ "python" }) } }
+        end
+
+        --- A refresh whose reply, `languages`, is what the server said when
+        --- it was asked; `during` runs while the request is out.
+        local function refresh(languages, during)
+            script = function()
+                if during then during() end
+                return { data = { server_item(languages) }, totalPages = 1 }
+            end
+            local got
+            completed.update(function(items) got = items end)
+            return got
+        end
+
+        it("keeps that language when the reply does not have it yet", function()
+            cache_k1()
+            local got = refresh({ "python" }, function() completed.mark("k1", "kata-one", "java") end)
+            assert.same({ "python", "java" }, got[1].completedLanguages)
+            assert.same({ "python", "java" }, store["mem:completed.json"].items[1].completedLanguages)
+            assert.same({ "java" }, store["mem:completed.json"].items[1].local_langs)
+        end)
+
+        it("stops keeping it once a reply has it, and drops the marker", function()
+            cache_k1()
+            refresh({ "python" }, function() completed.mark("k1", "kata-one", "java") end)
+            local got = refresh({ "python", "java" })
+            assert.same({ "python", "java" }, got[1].completedLanguages)
+            assert.is_nil(store["mem:completed.json"].items[1].local_langs)
+        end)
+
+        it("keeps only the languages a reply still lacks", function()
+            cache_k1()
+            refresh({ "python" }, function()
+                completed.mark("k1", "kata-one", "java")
+                completed.mark("k1", "kata-one", "ruby")
+            end)
+            assert.same({ "java", "ruby" }, store["mem:completed.json"].items[1].local_langs)
+            local got = refresh({ "python", "java" })
+            assert.same({ "python", "java", "ruby" }, got[1].completedLanguages)
+            assert.same({ "ruby" }, store["mem:completed.json"].items[1].local_langs)
+        end)
+
+        it("takes an item with no local languages from the reply as it is", function()
+            store["mem:completed.json"] = { timestamp = os.time(), items = { { id = "k1", completedLanguages = { "java" } } } }
+            local reply = { id = "k1", slug = "kata-one", completedLanguages = { "python" }, rank = { id = -8 } }
+            script = function() return { data = { reply }, totalPages = 1 } end
+            local got
+            completed.update(function(items) got = items end)
+            assert.same(reply, got[1])
+            assert.same(reply, store["mem:completed.json"].items[1])
+        end)
+
+        it("still keeps a kata the reply lacks altogether", function()
+            cache_k1()
+            local got = refresh({ "python" }, function() completed.mark("k2", "kata-two", "java") end)
+            assert.same({ "k2", "k1" }, vim.tbl_map(function(i) return i.id end, got))
+            assert.is_true(got[1].local_mark)
+        end)
+    end)
 end)
 
 describe("cache.problemlist all-empty guard", function()
