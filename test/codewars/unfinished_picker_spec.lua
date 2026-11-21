@@ -4,12 +4,12 @@
 describe(":CW unfinished", function()
     local config = require("codewars.config")
     local picker, opened, mounted, said, entries, catalogue, completed, updates, listed_with
-    local details, asked, asked_opts, provider, recent_items
+    local details, asked, asked_opts, provider, recent_items, order, detect
     local saved = {}
     local STUBBED = {
         "codewars.picker", "codewars.picker.dropdown", "codewars.cache.completed",
         "codewars.cache.problemlist", "codewars.cache.recent", "codewars.unfinished", "codewars-ui.kata",
-        "codewars.logger",
+        "codewars.logger", "codewars.identity",
     }
     local NOW = os.time()
     local DAY = 86400
@@ -47,6 +47,12 @@ describe(":CW unfinished", function()
         for _, m in ipairs(STUBBED) do saved[m] = package.loaded[m] end
         opened, mounted, said, updates, listed_with = nil, nil, {}, 0, nil
         details, asked, asked_opts, provider, recent_items = {}, nil, nil, "telescope", {}
+        order = {}
+        -- Who is signed in: known already unless a test says it is not.
+        detect = function(cb)
+            if config.user.username ~= "" then return cb(config.user.username) end
+            cb(nil, { msg = "not detected" })
+        end
         completed = { { slug = "done", completedLanguages = { "python" } } }
         catalogue = {
             { slug = "multiply", id = "id-multiply", name = "Multiply", rank_id = -8, rank_name = "8 kyu" },
@@ -74,6 +80,7 @@ describe(":CW unfinished", function()
             get = function() return completed, false end,
             update = function(cb)
                 updates = updates + 1
+                order[#order + 1] = "fetch"
                 completed = { { slug = "fetched", completedLanguages = { "python" } } }
                 cb(completed)
             end,
@@ -87,6 +94,12 @@ describe(":CW unfinished", function()
                     details[i.slug] = { rank = { id = -5, name = "5 kyu" }, name = "Looked Up " .. i.slug }
                 end
                 cb(items)
+            end,
+        }
+        package.loaded["codewars.identity"] = {
+            ensure = function(cb)
+                order[#order + 1] = "detect"
+                detect(cb)
             end,
         }
         package.loaded["codewars.cache.problemlist"] = { get = function() return catalogue end }
@@ -386,6 +399,80 @@ describe(":CW unfinished", function()
         config.user.username = saved_user
         assert.are.equal(1, updates)
         assert.are.equal("fetched", listed_with[1].slug)
+    end)
+
+    -- The username is only ever detected by the menu. Run :CW unfinished
+    -- first, with no completed list cached, and an empty list would read as
+    -- "you have completed nothing": every solved kata listed as unfinished.
+    describe("when the account is not known yet", function()
+        local saved_user
+
+        before_each(function()
+            saved_user = config.user.username
+            config.user.username = ""
+            completed = {}
+        end)
+
+        after_each(function()
+            config.user.username = saved_user
+        end)
+
+        local function warnings()
+            return vim.tbl_filter(function(s) return s.level == "warn" end, said)
+        end
+
+        it("detects it first, then fetches the completed list, and judges by that", function()
+            detect = function(cb)
+                config.user.username = "me"
+                cb("me")
+            end
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.are.same({ "detect", "fetch" }, order)
+            assert.are.equal("fetched", listed_with[1].slug, "judged by a list that was not the fetched one")
+            assert.is_not_nil(opened)
+        end)
+
+        it("asks you to sign in, and does not open, with no cookie saved", function()
+            detect = function(cb) cb(nil, { signed_out = true, msg = "not signed in" }) end
+            picker.unfinished()
+            vim.wait(50)
+            assert.is_nil(opened, "opened a list judged against nothing")
+            assert.is_nil(listed_with)
+            assert.are.same({ "detect" }, order, "fetched a list with no account")
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find(":CW cookie", 1, true), warnings()[1].msg)
+        end)
+
+        it("says the session has expired, and does not open, when the dashboard refuses the cookie", function()
+            detect = function(cb) cb(nil, { auth = true, msg = "session expired" }) end
+            picker.unfinished()
+            vim.wait(50)
+            assert.is_nil(opened)
+            assert.is_nil(listed_with)
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find("expired", 1, true), warnings()[1].msg)
+            assert.truthy(warnings()[1].msg:find(":CW cookie", 1, true), warnings()[1].msg)
+        end)
+
+        it("gives the reason, and does not open, when the username cannot be detected", function()
+            detect = function(cb) cb(nil, { msg = "network down" }) end
+            picker.unfinished()
+            vim.wait(50)
+            assert.is_nil(opened)
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find("network down", 1, true), warnings()[1].msg)
+        end)
+
+        -- Offline, or before the menu was ever opened, a list on disk is
+        -- still a list: nothing to detect, nothing to fetch.
+        it("opens on the completed list on disk, without detecting anything", function()
+            completed = { { slug = "done", completedLanguages = { "python" } } }
+            picker.unfinished()
+            assert.is_not_nil(opened)
+            assert.are.same({}, order)
+            assert.are.equal("done", listed_with[1].slug)
+        end)
     end)
 
     -- With no completed list to judge by, every file would look unfinished,

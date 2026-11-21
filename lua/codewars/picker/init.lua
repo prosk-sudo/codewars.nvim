@@ -869,6 +869,40 @@ local function select_unfinished(rows)
     return function() end, function() return open end
 end
 
+--- Why :CW unfinished cannot tell which kata are completed, for a user who
+--- has to do something about it.
+---@param err table? from identity.ensure
+---@return string
+local function unknown_account_message(err)
+    if err and err.signed_out then
+        return "Sign in with :CW cookie so :CW unfinished can tell your completed kata apart."
+    end
+    if err and err.auth then
+        return "Your Codewars session has expired, so :CW unfinished cannot tell your completed kata apart. "
+            .. "Sign in again with :CW cookie."
+    end
+    return ("Could not detect your username (%s), so :CW unfinished cannot tell your completed kata apart. "
+        .. "Open :CW menu to retry, or sign in again with :CW cookie."):format(
+        tostring(err and err.msg or "unknown error"))
+end
+
+--- ensure_completed_items for :CW unfinished, which judges every file by the
+--- list: an empty one means "you have completed nothing" only when the
+--- account is known. config.user.username is only detected by the menu, so
+--- with no list on disk the account is settled first (identity.ensure); with
+--- none to be had the user is told why instead of getting every solved kata
+--- listed as unfinished. A list on disk is used as it is, signed in or not.
+---@param cb fun(items: table[], err: table?)
+local function ensure_known_completed_items(cb)
+    if not vim.tbl_isempty((require("codewars.cache.completed").get())) then
+        return ensure_completed_items(cb)
+    end
+    require("codewars.identity").ensure(function(username, err)
+        if not username then return log.warn(unknown_account_message(err)) end
+        ensure_completed_items(cb)
+    end)
+end
+
 --- Kata you started and never submitted, most recently changed first, to
 --- pick back up. A file from before starters were recorded cannot be told
 --- from an untouched one, so it is listed and marked "not checked".
@@ -879,7 +913,7 @@ function picker.unfinished()
         t = dropdown.telescope()
         if not t then return end
     end
-    ensure_completed_items(function(completed, err)
+    ensure_known_completed_items(function(completed, err)
         -- Judged against no completed list every file would look unfinished,
         -- the kata you have solved among them: say what went wrong instead.
         if err then

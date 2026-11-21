@@ -111,8 +111,12 @@ All notable changes to codewars.nvim are documented here.
   and `:CW unfinished`) follows the same rule, and adds what it found to the
   cache as it is when it finishes instead of writing back what it read when
   it started, so two lookups running at once no longer erase each other's
-  names. `:CW unfinished` with no completed list to judge by, because
-  fetching it failed, says so instead of listing the kata you have solved.
+  names. `:CW unfinished` with no completed list to judge by says so instead
+  of listing the kata you have solved: when fetching the list failed, and
+  when it does not know who you are yet. Your username is only detected when
+  `:CW menu` opens, so run first it now detects it the way the menu does; with
+  no cookie saved, or one Codewars no longer accepts, it asks you to sign in
+  with `:CW cookie`. A completed list already on disk is used as it is.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it
