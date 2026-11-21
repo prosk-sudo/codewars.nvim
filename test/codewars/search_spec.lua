@@ -398,6 +398,198 @@ describe("api.search", function()
         end)
     end)
 
+    -- A result is the element that carries `list-item-kata`, from its opening
+    -- tag to its own closing tag. Anything outside it -- the next result, a
+    -- footer, a "related kata" section -- is not part of it, whatever its
+    -- distance, and a link out there must never be taken for its title.
+    describe("parse_html block bounds", function()
+        local function hex(n) return ("%024x"):format(n) end
+
+        --- A result block laid out as the real page does (nested divs, a title
+        --- link, a train link per language icon), `languages` icons long.
+        --- `opts.title_href` moves the title link off /kata/<id>; `opts.tag`
+        --- is the block's element.
+        local function result(n, name, languages, opts)
+            opts = opts or {}
+            local tag = opts.tag or "div"
+            local id = hex(n)
+            local icons = {}
+            for i = 1, languages or 3 do
+                local lang = ("lang%02d"):format(i)
+                icons[#icons + 1] = ('<li><a class="text-blue-400" data-language="%s" href="/kata/%s/train/%s">'
+                    .. '<div class="icon-container mb-3 bg-gray-200 rounded relative" data-progress="0"'
+                    .. ' data-tippy-content="%s" data-tippy-placement="bottom"><i class="icon-moon-%s "></i></div></a></li>'
+                ):format(lang, id, lang, lang, lang)
+            end
+            return ('<%s class="list-item-kata bg-ui-section p-4 rounded-lg shadow-md" data-title="%s" id="%s">'
+                .. '<div class="flex flex-col md:flex-row"><div class="px-0 w-full md:w-1/2">'
+                .. '<div class="text-base font-semibold px-0 flex items-center"><div class="inline-block">'
+                .. '<div border="true" class="small-hex is-extra-wide is-white-rank"><div class="inner-small-hex">'
+                .. '<span>8 kyu</span></div></div></div>'
+                .. '<a class="ml-2" href="%s">%s</a></div>%s</div>'
+                .. '<div class="px-0 w-full md:w-1/2"><ul class="icon-list language-icons">%s</ul></div></div></%s>'
+            ):format(tag, name, id, opts.title_href or ("/kata/" .. id), name, opts.extra or "", table.concat(icons), tag)
+        end
+
+        --- Links after the results, as a footer or a related-kata section has.
+        local function footer(n)
+            return ('<div class="footer"><h3>Related kata</h3><a href="/kata/%s">Related One</a>'
+                .. '<a href="/kata/%s/train/python">Train</a><a href="/kata/%s">Related Two</a></div>'):format(hex(n), hex(n), hex(n + 1))
+        end
+
+        local function unreadable_title(n, name, languages)
+            return result(n, name, languages, { title_href = "/challenges/" .. hex(n) })
+        end
+
+        local function names(results)
+            return vim.tbl_map(function(r) return r.name end, results)
+        end
+
+        it("reads every block of a full page, with every language", function()
+            local html = {}
+            for n = 1, 30 do html[#html + 1] = result(n, "Kata " .. n, 5) end
+            local results, err, dropped = search.parse_html(table.concat(html) .. footer(900))
+            assert.is_nil(err)
+            assert.are.equal(30, #results)
+            assert.are.equal(0, dropped)
+            assert.are.equal("Kata 1", results[1].name)
+            assert.are.equal("Kata 30", results[30].name)
+            for _, entry in ipairs(results) do
+                assert.are.equal(5, #entry.languages, entry.name)
+            end
+        end)
+
+        -- The last block used to be cut 3000 characters after its marker.
+        it("keeps every language of a long last block", function()
+            local last = result(2, "Two", 40)
+            assert.is_true(#last > 6000, "the fixture should be longer than the old cut")
+            local results, err, dropped = search.parse_html(result(1, "One", 3) .. last)
+            assert.is_nil(err)
+            assert.are.equal(2, #results)
+            assert.are.equal(0, dropped)
+            assert.are.equal(40, #results[2].languages)
+            assert.are.equal("lang40", results[2].languages[40])
+        end)
+
+        it("does not name a block whose title is unreadable from a link in the footer after it", function()
+            local results, err, dropped = search.parse_html(
+                result(1, "One", 3) .. unreadable_title(2, "Two", 2) .. footer(10)
+            )
+            assert.is_nil(err)
+            assert.are.same({ "One" }, names(results))
+            assert.are.equal(1, dropped)
+        end)
+
+        it("treats a page whose only block has an unreadable title as drift, not a footer link", function()
+            local results, err, dropped = search.parse_html(unreadable_title(2, "Two", 2) .. footer(10))
+            assert.are.same({}, results)
+            assert.is_true(err.drift)
+            assert.are.equal(1, dropped)
+        end)
+
+        it("keeps a block out of the next one's reach, too", function()
+            -- The unreadable block is in the middle: the next block's title is not its own.
+            local results, err, dropped = search.parse_html(
+                unreadable_title(1, "One", 2) .. result(2, "Two", 2)
+            )
+            assert.is_nil(err)
+            assert.are.same({ "Two" }, names(results))
+            assert.are.equal(1, dropped)
+        end)
+
+        it("drops a last block that is never closed, however readable its title", function()
+            local truncated = result(2, "Two", 3):gsub("</div>$", "")
+            local results, err, dropped = search.parse_html(result(1, "One", 3) .. truncated .. footer(10))
+            assert.is_nil(err)
+            assert.are.same({ "One" }, names(results))
+            assert.are.equal(1, dropped)
+        end)
+
+        it("drops a block cut off mid-page, and calls a page of only that drift", function()
+            local whole = result(2, "Two", 3)
+            local cut = whole:sub(1, whole:find("</a>", 1, true) + 3) -- ends right after the title link
+            local results, err, dropped = search.parse_html(cut)
+            assert.are.same({}, results)
+            assert.is_true(err.drift)
+            assert.are.equal(1, dropped)
+        end)
+
+        it("counts every block after one that is never closed as dropped, not guessed at", function()
+            local truncated = result(1, "One", 2):gsub("</div>$", "")
+            local results, err, dropped = search.parse_html(truncated .. result(2, "Two", 2) .. result(3, "Three", 2))
+            assert.are.same({}, results)
+            assert.is_true(err.drift)
+            assert.are.equal(3, dropped)
+        end)
+
+        it("ignores the marker where it is not an element's attribute", function()
+            local noise = '<style>.list-item-kata { color: red }</style>'
+                .. '<script>var k = "list-item-kata";</script><!-- list-item-kata -->'
+            local results, err, dropped = search.parse_html(noise)
+            assert.are.same({}, results)
+            assert.is_nil(err)
+            assert.are.equal(0, dropped)
+
+            results, err, dropped = search.parse_html(noise .. result(1, "One", 2) .. noise)
+            assert.is_nil(err)
+            assert.are.same({ "One" }, names(results))
+            assert.are.equal(0, dropped)
+        end)
+
+        it("does not take a marker nested inside a block for another block", function()
+            local results, err, dropped = search.parse_html(
+                result(1, "One", 3, { extra = '<span class="list-item-kata-badge">New</span>' })
+            )
+            assert.is_nil(err)
+            assert.are.equal(1, #results)
+            assert.are.equal(0, dropped)
+            assert.are.equal(3, #results[1].languages)
+        end)
+
+        it("bounds a block by its own element, whatever that element is", function()
+            local html = result(1, "One", 2, { tag = "article", extra = "<article>nested</article>" })
+                .. result(2, "Two", 2, { tag = "article", title_href = "/gone" }) .. footer(10)
+            local results, err, dropped = search.parse_html(html)
+            assert.is_nil(err)
+            assert.are.same({ "One" }, names(results))
+            assert.are.equal(1, dropped)
+        end)
+
+        -- One pass over the page: a block is scanned once, and a block that
+        -- never closes does not send every block after it back over the rest
+        -- of the page. A generous bound, only to catch a rescan per block.
+        it("reads a large page, closed or not, in a single pass", function()
+            local uv = vim.uv or vim.loop
+            local html = {}
+            for n = 1, 2000 do html[#html + 1] = result(n, "Kata " .. n, 2) end
+            local closed = table.concat(html)
+
+            local started = uv.hrtime()
+            local results, err, dropped = search.parse_html(closed)
+            assert.is_nil(err)
+            assert.are.equal(2000, #results)
+            assert.are.equal(0, dropped)
+            assert.is_true((uv.hrtime() - started) / 1e9 < 2, "closed page took too long")
+
+            html[1] = html[1]:gsub("</div>$", "")
+            started = uv.hrtime()
+            local _
+            _, err, dropped = search.parse_html(table.concat(html))
+            assert.is_true(err.drift)
+            assert.are.equal(2000, dropped)
+            assert.is_true((uv.hrtime() - started) / 1e9 < 2, "unclosed page took too long")
+        end)
+
+        it("does not count a differently named element for the block's own", function()
+            local results, err, dropped = search.parse_html(
+                result(1, "One", 2, { extra = "<divider><div-icon></div-icon>" })
+            )
+            assert.is_nil(err)
+            assert.are.same({ "One" }, names(results))
+            assert.are.equal(0, dropped)
+        end)
+    end)
+
     describe("fetch_page markup drift", function()
         it("reports a page whose blocks all fail to parse as an error, not the end of a rank", function()
             table.insert(responses, { exit = 0, status = 200, body = unreadable() })

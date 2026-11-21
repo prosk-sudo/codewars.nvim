@@ -167,6 +167,85 @@ local function read_title_link(block)
     end
 end
 
+local BLOCK_MARKER = "list-item-kata"
+
+--- Where the element whose opening tag holds the marker begins: the `<` of
+--- the tag the marker sits in, or nil when it sits anywhere else (text, a
+--- script, a comment). Looks back only as far as `floor`, so the lookups of a
+--- whole page add up to one pass over it.
+---@param html string
+---@param marker integer position of the marker
+---@param floor integer
+---@return integer? open
+local function opening_tag_at(html, marker, floor)
+    for i = marker - 1, floor, -1 do
+        local byte = html:byte(i)
+        if byte == 62 then return nil end -- ">": the marker is past the end of a tag
+        if byte == 60 then -- "<"
+            return html:find("^%a", i + 1) and i or nil
+        end
+    end
+end
+
+--- Where the element opened at `open` (a `<tag`) closes: the position of its
+--- own `</tag`, found by counting the elements of that name inside it. nil
+--- when the page ends first.
+---@param html string
+---@param open integer
+---@param tag string
+---@return integer?
+local function closing_tag_of(html, open, tag)
+    local pattern = "</?" .. tag:gsub("%-", "%%-") .. "[%s/>]"
+    local depth, pos = 1, open + 1 + #tag
+    while true do
+        local s, e = html:find(pattern, pos)
+        if not s then return nil end
+        if html:byte(s + 1) == 47 then -- "/"
+            depth = depth - 1
+            if depth == 0 then return s end
+        else
+            depth = depth + 1
+        end
+        pos = e + 1
+    end
+end
+
+--- Cut a results page into its result blocks. A block is the element whose
+--- opening tag carries `list-item-kata`, from that tag to its own closing
+--- tag: not up to the next result, and not a fixed number of characters on,
+--- either of which can run past the block into a footer or a related-kata
+--- section, whose links would then be read as the result's own.
+---
+--- A block whose closing tag is missing (a cut-off page, broken markup) has no
+--- end we could trust, and is left out, never guessed at. Nothing after it
+--- can be bounded either, so each block after it is counted as left out
+--- without being scanned: the whole page is read once. Returns the blocks and
+--- how many were left out.
+---@param html string
+---@return string[] blocks
+---@return integer unclosed
+local function split_blocks(html)
+    local blocks, unclosed, broken = {}, 0, false
+    local pos = 1
+    while true do
+        local marker = html:find(BLOCK_MARKER, pos, true)
+        if not marker then break end
+        local open = opening_tag_at(html, marker, pos)
+        pos = marker + #BLOCK_MARKER
+        if open then
+            local tag = html:match("^<(%a[%w%-]*)", open)
+            local close = not broken and closing_tag_of(html, open, tag) or nil
+            if close then
+                blocks[#blocks + 1] = html:sub(open, close - 1)
+                pos = close
+            else
+                unclosed, broken = unclosed + 1, true
+            end
+        end
+    end
+    return blocks, unclosed
+end
+
 --- Parse the search results HTML to extract kata entries.
 ---
 --- Returns the entries it could read, an error when the page has result
@@ -180,20 +259,8 @@ end
 function search.parse_html(html)
     local results = {}
 
-    -- Split by list-item-kata blocks
-    local blocks = {}
-    local pos = 1
-    while true do
-        local s = html:find("list%-item%-kata", pos)
-        if not s then break end
-        local e = html:find("list%-item%-kata", s + 20)
-        if e then
-            table.insert(blocks, html:sub(s, e - 1))
-        else
-            table.insert(blocks, html:sub(s, math.min(#html, s + 3000)))
-        end
-        pos = e or #html + 1
-    end
+    local blocks, unclosed = split_blocks(html)
+    local total = #blocks + unclosed
 
     for _, block in ipairs(blocks) do
         local entry = {}
@@ -240,13 +307,13 @@ function search.parse_html(html)
         end
     end
 
-    local dropped = #blocks - #results
-    if #blocks > 0 and #results == 0 then
+    local dropped = total - #results
+    if total > 0 and #results == 0 then
         return results, {
             drift = true,
-            blocks = #blocks,
+            blocks = total,
             msg = ("Codewars' search page lists %d kata but none could be read"
-                .. " — the site markup may have changed."):format(#blocks),
+                .. " — the site markup may have changed."):format(total),
         }, dropped
     end
     return results, nil, dropped
