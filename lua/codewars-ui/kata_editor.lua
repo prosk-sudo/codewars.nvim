@@ -574,6 +574,39 @@ function KataEditor:_step(action)
     return kstate.step(requests_in_flight[self.model.id] or self.state, action)
 end
 
+--- A finished unpublish, as one workspace sees it: the kata is a draft now.
+function KataEditor:_apply_unpublished()
+    self:set_state(kstate.step("unpublishing", "unpublish_done")) -- "draft"
+    self.model.published = false
+    self:refresh_title()
+end
+
+--- A finished delete, as one workspace sees it: the kata is gone, so lock for
+--- good and close, as the workspace that sent the request does.
+function KataEditor:_apply_deleted()
+    self:set_state(kstate.step("deleting", "delete_done")) -- "deleted"
+    self:refresh_title()
+    self:snapshot() -- the kata is gone; nothing to warn about on close
+    self:close()
+end
+
+--- Tell every open workspace of a kata that an unpublish or delete succeeded.
+--- The sender's own reply is not enough: a workspace opened for the same kata
+--- while the request was out loaded the page as it was before it, and the lock
+--- that held it back is gone now, so it would keep that stale state. The
+--- sender is applied directly because it may already be closed, which leaves
+--- it out of the registry.
+---@param sender cw.ui.KataEditor
+---@param apply fun(ws: cw.ui.KataEditor)
+local function apply_outcome(sender, apply)
+    apply(sender)
+    for _, ws in ipairs(_Cw_state.kata_editors or {}) do
+        if ws ~= sender and ws.model.id == sender.model.id then
+            apply(ws)
+        end
+    end
+end
+
 --- Codewars requires a kata name to be free. The rejection names the field and
 --- the reason, and the name travels inside the same payload, so a rename can be
 --- applied and the request retried immediately -- no intermediate save, unlike
@@ -779,9 +812,7 @@ function KataEditor:unpublish()
             self:refresh_title()
             return log.error("Unpublish failed — " .. (uerr.msg or "unknown error"))
         end
-        self:set_state(kstate.step("unpublishing", "unpublish_done")) -- "draft"
-        self.model.published = false
-        self:refresh_title()
+        apply_outcome(self, function(ws) ws:_apply_unpublished() end)
         log.info("Unpublished — the kata is a draft again.")
     end)
 end
@@ -826,10 +857,8 @@ function KataEditor:delete()
             end
             -- Terminal: a prompt still waiting on the user (a publish retry's
             -- rename) must find the kata gone, not a draft it can publish.
-            self:set_state(kstate.step("deleting", "delete_done")) -- "deleted"
+            apply_outcome(self, function(ws) ws:_apply_deleted() end)
             log.info("Kata deleted.")
-            self:snapshot() -- the kata is gone; nothing to warn about on close
-            self:close()
         end)
     end)
 end

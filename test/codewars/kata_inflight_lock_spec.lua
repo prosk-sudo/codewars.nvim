@@ -80,7 +80,7 @@ describe("kata.state in-flight unpublish and delete", function()
 end)
 
 describe("KataEditor while an unpublish or delete is in flight", function()
-    local real_api, real_confirm, real_input, real_warn, real_info, real_error
+    local real_api, real_confirm, real_input, real_open, real_warn, real_info, real_error
     local calls, replies, answered, warned, errors, prompt, rename
 
     before_each(function()
@@ -88,6 +88,8 @@ describe("KataEditor while an unpublish or delete is in flight", function()
         real_api = package.loaded["codewars.api.kata"]
         real_confirm = package.loaded["codewars-ui.popup.confirm"]
         real_input = vim.ui.input
+        real_open = _Cw_state.kata_editors
+        _Cw_state.kata_editors = {}
         real_warn, real_info, real_error = log.warn, log.info, log.error
         calls, replies, answered, warned, errors, prompt, rename = {}, {}, {}, {}, {}, nil, nil
 
@@ -141,6 +143,7 @@ describe("KataEditor while an unpublish or delete is in flight", function()
         local log = require("codewars.logger")
         log.warn, log.info, log.error = real_warn, real_info, real_error
         vim.ui.input = real_input
+        _Cw_state.kata_editors = real_open
         package.loaded["codewars.api.kata"] = real_api
         package.loaded["codewars-ui.popup.confirm"] = real_confirm
     end)
@@ -238,6 +241,146 @@ describe("KataEditor while an unpublish or delete is in flight", function()
             assert.is_nil(calls.unpublish)
             assert.are.equal("draft", ws.state)
             assert.truthy(warned[1]:find("isn't published", 1, true), warned[1])
+        end)
+    end)
+
+    describe("when the request ends, the other open workspaces of the kata", function()
+        local OTHER_ID = "6a63e7e085269ff93dc63330"
+
+        --- Stand-in for the workspaces mount() has registered. The first one
+        --- is left out when it stands for an editor that was closed meanwhile.
+        local function open(...)
+            _Cw_state.kata_editors = { ... }
+        end
+
+        --- Count the times a workspace is told to close its window.
+        local function count_closes(ws)
+            local counter = { n = 0 }
+            ws.close = function() counter.n = counter.n + 1 end
+            return counter
+        end
+
+        it("learn that a successful unpublish made the kata a draft", function()
+            local first = workspace(true)
+            local reopened = workspace(true) -- loaded the page before the reply
+            open(reopened)
+            first:unpublish()
+
+            replies.unpublish(nil)
+
+            assert.are.equal("draft", reopened.state)
+            assert.is_false(reopened.model.published)
+        end)
+
+        it("keep that draft through their next save", function()
+            local first = workspace(true)
+            local reopened = workspace(true)
+            open(reopened)
+            first:unpublish()
+            replies.unpublish(nil)
+
+            reopened:save()
+            replies.save(nil)
+
+            assert.are.equal("draft", reopened.state)
+        end)
+
+        it("include one that was open beside the sender all along", function()
+            local first = workspace(true)
+            local beside = workspace(true)
+            open(first, beside)
+            first:unpublish()
+
+            replies.unpublish(nil)
+
+            assert.are.equal("draft", first.state)
+            assert.are.equal("draft", beside.state)
+        end)
+
+        it("are left alone when the unpublish fails", function()
+            local first = workspace(true)
+            local reopened = workspace(true)
+            open(reopened)
+            first:unpublish()
+
+            replies.unpublish({ msg = "http error 500" })
+
+            assert.are.equal("published", reopened.state)
+            assert.is_true(reopened.model.published)
+        end)
+
+        it("are left alone when it is a different kata that changed", function()
+            local first = workspace(true)
+            local other = workspace(true, OTHER_ID)
+            open(other)
+            first:unpublish()
+
+            replies.unpublish(nil)
+
+            assert.are.equal("published", other.state)
+            assert.is_true(other.model.published)
+        end)
+
+        it("find the kata deleted, refuse every action and close", function()
+            local first = workspace(true)
+            local reopened = workspace(true)
+            local closes = count_closes(reopened)
+            open(reopened)
+            first:delete()
+            prompt(true)
+
+            replies.delete(nil)
+
+            assert.are.equal("deleted", reopened.state)
+            assert.are.equal(1, closes.n)
+            reopened:save()
+            reopened:publish()
+            assert.is_nil(calls.save, "a deleted kata must not be saved")
+            assert.is_nil(calls.publish)
+            assert.truthy(warned[1]:find("deleted", 1, true), warned[1])
+        end)
+
+        it("close once, not twice, when the sender is registered too", function()
+            local first = workspace(true)
+            local beside = workspace(true)
+            local first_closes, beside_closes = count_closes(first), count_closes(beside)
+            open(first, beside)
+            first:delete()
+            prompt(true)
+
+            replies.delete(nil)
+
+            assert.are.equal("deleted", beside.state)
+            assert.are.equal(1, first_closes.n)
+            assert.are.equal(1, beside_closes.n)
+        end)
+
+        it("are left alone when the delete fails or a different kata is deleted", function()
+            local first = workspace(true)
+            local reopened = workspace(true)
+            local other = workspace(true, OTHER_ID)
+            open(reopened, other)
+            first:delete()
+            prompt(true)
+
+            replies.delete({ msg = "http error 500" })
+
+            assert.are.equal("published", reopened.state)
+            assert.are.equal("published", other.state)
+        end)
+
+        it("do not hear about a different kata's successful delete", function()
+            local first = workspace(true)
+            local other = workspace(true, OTHER_ID)
+            local closes = count_closes(other)
+            open(other)
+            first:delete()
+            prompt(true)
+
+            replies.delete(nil)
+
+            assert.are.equal("published", other.state)
+            assert.are.equal(0, closes.n)
         end)
     end)
 
