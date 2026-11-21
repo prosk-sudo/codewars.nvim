@@ -162,38 +162,135 @@ describe("cache.utils write_json", function()
             assert.same({ items = { "new" } }, cache_utils.read_json(path))
         end)
 
-        -- A new inode belongs to whoever made it. A cache shared through a
-        -- project group has to stay in that group when it is refreshed.
-        it("gives the replacement the owner and group of the file it replaces", function()
-            local stat = uv.fs_stat(path.filename)
-            local given
-            uv.fs_fchown = function(fd, uid, gid)
-                given = { uid = uid, gid = gid }
-                return real_fchown(fd, uid, gid)
+        -- A new inode belongs to whoever made it, and a cache shared through a
+        -- project group has to stay in that group when it is refreshed. In
+        -- order: give the replacement the file's owner and group; failing
+        -- that, just its group (a user may set any group they are in); then
+        -- check what the replacement really has. If it still is not the
+        -- file's owner and group, the file is written in place instead,
+        -- which keeps its inode and so its owner -- at the price of a write
+        -- that fails halfway damaging it, the trade Vim makes with
+        -- backupcopy=auto. An unprivileged test cannot change owners, so the
+        -- system calls are scripted.
+        describe("keeping the owner and group of the file it replaces", function()
+            local original_stat, chowns, fstat_gid, wrong_gid, real_fstat
+
+            local function inode() return uv.fs_stat(path.filename).ino end
+
+            before_each(function()
+                original_stat = uv.fs_stat(path.filename)
+                chowns = {}
+                -- What the temp file turns out to belong to, per fchown so far.
+                wrong_gid = original_stat.gid + 1
+                fstat_gid = function() return original_stat.gid end
+                real_fstat = uv.fs_fstat
+                uv.fs_fstat = function(fd)
+                    local stat = real_fstat(fd)
+                    if stat then stat.gid = fstat_gid() end
+                    return stat
+                end
+            end)
+
+            after_each(function()
+                uv.fs_fstat = real_fstat
+            end)
+
+            local function script_fchown(results)
+                uv.fs_fchown = function(fd, uid, gid)
+                    chowns[#chowns + 1] = { uid = uid, gid = gid }
+                    local result = results[#chowns]
+                    if result then return real_fchown(fd, uid, gid) end
+                    return nil, "EPERM: operation not permitted"
+                end
             end
-            assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
-            assert.same({ uid = stat.uid, gid = stat.gid }, given)
-        end)
 
-        -- An unprivileged user usually cannot give a file away, and a cache in
-        -- one's own cache directory has no one to give it to: when it fails,
-        -- the write goes on, mode and all.
-        it("goes on with the write when the owner cannot be set", function()
-            assert(uv.fs_chmod(path.filename, tonumber("664", 8)))
-            uv.fs_fchown = function() return nil, "EPERM: operation not permitted" end
-            with_umask(tonumber("022", 8))
-            local ok = cache_utils.write_json(path, { items = { "new" } })
-            assert.is_true(ok)
-            assert.same({ items = { "new" } }, cache_utils.read_json(path))
-            assert.equals(tonumber("664", 8), mode_of(path.filename))
-            assert.are.same({ "cache.json" }, listing())
-            assert.are.same({}, errors, "a best-effort step was logged as an error")
-        end)
+            it("gives the replacement the file's owner and group, and replaces it atomically", function()
+                script_fchown({ true })
+                local before = inode()
+                assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
+                assert.same({ { uid = original_stat.uid, gid = original_stat.gid } }, chowns)
+                assert.are_not.equal(before, inode(), "wrote in place when the owner was kept")
+                assert.same({ items = { "new" } }, cache_utils.read_json(path))
+                assert.are.same({ "cache.json" }, listing())
+            end)
 
-        it("leaves the owner of a new file to whoever creates it", function()
-            uv.fs_fchown = function() error("set the owner of a new file") end
-            local fresh = P:new(tmp .. "/fresh.json")
-            assert.is_true((cache_utils.write_json(fresh, { a = 1 })))
+            it("falls back to setting just the group, and still replaces atomically", function()
+                script_fchown({ false, true })
+                -- Until the group-only call has been made, it is the wrong group.
+                fstat_gid = function() return #chowns >= 2 and original_stat.gid or wrong_gid end
+                local before = inode()
+                assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
+                assert.are.equal(2, #chowns, vim.inspect(chowns))
+                assert.same({ uid = uv.getuid(), gid = original_stat.gid }, chowns[2])
+                assert.are_not.equal(before, inode(), "wrote in place though the group was set")
+                assert.same({ items = { "new" } }, cache_utils.read_json(path))
+                assert.are.same({ "cache.json" }, listing())
+            end)
+
+            describe("when neither call gives the replacement the file's owner and group", function()
+                before_each(function()
+                    script_fchown({ false, false })
+                    fstat_gid = function() return wrong_gid end
+                end)
+
+                it("writes the file in place, keeping its inode, and leaves no temp file", function()
+                    local before = inode()
+                    assert.is_true((cache_utils.write_json(path, { items = { "new", "in", "place" } })))
+                    assert.are.equal(before, inode(), "replaced the file and lost its owner")
+                    assert.same({ items = { "new", "in", "place" } }, cache_utils.read_json(path))
+                    assert.are.same({ "cache.json" }, listing())
+                    assert.are.same({}, errors, "a fallback was logged as an error")
+                end)
+
+                it("goes on after a short write until every byte is written", function()
+                    uv.fs_write = function(fd, data, offset) return real_write(fd, data:sub(1, 4), offset) end
+                    assert.is_true((cache_utils.write_json(path, { items = { "new", "much", "longer", "cache" } })))
+                    assert.same({ items = { "new", "much", "longer", "cache" } }, cache_utils.read_json(path))
+                    assert.are.same({ "cache.json" }, listing())
+                end)
+
+                it("reports a write that makes no progress as a failure", function()
+                    local calls = 0
+                    uv.fs_write = function(fd, data, offset)
+                        calls = calls + 1
+                        if calls == 1 then return real_write(fd, data:sub(1, 3), offset) end
+                        return 0
+                    end
+                    local ok, err = cache_utils.write_json(path, { items = { "new", "much", "longer", "cache" } },
+                        { quiet = true })
+                    assert.is_false(ok)
+                    assert.is_string(err)
+                    assert.are.same({ "cache.json" }, listing())
+                end)
+
+                it("reports a file that cannot be opened for writing as a failure", function()
+                    uv.fs_open = function(file, flags, mode, ...)
+                        if flags == "w" then return nil, "EACCES: permission denied" end
+                        return real_open(file, flags, mode, ...)
+                    end
+                    local ok, err = cache_utils.write_json(path, { items = { "new" } }, { quiet = true })
+                    assert.is_false(ok)
+                    assert.truthy(tostring(err):find("EACCES", 1, true), err)
+                    assert.equals(original, bytes(path.filename))
+                    assert.are.same({ "cache.json" }, listing())
+                end)
+            end)
+
+            it("replaces it atomically, whatever it says, when the owner is already right", function()
+                script_fchown({ false, false })
+                local before = inode()
+                assert.is_true((cache_utils.write_json(path, { items = { "new" } })))
+                assert.are_not.equal(before, inode())
+                assert.are.same({}, errors, "a best-effort step was logged as an error")
+            end)
+
+            it("leaves the owner of a new file to whoever creates it", function()
+                uv.fs_fchown = function() error("set the owner of a new file") end
+                fstat_gid = function() return wrong_gid end
+                local fresh = P:new(tmp .. "/fresh.json")
+                assert.is_true((cache_utils.write_json(fresh, { a = 1 })))
+                assert.same({ a = 1 }, cache_utils.read_json(fresh))
+            end)
         end)
 
         it("keeps the old file, with no temp file, when the mode cannot be set", function()
