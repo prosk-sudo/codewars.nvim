@@ -5,6 +5,12 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Added
+- The kata list keeps itself current without rebuilding. Once a day, in the
+  background, it reads Codewars' "Newest" listing and merges in kata that
+  are new or whose name, rank or languages changed, stopping at the first
+  page with nothing new — usually one or two requests instead of the ~290
+  of a full build. The full rebuild every `cache.update_interval` remains
+  as a safety net. `cache.check_interval` sets how often it looks.
 - `indent` option: one indentation style per language, set in `setup()` the
   way templates are — `indent = { python = 4, c = 4, go = "tabs" }`. Codewars'
   starter code is not consistently indented; the same language arrives with

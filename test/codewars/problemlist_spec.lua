@@ -307,3 +307,272 @@ describe("cache.problemlist stale list", function()
         assert.equals(0, updates)
     end)
 end)
+
+-- Rebuilding ~290 pages to learn about a handful of new kata wastes minutes
+-- under the rate limit. Between full builds, the list is kept current by
+-- reading the "Newest" listing -- new kata, and kata that changed -- until a
+-- page brings nothing it does not already have.
+describe("cache.problemlist daily check", function()
+    local LIST = "mem:problemlist.json"
+    local DAY = 86400
+    local stored, writes, requested, page_script, said
+
+    local function kata(id, extra)
+        return vim.tbl_extend("force", {
+            id = id, slug = id, name = "Kata " .. id, rank_id = -8, rank_name = "8 kyu",
+            languages = { "python" }, satisfaction = 90,
+        }, extra or {})
+    end
+
+    --- A list built `age` seconds ago and, unless given, never checked since.
+    local function list_of(items, age, checked_age)
+        return {
+            items = items,
+            timestamp = os.time() - age,
+            checked_at = checked_age and os.time() - checked_age or nil,
+        }
+    end
+
+    local function ids(items)
+        return vim.tbl_map(function(i) return i.id end, items)
+    end
+
+    local function list_writes()
+        return vim.tbl_filter(function(w) return w.path == LIST end, writes)
+    end
+
+    local function settle()
+        vim.wait(200, function() return false end)
+    end
+
+    local problemlist
+
+    before_each(function()
+        stored, writes, requested, said = {}, {}, {}, {}
+        package.loaded["codewars.logger"] = setmetatable({}, {
+            __index = function(_, level)
+                return function(msg) said[#said + 1] = { level = level, msg = tostring(msg) } end
+            end,
+        })
+        package.loaded["codewars.logger.spinner"] = {
+            start = function()
+                return { update = function() end, success = function() end, error = function() end }
+            end,
+        }
+        package.loaded["codewars.config"] = {
+            user = { cache = { update_interval = 30 * DAY, check_interval = DAY } }, lang = "python",
+        }
+        package.loaded["codewars.cache.utils"] = {
+            cache_file = function(name) return "mem:" .. name end,
+            read_json = function(path) return vim.deepcopy(stored[path]) end,
+            write_json = function(path, data)
+                writes[#writes + 1] = { path = path, data = vim.deepcopy(data) }
+                stored[path] = vim.deepcopy(data)
+                return true
+            end,
+        }
+        package.loaded["codewars.api.search"] = {
+            fetch_page = function(opts, page, cb)
+                requested[#requested + 1] = { page = page, opts = opts }
+                return cb(page_script(page))
+            end,
+        }
+        package.loaded["codewars.cache.problemlist"] = nil
+        problemlist = require("codewars.cache.problemlist")
+        problemlist.PACE_MS = 0
+    end)
+
+    it("merges in kata it has never seen, a day after the last look", function()
+        stored[LIST] = list_of({ kata("a"), kata("b") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then return { kata("c"), kata("a") }, true end
+            return { kata("a"), kata("b") }, true
+        end
+
+        assert.is_false(problemlist.refresh_if_stale(), "a fresh list is not rebuilt")
+        settle()
+
+        local w = list_writes()
+        assert.equals(1, #w)
+        assert.same({ "a", "b", "c" }, ids(w[1].data.items))
+        assert.equals(stored[LIST].timestamp, w[1].data.timestamp, "the full build's age is kept")
+        assert.is_true(os.time() - w[1].data.checked_at < 5)
+    end)
+
+    it("reads the Newest listing, across every language and rank", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function() return { kata("a") }, true end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        local opts = requested[1].opts
+        assert.equals("sort_date+desc", opts.order)
+        assert.equals("", opts.language)
+        assert.is_nil(opts.rank)
+    end)
+
+    it("updates a kata whose name, rank or languages changed", function()
+        stored[LIST] = list_of({ kata("a"), kata("b"), kata("c") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then
+                return {
+                    kata("a", { name = "Renamed" }),
+                    kata("b", { rank_id = -6, rank_name = "6 kyu" }),
+                    kata("c", { languages = { "python", "rust" } }),
+                }, true
+            end
+            return { kata("a", { name = "Renamed" }) }, true
+        end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        local items = list_writes()[1].data.items
+        assert.same({ "a", "b", "c" }, ids(items), "updated in place, not added again")
+        assert.equals("Renamed", items[1].name)
+        assert.equals(-6, items[2].rank_id)
+        assert.same({ "python", "rust" }, items[3].languages)
+    end)
+
+    it("stops at the first page that brings nothing new or changed", function()
+        stored[LIST] = list_of({ kata("a"), kata("b") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then return { kata("c") }, true end
+            if page == 1 then return { kata("a"), kata("b") }, true end
+            return { kata("d") }, true
+        end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(2, #requested)
+        assert.same({ "a", "b", "c" }, ids(list_writes()[1].data.items))
+    end)
+
+    -- Satisfaction moves with every vote; counting it would read every
+    -- check to its page limit.
+    it("does not count a satisfaction change as a change", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then return { kata("a", { satisfaction = 12 }) }, true end
+            return { kata("z") }, true
+        end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(1, #requested)
+    end)
+
+    it("reads no more than CHECK_MAX_PAGES pages, leaving the rest to the full rebuild", function()
+        stored[LIST] = list_of({}, 2 * DAY)
+        page_script = function(page) return { kata("new" .. page) }, true end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(problemlist.CHECK_MAX_PAGES, #requested)
+        assert.equals(problemlist.CHECK_MAX_PAGES, #list_writes()[1].data.items)
+    end)
+
+    it("says how many kata it added or updated, and nothing when there were none", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then return { kata("b"), kata("a", { name = "Renamed" }) }, true end
+            return { kata("a", { name = "Renamed" }) }, true
+        end
+        problemlist.refresh_if_stale()
+        settle()
+        local msg = (said[#said] or {}).msg or ""
+        assert.truthy(msg:find("1 new", 1, true) and msg:find("1 updated", 1, true), msg)
+
+        said = {}
+        stored[LIST].checked_at = os.time() - 2 * DAY
+        page_script = function() return { kata("a", { name = "Renamed" }), kata("b") }, true end
+        problemlist.refresh_if_stale()
+        settle()
+        assert.same({}, vim.tbl_filter(function(s) return s.level == "info" end, said))
+        assert.equals(2, #list_writes(), "the look itself is still recorded")
+    end)
+
+    it("does not look again within a day of the last look", function()
+        stored[LIST] = list_of({ kata("a") }, 10 * DAY, DAY / 2)
+        page_script = function() return { kata("b") }, true end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(0, #requested)
+    end)
+
+    it("looks right away at a list built more than a day ago and never checked", function()
+        stored[LIST] = list_of({ kata("a") }, DAY + 60)
+        page_script = function() return { kata("a") }, true end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(1, #requested)
+    end)
+
+    it("leaves a stale list to the full rebuild", function()
+        stored[LIST] = list_of({ kata("a") }, 31 * DAY)
+        page_script = function(page) return page == 0 and { kata("a") } or {}, page == 0 end
+
+        assert.is_true(problemlist.refresh_if_stale())
+        settle()
+
+        for _, r in ipairs(requested) do
+            assert.are_not.equal("sort_date+desc", r.opts.order)
+        end
+    end)
+
+    it("does nothing when there is no list yet", function()
+        page_script = function() return { kata("a") }, true end
+        assert.is_false(problemlist.check_for_new())
+        assert.equals(0, #requested)
+    end)
+
+    -- A failed look leaves checked_at alone, so the next open tries again.
+    it("writes nothing when a page fails", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then return { kata("b") }, true end
+            return {}, false, { msg = "HTTP 503" }
+        end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(0, #list_writes())
+    end)
+
+    it("does not overwrite a list rebuilt while it was looking", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then
+                -- A full build lands between this page and the next.
+                stored[LIST] = list_of({ kata("a"), kata("x") }, 0)
+                return { kata("b") }, true
+            end
+            return { kata("a") }, true
+        end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(0, #list_writes())
+    end)
+
+    it("runs one look at a time", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function() return { kata("a") }, true end
+
+        assert.is_true(problemlist.check_for_new())
+        assert.is_false(problemlist.check_for_new())
+        settle()
+
+        assert.equals(1, #requested)
+    end)
+end)

@@ -89,6 +89,7 @@ local M = {
 
     cache = {
         update_interval = 60 * 60 * 24 * 30, ---@type integer 30 days: problem list is refreshed in the background after this
+        check_interval = 60 * 60 * 24, ---@type integer 1 day: new and changed kata are merged into the problem list in the background after this
         completed_interval = 60 * 60 * 24, ---@type integer 1 day: completed-kata list re-fetched after this
     },
 

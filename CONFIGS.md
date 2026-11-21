@@ -207,6 +207,7 @@ example `indent.pyton: unknown language`.
 ```lua
 cache = {
     update_interval = 60 * 60 * 24 * 30,  -- 30 days
+    check_interval = 60 * 60 * 24,        -- 1 day
     completed_interval = 60 * 60 * 24,    -- 1 day
 },
 ```
@@ -214,6 +215,7 @@ cache = {
 | Option | Default | Description |
 |---|---|---|
 | `cache.update_interval` | `2592000` (30 days) | How long the problem list is used as-is (seconds). After that it is still shown immediately by `:CW list` / `:CW random` and rebuilt in the background — you never wait for a refresh unless nothing is cached yet. `:CW cache update` forces a rebuild any time. |
+| `cache.check_interval` | `86400` (1 day) | How often the cached problem list picks up new and changed kata (seconds). In the background, the list reads Codewars' "Newest" listing until a page brings nothing new — usually one or two requests — instead of rebuilding the whole catalogue. |
 | `cache.completed_interval` | `86400` (1 day) | How long the completed-kata list is trusted before it is re-fetched (in the background) so kata solved on the website show as completed. |
 
 ## Console (Result Popup)
