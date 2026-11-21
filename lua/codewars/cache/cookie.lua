@@ -154,6 +154,34 @@ local function tell_menu()
     if ok and menu then pcall(menu.session_changed) end
 end
 
+--- Write the cookie so that only its owner can read it.
+---
+--- The file holds a live session, so any other local account that can read
+--- it can act as this user. The mode is set on the open file descriptor,
+--- BEFORE the cookie goes in. The mode passed to open only applies when the
+--- file is created, and then only after the umask is subtracted: a file an
+--- older version left world-readable would keep its mode, and a strict umask
+--- can leave a file the owner cannot reopen. Going through the path instead
+--- (look, chmod, then open) lets another process create the file in between,
+--- so what is written is not what was checked. fchmod acts on the file we
+--- hold, ignores the umask, and runs before the secret is in it.
+---
+--- Raises on failure, as Path:write did, closing the descriptor first.
+---@param path string
+---@param str string
+local function write_private(path, str)
+    local uv = vim.uv or vim.loop
+    local fd = assert(uv.fs_open(path, "w", OWNER_ONLY))
+    local ok, err = pcall(function()
+        assert(uv.fs_fchmod(fd, OWNER_ONLY))
+        assert(uv.fs_write(fd, str, -1))
+    end)
+    uv.fs_close(fd)
+    if not ok then
+        error(err, 0)
+    end
+end
+
 ---@param str string
 ---@return string? error
 function Cookie.set(str)
@@ -162,16 +190,7 @@ function Cookie.set(str)
         return cerr
     end
 
-    -- The file holds a live session, so any other local account that can
-    -- read it can act as this user. Path:write only applies a mode when it
-    -- creates the file, so a file left world-readable by an older version
-    -- keeps that mode unless it is tightened here. Do it BEFORE the new
-    -- cookie goes in, so the secret is never in a file others can read.
-    local f = file()
-    if f:exists() then
-        assert((vim.uv or vim.loop).fs_chmod(f:absolute(), OWNER_ONLY))
-    end
-    f:write(str, "w", OWNER_ONLY)
+    write_private(file():absolute(), str)
     cached_cookie = nil
     Cookie.identity_changed()
     tell_menu()
