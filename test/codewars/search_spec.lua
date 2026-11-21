@@ -232,8 +232,10 @@ describe("api.search", function()
     end)
 
     -- Result links used to be matched as exactly `href="/kata/<hex>">`, so
-    -- any drift from that -- a class after the href, single quotes, a
-    -- trailing path -- dropped the kata without a word.
+    -- any drift from that -- a class after the href, single quotes, a title
+    -- wrapped in a tag -- dropped the kata without a word. Only the plain
+    -- title link names a kata: a train link (`/kata/<hex>/train/python`) is a
+    -- button, and never stands in for a title that cannot be read.
     describe("parse_html result links", function()
         local function parse_link(anchor)
             return search.parse_html(block(anchor))
@@ -252,11 +254,10 @@ describe("api.search", function()
             assert.are.equal(SLUG, results[1].slug)
         end)
 
-        it("accepts a trailing path, as /kata/<hex>/train/python", function()
-            local results = parse_link(('<a href="/kata/%s/train/python">Braces</a>'):format(SLUG))
-            assert.are.equal(1, #results)
-            assert.are.equal(SLUG, results[1].slug)
-            assert.are.equal("Braces", results[1].name)
+        it("does not take a link with a deeper path for the kata", function()
+            assert.are.equal(0, #parse_link(('<a href="/kata/%s/train/python">Braces</a>'):format(SLUG)))
+            assert.are.equal(0, #parse_link(('<a href="/kata/%s/">Braces</a>'):format(SLUG)))
+            assert.are.equal(0, #parse_link(('<a href="/kata/%s/solutions">Braces</a>'):format(SLUG)))
         end)
 
         it("accepts a trailing query or fragment", function()
@@ -277,6 +278,72 @@ describe("api.search", function()
                     .. '<a href="/kata/%s">Valid Braces</a>'):format(SLUG, SLUG)
             )
             assert.are.equal("Valid Braces", results[1].name)
+        end)
+
+        it("reads the title through inline tags inside the link", function()
+            local results = parse_link(('<a href="/kata/%s"><span>Valid Braces</span></a>'):format(SLUG))
+            assert.are.equal(1, #results)
+            assert.are.equal(SLUG, results[1].slug)
+            assert.are.equal("Valid Braces", results[1].name)
+
+            results = parse_link(('<a class="ml-2" href="/kata/%s">\n  <b>Valid</b> <i class="x">Braces</i>\n</a>'):format(SLUG))
+            assert.are.equal("Valid Braces", results[1].name)
+        end)
+
+        it("decodes entities in a wrapped title, and keeps escaped markup as text", function()
+            local results = parse_link(('<a href="/kata/%s"><span>Python&#39;s &lt;b&gt; &amp; Co</span></a>'):format(SLUG))
+            assert.are.equal("Python's <b> & Co", results[1].name)
+        end)
+
+        -- The reported case: a train button ahead of a title the parser used
+        -- to be unable to read, which then named the kata "Train".
+        it("names a span-wrapped title from the title link, not from a train link", function()
+            local train = ('<a href="/kata/%s/train/python">Train</a>'):format(SLUG)
+            local title = ('<a href="/kata/%s"><span>Valid Braces</span></a>'):format(SLUG)
+            assert.are.equal("Valid Braces", parse_link(train .. title)[1].name)
+            assert.are.equal("Valid Braces", parse_link(title .. train)[1].name)
+        end)
+
+        it("drops a block whose only kata links are train links", function()
+            local train = ('<a href="/kata/%s/train/python">Train</a>'):format(SLUG)
+            local results, err, dropped = search.parse_html(block(train) .. readable("Valid Braces"))
+            assert.is_nil(err)
+            assert.are.equal(1, #results)
+            assert.are.equal("Valid Braces", results[1].name)
+            assert.are.equal(1, dropped)
+        end)
+
+        it("treats a page of blocks with only train links as markup drift", function()
+            local train = ('<a href="/kata/%s/train/python">Train</a>'):format(SLUG)
+            local results, err, dropped = search.parse_html(block(train) .. block(train))
+            assert.are.same({}, results)
+            assert.is_true(err.drift)
+            assert.are.equal(2, dropped)
+        end)
+
+        it("drops a block whose title has no text", function()
+            for _, inner in ipairs({
+                "",
+                "   ",
+                "<span></span>",
+                "<span> </span>",
+                "&nbsp;",
+                "<img src='x.png'>",
+            }) do
+                local results, err, dropped = search.parse_html(
+                    block(('<a href="/kata/%s">%s</a>'):format(SLUG, inner)) .. readable("Valid Braces")
+                )
+                assert.is_nil(err)
+                assert.are.equal(1, #results, inner)
+                assert.are.equal("Valid Braces", results[1].name, inner)
+                assert.are.equal(1, dropped, inner)
+            end
+        end)
+
+        it("treats a page whose titles are all empty as markup drift", function()
+            local empty = block(('<a href="/kata/%s"><span></span></a>'):format(SLUG))
+            local _, err = search.parse_html(empty .. empty)
+            assert.is_true(err.drift)
         end)
 
         it("does not take a data-href for the link", function()

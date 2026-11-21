@@ -192,7 +192,8 @@ All notable changes to codewars.nvim are documented here.
   are read too (#26).
 - A search page whose results Codewars marked up a little differently is no
   longer dropped without a word. Kata links with more attributes, single
-  quotes or a trailing path are read. A page with results that all fail to
+  quotes, a trailing query or a title wrapped in a tag are read; a "Train"
+  button is never taken for the title. A page with results that all fail to
   read now stops the kata list build (the cache is left as it was) and the
   daily check with a warning that the markup may have changed, instead of
   passing for the end of a rank. When only some are dropped, the rest are

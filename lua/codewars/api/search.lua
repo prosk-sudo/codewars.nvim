@@ -130,40 +130,41 @@ function search.kata(opts, cb)
     fetch_next()
 end
 
---- The kata a result link points at. The link is `/kata/<id>`, optionally
---- followed by a path, query or fragment (`/kata/<id>/train/python`); `id`
---- must be a whole 24-hex id, so a slug or a longer or shorter run of hex
---- is not one.
+--- The kata a result's title link points at: `/kata/<id>`, optionally
+--- followed by a query or fragment, and nothing deeper. `id` must be a whole
+--- 24-hex id, so a slug or a longer or shorter run of hex is not one. A link
+--- with a path after the id (`/kata/<id>/train/python`) is a button, not the
+--- title, and is not the kata's name.
 ---@param attrs string the attributes of the `<a>`, starting at the space after `a`
 ---@return string? id
----@return boolean? is_title true when the link goes no deeper than the kata
-local function read_kata_link(attrs)
+local function read_title_href(attrs)
     -- The leading %s keeps `data-href` from passing for `href`.
     local href = attrs:match('%shref%s*=%s*"([^"]*)"') or attrs:match("%shref%s*=%s*'([^']*)'")
     local id, rest = (href or ""):match("^/kata/(" .. api_utils.HEX24 .. ")(.*)$")
     if not id then return nil end
-    if rest ~= "" and not rest:find("^[/?#]") then return nil end
-    return id, rest:sub(1, 1) ~= "/"
+    if rest ~= "" and not rest:find("^[?#]") then return nil end
+    return id
 end
 
---- The id and name of a result block's own title link. A train link
---- (`/kata/<id>/train/python`) is only taken when no plainer link has text,
---- so a "Train" button ahead of the title cannot name the kata; the language
---- icons carry a train link and no text, and are passed over.
+--- The id and name of a result block's own title link: the first plain
+--- `/kata/<id>` link with any text in it. The text is what shows, so tags
+--- inside the link (`<a ...><span>Title</span></a>`) are dropped, entities
+--- decoded and the ends trimmed. Links with no text, the language icons
+--- among them, are passed over. A block with no such link has no kata in it
+--- that we can name, and is left out.
 ---@param block string
 ---@return string? id
 ---@return string? name
 local function read_title_link(block)
-    local deeper_id, deeper_name
-    for attrs, text in block:gmatch("<a(%s[^>]*)>([^<]+)</a>") do
-        local id, is_title = read_kata_link(attrs)
-        local name = text:match("^%s*(.-)%s*$")
-        if id and name ~= "" then
-            if is_title then return id, name end
-            deeper_id, deeper_name = deeper_id or id, deeper_name or name
+    local unescape = require("codewars.api.page").unescape
+    for attrs, inner in block:gmatch("<a(%s[^>]*)>(.-)</a>") do
+        local id = read_title_href(attrs)
+        if id then
+            -- Tags go first, so markup that was escaped in the title stays text.
+            local name = unescape((inner:gsub("<[^>]*>", ""))):match("^%s*(.-)%s*$")
+            if name ~= "" then return id, name end
         end
     end
-    return deeper_id, deeper_name
 end
 
 --- Parse the search results HTML to extract kata entries.
@@ -214,8 +215,9 @@ function search.parse_html(html)
         if slug and name then
             entry.id = slug
             entry.slug = slug
-            -- Scraped HTML: "Python&#39;s" is how an apostrophe arrives.
-            entry.name = require("codewars.api.page").unescape(name)
+            -- Already decoded by read_title_link: "Python&#39;s" is how an
+            -- apostrophe arrives in the scraped HTML.
+            entry.name = name
         end
 
         -- Satisfaction from tooltip: 'Satisfaction Rating: 89% of users...'
