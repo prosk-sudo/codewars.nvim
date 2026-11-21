@@ -355,7 +355,9 @@ theme = {
 },
 ```
 
-Highlights are re-applied after every `:colorscheme`, overrides included.
+Highlights are re-applied after every `:colorscheme`, overrides included. The
+`default` and `force` keys are ignored in theme overrides (with a warning): an
+override always applies.
 
 ## Icons
 

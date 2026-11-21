@@ -2,6 +2,17 @@ describe("theme highlights", function()
     local config_stub = { user = {}, langs = {} }
     package.loaded["codewars.config"] = config_stub
     package.loaded["codewars.theme"] = nil
+
+    -- What the plugin's logger was asked to warn about, reset for every test.
+    local warnings = {}
+    package.loaded["codewars.logger"] = {
+        info = function() end,
+        error = function() end,
+        debug = function() end,
+        warn = function(msg)
+            table.insert(warnings, msg)
+        end,
+    }
     local theme = require("codewars.theme")
 
     -- ColorScheme autocmds present before the plugin has set anything up:
@@ -68,6 +79,7 @@ end
     end
 
     before_each(function()
+        warnings = {}
         config_stub.user = {}
         define_colorscheme_groups()
         theme.setup()
@@ -135,153 +147,106 @@ end
         end)
     end)
 
-    -- `default` and `force` say how a group is set, not what it looks like, so
-    -- a link that carries only those is still a link.
-    --
-    -- A group given `{ link = X, default = true }` keeps that link for the rest
-    -- of the process: `highlight clear` restores it and nothing removes it. So
-    -- each test below takes groups of its own that no other test uses.
-    describe("a link override with keys that only control how it is set", function()
-        local SPARE = {
-            "codewars_rate_white",
-            "codewars_rate_yellow",
-            "codewars_rate_orange",
-            "codewars_rate_green",
-            "codewars_rate_blue",
-            "codewars_rate_red",
-            "codewars_rate_pink",
-            "codewars_rate_purple",
-            "codewars_rate_gray",
-            "codewars_rate_brown",
-            "codewars_rate_black",
-            "codewars_lang_elixir",
-            "codewars_lang_swift",
-            "codewars_lang_kotlin",
-            "codewars_lang_scala",
-            "codewars_lang_php",
-        }
-        local taken = 0
-        local function spare_group()
-            taken = taken + 1
-            return assert(SPARE[taken], "out of spare groups")
+    -- `default` and `force` say how nvim_set_hl sets a group, not what it looks
+    -- like, and an override always applies. They are not supported in `theme`:
+    -- they are dropped from a copy of the user's table, with one warning per
+    -- group that had them.
+    describe("overrides that carry `default` or `force`", function()
+        local GREEN = 0x00ff00
+
+        local function assert_one_warning(group, ...)
+            assert.are.equal(1, #warnings)
+            assert.truthy(warnings[1]:find(group, 1, true), warnings[1])
+            for _, key in ipairs({ ... }) do
+                assert.truthy(warnings[1]:find("`" .. key .. "`", 1, true), warnings[1])
+            end
         end
 
-        it("default = true is a real link when the group has no definition", function()
-            local group = spare_group()
-            setup_cold({ [group] = { link = "Comment", default = true } })
-            local h = raw(group)
-            assert.are.equal("Comment", h.link)
-            assert.is_nil(h.fg)
-            assert.is_nil(h.bold)
-        end)
-
-        it("default = true follows a later change to the link target", function()
-            local group = spare_group()
-            setup_cold({ [group] = { link = "Comment", default = true } })
-            vim.api.nvim_set_hl(0, "Comment", { fg = 0xaabbcc, bg = 0x010203 })
-            assert.are.equal(0xaabbcc, resolved(group).fg)
-            assert.are.equal(0x010203, resolved(group).bg)
-        end)
-
-        it("default = true leaves an existing definition alone", function()
-            local group = spare_group()
-            setup_cold({ [group] = { link = "Comment", default = true } }, { [group] = { fg = 0x00ff00 } })
-            local h = raw(group)
-            assert.are.equal(0x00ff00, h.fg)
-            assert.is_nil(h.link)
-        end)
-
-        it("force = true is a real link", function()
-            local group = spare_group()
-            setup_cold({ [group] = { link = "Comment", force = true } })
-            local h = raw(group)
-            assert.are.equal("Comment", h.link)
-            assert.is_nil(h.fg)
-            assert.is_nil(h.bold)
-        end)
-
-        it("force = true replaces an existing definition with the link", function()
-            local group = spare_group()
-            setup_cold({ [group] = { link = "Comment", force = true } }, { [group] = { fg = 0x00ff00 } })
-            local h = raw(group)
-            assert.are.equal("Comment", h.link)
-            assert.is_nil(h.fg)
-        end)
-
-        it("passes default through when a style key makes it a copied color", function()
-            local group = spare_group()
-            setup_cold({ [group] = { link = "Comment", bold = true, default = true } })
-            local h = raw(group)
-            assert.are.equal(0x778899, h.fg)
-            assert.is_true(h.bold)
-            assert.is_true(h.default)
-            assert.is_nil(h.link)
-        end)
-
-        it("passes default through to leave an existing definition alone", function()
-            local group = spare_group()
+        it("drops default: the override applies over an existing definition", function()
             setup_cold(
-                { [group] = { link = "Comment", bold = true, default = true } },
-                { [group] = { fg = 0x00ff00 } }
+                { codewars_header = { fg = "#ff0000", default = true } },
+                { codewars_header = { fg = GREEN } }
             )
-            assert.are.equal(0x00ff00, raw(group).fg)
-            assert.is_nil(raw(group).bold)
+            assert.are.equal(0xff0000, raw("codewars_header").fg)
+            assert_one_warning("codewars_header", "default")
+            assert.is_nil(warnings[1]:find("`force`", 1, true))
         end)
 
-        it("passes force through when a style key makes it a copied color", function()
-            local group = spare_group()
+        it("drops force: the override is a real link", function()
+            setup_cold({ codewars_header = { link = "Comment", force = true } })
+            local h = raw("codewars_header")
+            assert.are.equal("Comment", h.link)
+            assert.is_nil(h.fg)
+            assert_one_warning("codewars_header", "force")
+            assert.is_nil(warnings[1]:find("`default`", 1, true))
+        end)
+
+        it("drops both keys with a single warning: the override is a real link", function()
             setup_cold(
-                { [group] = { link = "Comment", bold = true, force = true } },
-                { [group] = { fg = 0x00ff00 } }
+                { codewars_header = { link = "Comment", default = true, force = true } },
+                { codewars_header = { fg = GREEN } }
             )
-            local h = raw(group)
-            assert.are.equal(0x778899, h.fg)
-            assert.is_true(h.bold)
+            local h = raw("codewars_header")
+            assert.are.equal("Comment", h.link)
+            assert.is_nil(h.fg)
+            assert_one_warning("codewars_header", "default", "force")
         end)
 
-        describe("seen from a styled link to the group", function()
-            -- a head with the override and a follower that links to it
-            local function pair()
-                local head, follower = spare_group(), spare_group()
-                local overrides = {
-                    [head] = { link = "Comment", default = true },
-                    [follower] = { link = head, italic = true },
-                }
-                return head, follower, overrides
-            end
+        it("gives a styled link to such a group the link target's color", function()
+            setup_cold({
+                codewars_lang_python = { link = "Comment", default = true, force = true },
+                codewars_header = { link = "codewars_lang_python", italic = true },
+            }, { codewars_lang_python = { fg = GREEN } })
+            assert.are.equal("Comment", raw("codewars_lang_python").link)
+            local h = raw("codewars_header")
+            assert.are.equal(0x778899, h.fg)
+            assert.are.equal(244, h.ctermfg)
+            assert.is_true(h.italic)
+            assert_one_warning("codewars_lang_python", "default", "force")
+        end)
 
-            it("resolves to the link target's color when nothing was kept", function()
-                local _, follower, overrides = pair()
-                setup_cold(overrides)
-                local h = raw(follower)
-                assert.are.equal(0x778899, h.fg)
-                assert.are.equal(244, h.ctermfg)
-                assert.is_true(h.italic)
-            end)
+        it("gives the same result after a :colorscheme and does not warn again", function()
+            local overrides = {
+                codewars_lang_python = { link = "Comment", default = true, force = true },
+                codewars_header = { link = "codewars_lang_python", italic = true },
+            }
+            setup_cold(overrides, { codewars_lang_python = { fg = GREEN } })
+            assert.are.equal(1, #warnings)
 
-            it("follows the link target through a :colorscheme", function()
-                local head, follower, overrides = pair()
-                setup_cold(overrides)
-                use_colorscheme(0xaabbcc)
-                assert.are.equal("Comment", raw(head).link)
-                local h = raw(follower)
-                assert.are.equal(0xaabbcc, h.fg)
-                assert.are.equal(99, h.ctermfg)
-            end)
+            use_colorscheme(0xaabbcc, { codewars_lang_python = { fg = GREEN } })
+            assert.are.equal("Comment", raw("codewars_lang_python").link)
+            local h = raw("codewars_header")
+            assert.are.equal(0xaabbcc, h.fg)
+            assert.are.equal(99, h.ctermfg)
 
-            it("resolves through what Neovim kept when the group was already defined", function()
-                local head, follower, overrides = pair()
-                setup_cold(overrides, { [head] = { link = "Title" } })
-                assert.are.equal("Title", raw(head).link)
-                assert.are.equal(0x112233, raw(follower).fg)
-            end)
+            vim.cmd.colorscheme("default")
+            assert.are.equal("Comment", raw("codewars_lang_python").link)
+            assert.are.equal(1, #warnings)
+        end)
 
-            it("resolves through a definition the new colorscheme gave the group", function()
-                local head, follower, overrides = pair()
-                setup_cold(overrides)
-                use_colorscheme(0x445566, { [head] = { fg = 0x00ff00 } })
-                assert.are.equal(0x00ff00, raw(follower).fg)
-            end)
+        it("leaves the user's theme table as it was", function()
+            local user_theme = {
+                codewars_header = { link = "Comment", default = true, force = true },
+                codewars_ok = { fg = "#00ff00" },
+            }
+            local before = vim.deepcopy(user_theme)
+            setup_cold(user_theme)
+            assert.are.same(before, config_stub.user.theme)
+            assert.is_true(config_stub.user.theme.codewars_header.default)
+        end)
+
+        it("warns again when setup() is called again", function()
+            setup_cold({ codewars_header = { fg = "#ff0000", default = true } })
+            theme.setup()
+            assert.are.equal(2, #warnings)
+        end)
+
+        it("does not warn about overrides that carry neither key", function()
+            setup_cold({
+                codewars_header = { fg = "#00ff00" },
+                codewars_ok = { link = "Comment", bold = true },
+            })
+            assert.are.equal(0, #warnings)
         end)
     end)
 
@@ -538,30 +503,6 @@ end
                     assert_chain_follows(0xaabbcc, 99)
                 end)
             end)
-
-            -- A head that is `default = true` and already defined keeps its
-            -- definition; every link of the chain has to see that one, in
-            -- whatever order apply() reaches the groups.
-            describe("a chain whose head keeps its definition, " .. direction.name, function()
-                local head = { fg = "#ff0000", default = true }
-
-                it("follows the definition the head already has", function()
-                    setup_cold(chain_overrides(head), { [CHAIN[1]] = { fg = 0x00ff00 } })
-                    assert.are.equal(0x00ff00, raw(CHAIN[1]).fg)
-                    assert_chain_follows(0x00ff00, nil)
-                end)
-
-                it("follows the override when the head has no definition", function()
-                    setup_cold(chain_overrides(head))
-                    assert_chain_follows(0xff0000, nil)
-                end)
-
-                it("follows a definition the new colorscheme gave the head", function()
-                    setup_cold(chain_overrides(head))
-                    use_colorscheme(0x445566, { [CHAIN[1]] = { fg = 0x00ff00 } })
-                    assert_chain_follows(0x00ff00, nil)
-                end)
-            end)
         end
 
         describe("that form a cycle", function()
@@ -682,65 +623,6 @@ end
                 assert.is_true(raw("codewars_rank_white").bold)
                 assert.is_nil(raw("codewars_rank_white").fg)
                 assert.are.equal(0xb1361e, raw("codewars_header").fg)
-            end)
-        end)
-
-        -- `default = true` keeps a definition the group already has, so a link
-        -- to the group has to see that definition, not the override's.
-        describe("to a group whose override is default = true", function()
-            local GREEN, RED = 0x00ff00, 0xff0000
-            local overrides = {
-                codewars_lang_python = { fg = "#ff0000", default = true },
-                codewars_header = { link = "codewars_lang_python", italic = true },
-            }
-
-            it("takes the definition the group already has", function()
-                setup_cold(overrides, { codewars_lang_python = { fg = GREEN } })
-                assert.are.equal(GREEN, raw("codewars_lang_python").fg)
-                local h = raw("codewars_header")
-                assert.are.equal(GREEN, h.fg)
-                assert.is_true(h.italic)
-            end)
-
-            it("takes the override when the group has no definition yet", function()
-                setup_cold(overrides)
-                assert.are.equal(RED, raw("codewars_lang_python").fg)
-                assert.are.equal(RED, raw("codewars_header").fg)
-            end)
-
-            it("sees a definition that the new colorscheme gave the group", function()
-                setup_cold(overrides)
-                use_colorscheme(0x445566, { codewars_lang_python = { fg = GREEN } })
-                assert.are.equal(GREEN, raw("codewars_lang_python").fg)
-                assert.are.equal(GREEN, raw("codewars_header").fg)
-            end)
-
-            it("goes back to the override under a colorscheme that leaves the group undefined", function()
-                setup_cold(overrides, { codewars_lang_python = { fg = GREEN } })
-                use_colorscheme(0x445566)
-                assert.are.equal(RED, raw("codewars_lang_python").fg)
-                assert.are.equal(RED, raw("codewars_header").fg)
-            end)
-
-            it("follows a link the group already has to a group of the colorscheme", function()
-                setup_cold(overrides, { codewars_lang_python = { link = "Comment" } })
-                local h = raw("codewars_header")
-                assert.are.equal(0x778899, h.fg)
-                assert.are.equal(244, h.ctermfg)
-            end)
-
-            it("follows a link the group already has into another codewars group", function()
-                local with_go = vim.tbl_extend("force", overrides, { codewars_lang_go = { fg = "#00ff00" } })
-                setup_cold(with_go, { codewars_lang_python = { link = "codewars_lang_go" } })
-                assert.are.equal(GREEN, raw("codewars_header").fg)
-            end)
-
-            it("gives no color to a cycle through the group's existing link and does not error", function()
-                assert.has_no.errors(function()
-                    setup_cold(overrides, { codewars_lang_python = { link = "codewars_header" } })
-                end)
-                assert.is_true(raw("codewars_header").italic)
-                assert.is_nil(raw("codewars_header").fg)
             end)
         end)
 

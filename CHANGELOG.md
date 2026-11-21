@@ -57,6 +57,11 @@ All notable changes to codewars.nvim are documented here.
   back into the kata you opened last, in the language you last used; one that
   is still open in a tab is brought forward. Opens are recorded locally (last
   50, per kata and language).
+- `theme` overrides now ignore the `default` and `force` keys, with a warning
+  naming the group. They used to be passed on to Neovim, where `default` kept
+  whatever definition a group already had, so an override could silently not
+  apply, and a link to such a group could show another color than the group
+  itself. An override now always applies.
 
 ### Changed
 - `:CW completed` lists your most recently completed kata first. A new
