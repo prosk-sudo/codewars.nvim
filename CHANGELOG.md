@@ -196,7 +196,11 @@ All notable changes to codewars.nvim are documented here.
   button is never taken for the title. Each result is read from its own
   element and no further, so a link in a footer after the last one is never
   taken for its title, and its language list is no longer cut short; a result
-  with no closing tag counts as dropped. A page with results that all fail to
+  with no closing tag counts as dropped. Only real tags count: text that
+  merely looks like one, in a comment, a script, a style, a template or a
+  quoted attribute value, neither makes a result nor changes where one ends,
+  and a result is the element with `list-item-kata` as a whole class name. A
+  page with results that all fail to
   read now stops the kata list build (the cache is left as it was) and the
   daily check with a warning that the markup may have changed, instead of
   passing for the end of a rank. When only some are dropped, the rest are

@@ -167,79 +167,76 @@ local function read_title_link(block)
     end
 end
 
-local BLOCK_MARKER = "list-item-kata"
+--- The class that marks a result's element.
+local BLOCK_CLASS = "list-item-kata"
 
---- Where the element whose opening tag holds the marker begins: the `<` of
---- the tag the marker sits in, or nil when it sits anywhere else (text, a
---- script, a comment). Looks back only as far as `floor`, so the lookups of a
---- whole page add up to one pass over it.
----@param html string
----@param marker integer position of the marker
----@param floor integer
----@return integer? open
-local function opening_tag_at(html, marker, floor)
-    for i = marker - 1, floor, -1 do
-        local byte = html:byte(i)
-        if byte == 62 then return nil end -- ">": the marker is past the end of a tag
-        if byte == 60 then -- "<"
-            return html:find("^%a", i + 1) and i or nil
-        end
-    end
+--- Whether `tag` opens a result: a real opening tag with `list-item-kata` as
+--- a whole class name, not as part of another (`not-list-item-kata`), and not
+--- in some other attribute.
+---@param tag cw.HtmlTag
+---@return boolean
+local function opens_block(tag)
+    return not tag.close and tag.class ~= nil
+        and (" " .. tag.class .. " "):find("%s" .. BLOCK_CLASS:gsub("%-", "%%-") .. "%s") ~= nil
 end
 
---- Where the element opened at `open` (a `<tag`) closes: the position of its
---- own `</tag`, found by counting the elements of that name inside it. nil
---- when the page ends first.
----@param html string
----@param open integer
----@param tag string
+--- Which tag closes the element opened by `tags[first]`: the one that brings
+--- the count of that name's open and close tags back to zero. Void elements
+--- and `<name/>` have no closing tag, and do not count. nil when the page
+--- ends first.
+---@param tags cw.HtmlTag[]
+---@param first integer
 ---@return integer?
-local function closing_tag_of(html, open, tag)
-    local pattern = "</?" .. tag:gsub("%-", "%%-") .. "[%s/>]"
-    local depth, pos = 1, open + 1 + #tag
-    while true do
-        local s, e = html:find(pattern, pos)
-        if not s then return nil end
-        if html:byte(s + 1) == 47 then -- "/"
-            depth = depth - 1
-            if depth == 0 then return s end
-        else
-            depth = depth + 1
+local function closing_tag_of(tags, first)
+    local name, depth = tags[first].name, 1
+    for i = first + 1, #tags do
+        local tag = tags[i]
+        if tag.name == name and not tag.empty then
+            depth = depth + (tag.close and -1 or 1)
+            if depth == 0 then return i end
         end
-        pos = e + 1
     end
 end
 
 --- Cut a results page into its result blocks. A block is the element whose
---- opening tag carries `list-item-kata`, from that tag to its own closing
---- tag: not up to the next result, and not a fixed number of characters on,
---- either of which can run past the block into a footer or a related-kata
---- section, whose links would then be read as the result's own.
+--- opening tag carries the `list-item-kata` class, from that tag to its own
+--- closing tag: not up to the next result, and not a fixed number of
+--- characters on, either of which can run past the block into a footer or a
+--- related-kata section, whose links would then be read as the result's own.
+--- Only real tags count (see api.htmltags): the text of a comment, a script, a
+--- template or a quoted attribute value neither opens a block, nor closes
+--- one, nor changes how deep it is. The blocks are cut from the page with
+--- that text blanked out, so nothing in it is read as a title or a language.
 ---
 --- A block whose closing tag is missing (a cut-off page, broken markup) has no
 --- end we could trust, and is left out, never guessed at. Nothing after it
 --- can be bounded either, so each block after it is counted as left out
---- without being scanned: the whole page is read once. Returns the blocks and
+--- without being looked for a close: the tags are read once. Returns the blocks and
 --- how many were left out.
 ---@param html string
 ---@return string[] blocks
 ---@return integer unclosed
 local function split_blocks(html)
+    local tags, text = require("codewars.api.htmltags").scan(html)
     local blocks, unclosed, broken = {}, 0, false
-    local pos = 1
-    while true do
-        local marker = html:find(BLOCK_MARKER, pos, true)
-        if not marker then break end
-        local open = opening_tag_at(html, marker, pos)
-        pos = marker + #BLOCK_MARKER
-        if open then
-            local tag = html:match("^<(%a[%w%-]*)", open)
-            local close = not broken and closing_tag_of(html, open, tag) or nil
-            if close then
-                blocks[#blocks + 1] = html:sub(open, close - 1)
-                pos = close
+    local i = 1
+    while i <= #tags do
+        local tag = tags[i]
+        if not opens_block(tag) then
+            i = i + 1
+        elseif tag.empty then
+            -- No contents, so no title: a block, and an unreadable one.
+            blocks[#blocks + 1] = text:sub(tag.start, tag.finish)
+            i = i + 1
+        elseif broken then
+            unclosed, i = unclosed + 1, i + 1
+        else
+            local last = closing_tag_of(tags, i)
+            if last then
+                blocks[#blocks + 1] = text:sub(tag.start, tags[last].start - 1)
+                i = last + 1
             else
-                unclosed, broken = unclosed + 1, true
+                unclosed, broken, i = unclosed + 1, true, i + 1
             end
         end
     end

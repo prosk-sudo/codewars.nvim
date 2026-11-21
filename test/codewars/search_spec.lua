@@ -408,7 +408,8 @@ describe("api.search", function()
         --- A result block laid out as the real page does (nested divs, a title
         --- link, a train link per language icon), `languages` icons long.
         --- `opts.title_href` moves the title link off /kata/<id>; `opts.tag`
-        --- is the block's element.
+        --- is the block's element; `opts.extra` is markup inside the block;
+        --- `opts.open_attrs` is more attributes on its opening tag.
         local function result(n, name, languages, opts)
             opts = opts or {}
             local tag = opts.tag or "div"
@@ -421,14 +422,17 @@ describe("api.search", function()
                     .. ' data-tippy-content="%s" data-tippy-placement="bottom"><i class="icon-moon-%s "></i></div></a></li>'
                 ):format(lang, id, lang, lang, lang)
             end
-            return ('<%s class="list-item-kata bg-ui-section p-4 rounded-lg shadow-md" data-title="%s" id="%s">'
+            return ('<%s class="list-item-kata bg-ui-section p-4 rounded-lg shadow-md" data-title="%s" id="%s"%s>'
                 .. '<div class="flex flex-col md:flex-row"><div class="px-0 w-full md:w-1/2">'
                 .. '<div class="text-base font-semibold px-0 flex items-center"><div class="inline-block">'
                 .. '<div border="true" class="small-hex is-extra-wide is-white-rank"><div class="inner-small-hex">'
                 .. '<span>8 kyu</span></div></div></div>'
                 .. '<a class="ml-2" href="%s">%s</a></div>%s</div>'
                 .. '<div class="px-0 w-full md:w-1/2"><ul class="icon-list language-icons">%s</ul></div></div></%s>'
-            ):format(tag, name, id, opts.title_href or ("/kata/" .. id), name, opts.extra or "", table.concat(icons), tag)
+            ):format(
+                tag, name, id, opts.open_attrs and (" " .. opts.open_attrs) or "",
+                opts.title_href or ("/kata/" .. id), name, opts.extra or "", table.concat(icons), tag
+            )
         end
 
         --- Links after the results, as a footer or a related-kata section has.
@@ -437,8 +441,8 @@ describe("api.search", function()
                 .. '<a href="/kata/%s/train/python">Train</a><a href="/kata/%s">Related Two</a></div>'):format(hex(n), hex(n), hex(n + 1))
         end
 
-        local function unreadable_title(n, name, languages)
-            return result(n, name, languages, { title_href = "/challenges/" .. hex(n) })
+        local function unreadable_title(n, name, languages, opts)
+            return result(n, name, languages, vim.tbl_extend("force", opts or {}, { title_href = "/challenges/" .. hex(n) }))
         end
 
         local function names(results)
@@ -553,6 +557,220 @@ describe("api.search", function()
             assert.is_nil(err)
             assert.are.same({ "One" }, names(results))
             assert.are.equal(1, dropped)
+        end)
+
+        -- Tag-shaped text is not markup. Comments, scripts, styles and
+        -- templates hold text that merely looks like tags, and so do quoted
+        -- attribute values; none of it may open a block, close one, or change
+        -- how deep one is.
+        describe("tag-shaped text", function()
+            local TEMPLATE_COPY = '<template><div class="list-item-kata"><a href="/kata/%s">Template Kata</a></div></template>'
+
+            local function assert_bounded(inside)
+                -- An unreadable last block whose inside holds `inside`, then a
+                -- footer and the close of the results container around them
+                -- all: a block counted one element too deep would end at that
+                -- close and take the footer in, so the footer's link must not
+                -- name it, whatever `inside` says.
+                local results, err, dropped = search.parse_html(
+                    '<div id="results">' .. result(1, "One", 2)
+                        .. unreadable_title(2, "Two", 2, { extra = inside }) .. footer(10) .. "</div>"
+                )
+                assert.is_nil(err, inside)
+                assert.are.same({ "One" }, names(results), inside)
+                assert.are.equal(1, dropped, inside)
+            end
+
+            --- A readable last block with `inside` in it is still read whole, and
+            --- the footer after it is still outside.
+            local function assert_reads(inside)
+                local results, err, dropped = search.parse_html(
+                    '<div id="results">' .. result(1, "One", 2, { extra = inside }) .. footer(10) .. "</div>"
+                )
+                assert.is_nil(err, inside)
+                assert.are.same({ "One" }, names(results), inside)
+                assert.are.equal(0, dropped, inside)
+                assert.are.equal(2, #results[1].languages, inside)
+            end
+
+            it("does not count elements written inside a comment", function()
+                assert_bounded("<!-- <div> -->")
+                assert_bounded("<!-- <div><div> -->")
+                assert_bounded("<!-- </div></div></div> --><div></div>")
+                assert_reads("<!-- <div> -->")
+                assert_reads("<!-- </div></div></div> -->")
+            end)
+
+            -- `<!-->` and `<!--->` are whole comments, which end at once.
+            it("ends a comment where HTML does", function()
+                assert_reads("<!-->")
+                assert_reads("<!--->")
+                assert_reads("<!----><div></div>")
+            end)
+
+            it("does not count elements written inside a script, a style or a template", function()
+                assert_bounded('<script>var t = "<div>";</script>')
+                assert_bounded('<script type="text/x-tmpl"><div class="row"></script>')
+                assert_bounded("<style>/* <div> */ .a > .b { color: red }</style>")
+                assert_bounded("<template><div><div></template>")
+                assert_bounded("<template><template><div></template><div></template>")
+            end)
+
+            it("ends a script only at its own closing tag", function()
+                assert_bounded('<script>var s = "</style></div></template><div>";</script>')
+                assert_bounded('<style>/* </script></div> <div> */</style>')
+            end)
+
+            it("reads tag names and raw-text elements without regard to case", function()
+                assert_bounded('<SCRIPT>var t = "<div>";</ScRiPt>')
+                assert_bounded("<STYLE>/* <div> */</STYLE>")
+                local html = result(1, "One", 2, { tag = "DIV" }):gsub("<div class", "<DIV CLASS"):gsub("</div>", "</DIV>")
+                local results, err = search.parse_html(html .. footer(10))
+                assert.is_nil(err)
+                assert.are.same({ "One" }, names(results))
+            end)
+
+            it("ignores quoted attribute values, whatever they hold", function()
+                assert_bounded('<span title="a > b <div>" data-x=\'<div class="list-item-kata">\'>x</span>')
+                assert_bounded("<span title='<div>'>x</span>")
+                assert_bounded('<a href="/elsewhere" title="</div></div></div>">x</a>')
+                assert_reads('<span title="a > b <div>" data-x=\'<div class="list-item-kata">\'>x</span>')
+            end)
+
+            it("reads a block's own opening tag through quoted values with > and <div in them", function()
+                local results, err, dropped = search.parse_html(
+                    result(1, "One", 3, { open_attrs = [[data-note="Fish > Chips <div>" data-alt='x > y <div class="list-item-kata">']] })
+                    .. footer(10)
+                )
+                assert.is_nil(err)
+                assert.are.same({ "One" }, names(results))
+                assert.are.equal(0, dropped)
+                assert.are.equal(3, #results[1].languages)
+
+                assert.are.same({}, (search.parse_html(footer(10) .. footer(20))))
+            end)
+
+            it("does not count self-closing or void elements toward the depth", function()
+                assert_bounded("<div/>")
+                assert_bounded("<div /><br><img src=x><input value='>'><hr/>")
+            end)
+
+            it("does not take a commented-out or inert block for a result", function()
+                local readable_block = result(1, "One", 2)
+                local commented = "<!-- " .. result(2, "Two", 2) .. " -->"
+                local results, err, dropped = search.parse_html(commented .. readable_block .. commented)
+                assert.is_nil(err)
+                assert.are.same({ "One" }, names(results))
+                assert.are.equal(0, dropped)
+
+                -- A page whose only blocks are inert is an empty page, not drift.
+                results, err, dropped = search.parse_html(commented)
+                assert.are.same({}, results)
+                assert.is_nil(err)
+                assert.are.equal(0, dropped)
+            end)
+
+            it("does not take a block in a script, a style or a template for a result", function()
+                local copy = result(3, "Template Kata", 2)
+                for _, inert in ipairs({
+                    "<script>var tpl = '" .. copy .. "';</script>",
+                    '<script type="text/template">' .. copy .. "</script>",
+                    "<style>/* " .. copy .. " */</style>",
+                    "<template>" .. copy .. "</template>",
+                    "<template><template>" .. copy .. "</template>" .. copy .. "</template>",
+                }) do
+                    local results, err, dropped = search.parse_html(inert)
+                    assert.are.same({}, results, inert)
+                    assert.is_nil(err, inert) -- no false drift
+                    assert.are.equal(0, dropped, inert)
+
+                    results, err, dropped = search.parse_html(inert .. result(1, "One", 2) .. inert)
+                    assert.is_nil(err, inert)
+                    assert.are.same({ "One" }, names(results), inert)
+                    assert.are.equal(0, dropped, inert)
+                end
+            end)
+
+            it("does not read a title or a language out of text that is not markup", function()
+                local link = '<a href="/kata/' .. hex(9) .. '">Hidden Title</a>'
+                for _, inside in ipairs({
+                    "<!-- " .. link .. " -->",
+                    "<script>var a = '" .. link .. "';</script>",
+                    "<style>/* " .. link .. " */</style>",
+                    "<template>" .. link .. "</template>",
+                }) do
+                    local results, err, dropped = search.parse_html(unreadable_title(2, "Two", 2, { extra = inside }))
+                    assert.are.same({}, results, inside)
+                    assert.is_true(err.drift, inside)
+                    assert.are.equal(1, dropped, inside)
+                end
+
+                local results = search.parse_html(result(1, "One", 2, {
+                    extra = '<!-- <i data-language="ghost"></i> --><template><i data-language="ghost"></i></template>',
+                }))
+                assert.are.equal(2, #results[1].languages)
+            end)
+
+            it("takes the marker only as a whole class name", function()
+                local function parsed(class)
+                    return search.parse_html(('<div class="%s"><a href="/kata/%s">Name</a></div>'):format(class, hex(1)))
+                end
+                for _, class in ipairs({
+                    "not-list-item-kata", "list-item-katas", "list-item-kata-badge", "x-list-item-kata y", "LIST-ITEM-KATA",
+                }) do
+                    local results, err, dropped = parsed(class)
+                    assert.are.same({}, results, class)
+                    assert.is_nil(err, class)
+                    assert.are.equal(0, dropped, class)
+                end
+                for _, class in ipairs({ "list-item-kata", "a list-item-kata", "a  list-item-kata\tb", "a\nlist-item-kata\n" }) do
+                    assert.are.equal(1, #parsed(class), class)
+                end
+            end)
+
+            it("does not take the marker in another attribute for the class", function()
+                local html = ('<div data-class="list-item-kata" title="class=\'list-item-kata\'">'
+                    .. '<a href="/kata/%s">Name</a></div>'):format(hex(1))
+                local results, err, dropped = search.parse_html(html)
+                assert.are.same({}, results)
+                assert.is_nil(err)
+                assert.are.equal(0, dropped)
+            end)
+
+            it("reads past a doctype, a processing instruction and a nameless close", function()
+                local html = '<!DOCTYPE html><?xml version="1.0"?></><!-- c --></ ><![CDATA[ <div> ]]>'
+                local results, err, dropped = search.parse_html(html .. result(1, "One", 2) .. html)
+                assert.is_nil(err)
+                assert.are.same({ "One" }, names(results))
+                assert.are.equal(0, dropped)
+            end)
+
+            it("returns what it read when a comment is never closed", function()
+                local html = result(1, "One", 2) .. "<!-- " .. result(2, "Two", 2) .. footer(10)
+                local results, err, dropped = search.parse_html(html)
+                assert.is_nil(err)
+                assert.are.same({ "One" }, names(results))
+                assert.are.equal(0, dropped)
+            end)
+
+            it("returns what it read when a script, a style or a template is never closed", function()
+                for _, open in ipairs({ "<script>", "<style>", "<template>" }) do
+                    local html = result(1, "One", 2) .. open .. result(2, "Two", 2) .. footer(10)
+                    local results, err, dropped = search.parse_html(html)
+                    assert.is_nil(err, open)
+                    assert.are.same({ "One" }, names(results), open)
+                    assert.are.equal(0, dropped, open)
+                end
+            end)
+
+            it("returns what it read when a tag is cut off", function()
+                for _, cut in ipairs({ '<div class="list-item-kata', '<div class="list-item-kata" data-x="oops', "<div", "<" }) do
+                    local results, err, dropped = search.parse_html(result(1, "One", 2) .. cut)
+                    assert.is_nil(err, cut)
+                    assert.are.same({ "One" }, names(results), cut)
+                    assert.are.equal(0, dropped, cut)
+                end
+            end)
         end)
 
         -- One pass over the page: a block is scanned once, and a block that
