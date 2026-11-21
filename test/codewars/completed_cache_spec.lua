@@ -26,7 +26,10 @@ describe("cache.completed", function()
         package.loaded["codewars.cache.utils"] = {
             cache_file = function(name) return "mem:" .. name end,
             read_json = function(path) return store[path] end,
-            write_json = function(path, data) store[path] = vim.deepcopy(data) end,
+            write_json = function(path, data)
+                store[path] = vim.deepcopy(data)
+                return true
+            end,
         }
         package.loaded["codewars.api.urls"] = { completed = "/users/%s/completed?page=%d" }
         package.loaded["codewars.api.utils"] = {
@@ -100,6 +103,56 @@ describe("cache.completed", function()
             script = function() return nil, { msg = "boom" } end
             completed.update(function() end)
             assert.is_false(fetched())
+        end)
+    end)
+
+    -- A write that did not land is not a save. Reporting it lets the caller
+    -- that fetched the list go on with the list it has in memory instead of
+    -- reading back whatever happens to be on disk.
+    describe("a cache that cannot be written", function()
+        local warns
+
+        before_each(function()
+            warns = {}
+            package.loaded["codewars.logger"].warn = function(msg) warns[#warns + 1] = tostring(msg) end
+            package.loaded["codewars.cache.utils"].write_json = function() return false, "disk full" end
+        end)
+
+        it("is reported by save, and by save_details", function()
+            local ok, err = completed.save({ { id = "k1" } })
+            assert.is_false(ok)
+            assert.equals("disk full", err)
+            ok, err = completed.save_details({ k1 = { name = "K" } })
+            assert.is_false(ok)
+            assert.equals("disk full", err)
+        end)
+
+        it("is reported as saved when it was", function()
+            package.loaded["codewars.cache.utils"].write_json = function() return true end
+            assert.is_true((completed.save({ { id = "k1" } })))
+            assert.is_true((completed.save_details({ k1 = { name = "K" } })))
+        end)
+
+        it("still hands update's callers the list it fetched, merged with the marks, and says it was not saved", function()
+            completed.mark("k1", "kata-one", "python") -- fails too: nothing on disk
+            store["mem:completed.json"] = { timestamp = 0, items = { { id = "k1", slug = "kata-one", completedLanguages = { "python" }, local_mark = true } } }
+            warns = {}
+            script = function() return { data = { { id = "server", completedLanguages = { "java" } } }, totalPages = 1 } end
+            local got, err
+            completed.update(function(items, e) got, err = items, e end)
+            assert.is_nil(err, "the fetch succeeded")
+            assert.same({ "k1", "server" }, vim.tbl_map(function(i) return i.id end, got))
+            assert.equals(1, #warns, vim.inspect(warns))
+            assert.truthy(warns[1]:find("disk full", 1, true), warns[1])
+            assert.truthy(warns[1]:find("save", 1, true), warns[1])
+            -- and what is on disk is still the partial cache, unstamped
+            assert.equals(0, store["mem:completed.json"].timestamp)
+        end)
+
+        it("says so when mark could not record a kata", function()
+            completed.mark("k1", "kata-one", "python")
+            assert.equals(1, #warns, vim.inspect(warns))
+            assert.truthy(warns[1]:find("disk full", 1, true), warns[1])
         end)
     end)
 
@@ -368,7 +421,10 @@ describe("cache.completed", function()
                 return { key = key, exists = function() return store[key] ~= nil end, rm = function() store[key] = nil end }
             end
             utils.read_json = function(file) return store[file.key] end
-            utils.write_json = function(file, data) store[file.key] = vim.deepcopy(data) end
+            utils.write_json = function(file, data)
+                store[file.key] = vim.deepcopy(data)
+                return true
+            end
             package.loaded["codewars.api.utils"].get = function(_, opts)
                 requests[#requests + 1] = { deliver = opts.callback }
             end

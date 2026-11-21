@@ -29,25 +29,42 @@ function completed.get()
     return raw.items, stale, stamp > 0
 end
 
+--- Write the list. A write that did not land (a read-only or full cache
+--- directory) is reported, not swallowed: the caller says so in its own
+--- words, once, and goes on with the list it has in memory rather than
+--- reading the disk back and finding whatever was there before.
 ---@param data table[]
 ---@param timestamp integer? keep an existing stamp instead of "now"
+---@return boolean saved
+---@return string? err why it did not
 function completed.save(data, timestamp)
-    cache_utils.write_json(list_file(), {
+    return cache_utils.write_json(list_file(), {
         timestamp = timestamp or os.time(),
         items = data,
-    })
+    }, { quiet = true })
 end
 
+--- Kata details that were looked up but could not be written to disk, kept
+--- here so that what reads the details (the open picker) still sees them. Put
+--- back on disk with the next write that lands, and dropped by `clear()`.
+---@type table<string, table>
+local unsaved_details = {}
+
+--- The kata details: on disk, and any looked up since that could not be written.
 ---@return table<string, table>
 function completed.get_details()
-    return cache_utils.read_json(details_file()) or {}
+    local on_disk = cache_utils.read_json(details_file()) or {}
+    if next(unsaved_details) == nil then return on_disk end
+    return vim.tbl_extend("force", on_disk, unsaved_details)
 end
 
 --- Write `details` as the whole details cache. A lookup does not save through
 --- this -- it would write back a snapshot -- but through `merge_details`.
 ---@param details table<string, table>
+---@return boolean saved
+---@return string? err why it did not
 function completed.save_details(details)
-    cache_utils.write_json(details_file(), details)
+    return cache_utils.write_json(details_file(), details, { quiet = true })
 end
 
 --- Refreshes in flight, by the account each is for, with the callers waiting
@@ -82,15 +99,23 @@ end
 --- Every save of details goes through here: what is added is only what the
 --- run fetched, to the cache as it is NOW -- never the snapshot the run read
 --- when it began, which would erase what another lookup saved since -- and
---- nothing is written for an account or cache that is gone.
+--- nothing is written for an account or cache that is gone. A write that does
+--- not land leaves the names in memory (`unsaved_details`), for the next write
+--- to carry along, and is reported to the caller to say so once.
 ---@param found table<string, table>
 ---@param account cw.Account what the run began for
----@return boolean saved false when `account` is gone and nothing was written
+---@return "saved"|"unsaved"|"gone" outcome "gone": `account` is gone and nothing was kept
+---@return string? err why it was not written
 local function merge_details(found, account)
-    if not is_current(account) then return false end
-    if next(found) == nil then return true end
-    completed.save_details(vim.tbl_extend("force", completed.get_details(), found))
-    return true
+    if not is_current(account) then return "gone" end
+    if next(found) == nil then return "saved" end
+    local saved, err = completed.save_details(vim.tbl_extend("force", completed.get_details(), found))
+    if saved then
+        unsaved_details = {}
+        return "saved"
+    end
+    unsaved_details = vim.tbl_extend("force", unsaved_details, found)
+    return "unsaved", err
 end
 
 --- Remove both caches. The completed list is the signed-in user's, so it
@@ -101,6 +126,7 @@ end
 function completed.clear()
     generation = generation + 1
     flights = {}
+    unsaved_details = {}
     for _, f in ipairs({ list_file(), details_file() }) do
         if f:exists() then pcall(f.rm, f) end
     end
@@ -253,7 +279,13 @@ function completed.update(cb)
         -- until the next refresh. Read now, not when the refresh began: a
         -- kata marked since then is in the cache and not in this reply.
         all = merge_local_marks(all, (completed.get()))
-        completed.save(all)
+        local saved, save_err = completed.save(all)
+        if not saved then
+            -- The fetch worked: its callers get the list, from memory. What is
+            -- on disk is still whatever it was, so say that this did not stick.
+            log.warn(("Fetched your completed kata, but could not save them (%s); "
+                .. "using the fetched list for now."):format(tostring(save_err or "the write failed")))
+        end
         log.info(("Fetched %d completed kata"):format(#all))
         settle(all)
     end
@@ -276,6 +308,18 @@ function completed.update(cb)
     end
 
     guarded(fetch_page)
+end
+
+--- Save the list `mark` made, telling the user when it did not land: a kata
+--- they just solved is then not recorded as completed until the next refresh.
+---@param items table[]
+---@param timestamp integer
+local function save_marked(items, timestamp)
+    local saved, err = completed.save(items, timestamp)
+    if not saved then
+        log.warn(("Could not record that you completed this kata (%s); "
+            .. "it shows as completed again after the next refresh."):format(tostring(err or "the write failed")))
+    end
 end
 
 --- Locally mark a kata as completed (no API call).
@@ -303,7 +347,7 @@ function completed.mark(kata_id, slug, lang)
             })
             local with_language = vim.list_slice(items)
             with_language[i] = updated
-            completed.save(with_language, raw.timestamp or 0)
+            save_marked(with_language, raw.timestamp or 0)
             return
         end
     end
@@ -315,7 +359,7 @@ function completed.mark(kata_id, slug, lang)
         local_mark = true,
         local_langs = lang and { lang } or nil,
     }
-    completed.save(vim.list_extend({ marked }, items), raw.timestamp or 0)
+    save_marked(vim.list_extend({ marked }, items), raw.timestamp or 0)
 end
 
 --- Kata one call looks up at once. About 60 requests a minute is what
@@ -343,7 +387,8 @@ local REST_SAVE_EVERY = 5
 ---@param slugs string[]
 ---@param opts cw.EnrichOpts
 ---@param account cw.Account
-local function look_up_rest(slugs, opts, account)
+---@param warn_unsaved fun(why: string?) tells the user, once for the whole call, that names could not be saved
+local function look_up_rest(slugs, opts, account, warn_unsaved)
     --- Why the run should not go on, if so: "gone" for an account or cache
     --- that is not the one it began for, "closed" for a caller that is done.
     local function stop_reason()
@@ -369,8 +414,11 @@ local function look_up_rest(slugs, opts, account)
         if next(pending) == nil then return end
         local to_save = pending
         pending = {}
+        local outcome, why = merge_details(to_save, account)
         -- Nothing is written, and nobody told, for an account that is gone.
-        if not merge_details(to_save, account) then return end
+        if outcome == "gone" then return end
+        -- Unsaved names are still in memory for the caller to show.
+        if outcome == "unsaved" then warn_unsaved(why) end
         if not opts.on_progress then return end
         local ok, failure = pcall(opts.on_progress)
         if not ok then log.error("Kata name lookup progress callback failed: " .. tostring(failure)) end
@@ -502,6 +550,14 @@ function completed.enrich(items, cb, opts)
     local idx = 0
     local found = {} ---@type table<string, table> what this run fetched, by slug
     local done = false
+    local warned = false
+    --- Said once for the whole call, not once per batch of names.
+    local function warn_unsaved(why)
+        if warned then return end
+        warned = true
+        log.warn(("Could not save the kata details (%s); the names found are kept for this session only.")
+            :format(tostring(why or "the write failed")))
+    end
 
     local Spinner = require("codewars.logger.spinner")
     local spinner = Spinner:start(("Fetching kata details (0/%d)"):format(total))
@@ -542,7 +598,9 @@ function completed.enrich(items, cb, opts)
                 end
 
                 if fetched >= total then
-                    if not merge_details(found, account) then return abandon() end
+                    local outcome, why = merge_details(found, account)
+                    if outcome == "gone" then return abandon() end
+                    if outcome == "unsaved" then warn_unsaved(why) end
                     done = true
                     if failed == 0 then
                         spinner:success(("Fetched %d kata details"):format(total))
@@ -563,7 +621,7 @@ function completed.enrich(items, cb, opts)
                     -- Before the callback, so that nothing it does can keep
                     -- the rest from starting; the first of them waits a pace.
                     if opts and type(opts.keep_going) == "function" and #missing > FIRST_BATCH then
-                        look_up_rest(vim.list_slice(missing, FIRST_BATCH + 1), opts, account)
+                        look_up_rest(vim.list_slice(missing, FIRST_BATCH + 1), opts, account, warn_unsaved)
                     end
                     cb(items)
                 else

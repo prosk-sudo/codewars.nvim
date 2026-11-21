@@ -508,6 +508,24 @@ describe(":CW unfinished", function()
             assert.are.equal("fetched", listed_with[1].slug, "judged by the one kata that was marked")
         end)
 
+        -- The list the fetch produced is what the picker judges by. Reading
+        -- the disk afterwards finds the old partial cache whenever the new
+        -- list could not be saved (a read-only or full cache directory).
+        it("judges by the list the fetch produced, not by what is on disk afterwards", function()
+            config.user.username = "me"
+            completed, fetched, stale = MARKED, false, true
+            package.loaded["codewars.cache.completed"].update = function(cb)
+                order[#order + 1] = "fetch"
+                -- The save failed: the disk still holds only the marked kata.
+                cb({ { slug = "fetched", completedLanguages = { "python" } } })
+            end
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.is_not_nil(opened)
+            assert.are.equal("fetched", listed_with[1].slug, "judged by the partial cache on disk")
+            assert.are.equal(1, #listed_with)
+        end)
+
         it("asks to sign in, and opens nothing, for a cache of kata marked locally with no cookie", function()
             config.user.username = ""
             completed, fetched, stale = MARKED, false, true

@@ -49,9 +49,13 @@ local function ensure_completed_items(cb, opts)
     end
     if needs_fetch and signed_in then
         log.info("Fetching completed kata...")
-        return completed_cache.update(function(_, err)
+        return completed_cache.update(function(fetched_items, err)
             picker.invalidate_completed_cache()
-            vim.schedule(function() cb((completed_cache.get()), err) end)
+            -- The list the fetch produced, not whatever the disk holds after
+            -- it: when the list could not be saved (a read-only or full
+            -- cache directory) the disk still has what it had before, which
+            -- may be only the kata marked on this machine.
+            vim.schedule(function() cb(fetched_items, err) end)
         end)
     end
     cb(items)

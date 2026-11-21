@@ -68,6 +68,7 @@ describe("completed.enrich past its first 50", function()
         }
         config.storage = { home = P:new(tmp), cache = P:new(tmp) }
         config.user.username = "me"
+        completed.clear() -- names a test could not save are kept in memory, across tests too
         requests, held, hold, timers, progress, going = {}, {}, false, {}, {}, true
         script = function(slug) return found(slug) end
 
@@ -236,6 +237,65 @@ describe("completed.enrich past its first 50", function()
         assert.is_nil(details()[slug_at(FIRST_BATCH + 2)])
         assert.equals("Name of " .. slug_at(120), details()[slug_at(120)].name)
         assert.equals(119, vim.tbl_count(details()))
+    end)
+
+    -- A cache directory that is read-only or full: the names are looked up
+    -- all the same, the user is told once, and the open picker still gets
+    -- them -- from memory, until a write lands.
+    describe("when the details cannot be saved", function()
+        local cache_utils = require("codewars.cache.utils")
+        local log = require("codewars.logger")
+        local real_write, real_warn, warns, writes_work
+
+        before_each(function()
+            real_write, real_warn = cache_utils.write_json, log.warn
+            warns, writes_work = {}, false
+            log.warn = function(msg) warns[#warns + 1] = tostring(msg) end
+            cache_utils.write_json = function(path, data, opts)
+                if writes_work then return real_write(path, data, opts) end
+                return false, "disk full"
+            end
+        end)
+
+        after_each(function()
+            cache_utils.write_json, log.warn = real_write, real_warn
+        end)
+
+        it("tells the user once for the whole run, and carries on", function()
+            enrich(120)
+            drain()
+            assert.equals(1, #warns, vim.inspect(warns))
+            assert.truthy(warns[1]:find("disk full", 1, true), warns[1])
+            assert.equals(120, #requests)
+        end)
+
+        it("still gives the picker every name, as they arrive", function()
+            enrich(120)
+            drain()
+            for i = 1, 120 do
+                assert.equals("Name of " .. slug_at(i), details()[slug_at(i)].name, slug_at(i))
+            end
+            assert.is_true(#progress >= 2, vim.inspect(progress))
+            for i = 2, #progress do assert.is_true(progress[i] > progress[i - 1], vim.inspect(progress)) end
+            assert.equals(120, progress[#progress])
+        end)
+
+        it("writes what it has once the disk takes writes again", function()
+            enrich(120)
+            for _ = 1, 8 do run_timer() end
+            writes_work = true
+            drain()
+            writes_work = false -- so that only what reached the disk is read below
+            local on_disk = cache_utils.read_json(require("codewars.cache.utils").cache_file("kata_details.json"))
+            assert.equals(120, vim.tbl_count(on_disk), "names found while it could not write were lost")
+        end)
+
+        it("forgets what it could not save when the cache is cleared", function()
+            enrich(120)
+            for _ = 1, 8 do run_timer() end
+            completed.clear()
+            assert.same({}, details())
+        end)
     end)
 
     -- The first batch holds what the cache held when it began, for the whole

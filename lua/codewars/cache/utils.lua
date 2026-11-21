@@ -31,14 +31,16 @@ end
 --- write look identical to a successful one.
 ---@param path Path
 ---@param data table
+---@param opts { quiet: boolean? }? `quiet`: log nothing on failure, for a caller that reports it itself in its own words (and may try again, as a batch of lookups does, without a line per try)
 ---@return boolean ok
 ---@return string? err
-function M.write_json(path, data)
+function M.write_json(path, data, opts)
+    local quiet = opts and opts.quiet
     local ok, err = pcall(function()
         path:write(vim.json.encode(data), "w")
     end)
     if not ok then
-        log.error("Failed to write cache: " .. tostring(err))
+        if not quiet then log.error("Failed to write cache: " .. tostring(err)) end
         return false, tostring(err)
     end
     -- A write can report success and still leave nothing on disk (a full or
@@ -47,7 +49,9 @@ function M.write_json(path, data)
         return path:exists()
     end)
     if not checked or not exists then
-        log.error("Cache write reported success but the file is missing: " .. tostring(path))
+        if not quiet then
+            log.error("Cache write reported success but the file is missing: " .. tostring(path))
+        end
         return false, "file missing after write"
     end
     return true, nil

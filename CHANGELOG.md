@@ -118,7 +118,12 @@ All notable changes to codewars.nvim are documented here.
   no cookie saved, or one Codewars no longer accepts, it asks you to sign in
   with `:CW cookie`. A completed list that was ever fetched in full is used as
   it is, stale or with no kata in it, signed in or not; the kata a submit
-  marks before any list was fetched are not a list, so it fetches first.
+  marks before any list was fetched are not a list, so it fetches first. If
+  the cache directory cannot be written (read-only, or full), the list that
+  was fetched is still the one used and a warning says it could not be
+  saved, instead of reading back what was on disk; the same for the kata
+  names looked up, which stay in memory for the open picker, with one
+  warning for the whole lookup, and are written once a write lands.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it
