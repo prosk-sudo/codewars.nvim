@@ -12,7 +12,7 @@ describe("Kata close lifecycle", function()
         user = { keys = { toggle = { "q" } }, testcase = { open_on_enter = false }, templates = { solution = {} } },
         lang = "python",
         langs = require("codewars.config.langs"),
-        storage = { home = P:new(tmp) },
+        storage = { home = P:new(tmp), cache = P:new(tmp) },
     }
     package.loaded["codewars.logger"] = {
         info = function() end, warn = function() end, error = function() end,

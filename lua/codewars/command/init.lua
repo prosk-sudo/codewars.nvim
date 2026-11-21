@@ -27,7 +27,7 @@ local arguments = {
         difficulty = kyu_values,
         -- Keep in sync with picker.sort_modes keys (pinned by
         -- input_parsing_spec; literal so completion does not load the picker).
-        order = { "shuffle", "name", "satisfaction", "hardest", "easiest" },
+        order = { "shuffle", "name", "satisfaction", "hardest", "easiest", "recent" },
     },
 }
 
@@ -58,6 +58,7 @@ function cmd._help_lines()
         { "next [lang] [kyu]", "Next unsolved kata matching your list filters" },
         { "focus [lang] [category]", "Choose Today's Focus (re-run returns the same kata)" },
         { "focus skip", "Skip the current focus kata and open the next" },
+        { "recent",         "Recently opened kata (in progress / completed)" },
         { "test",           "Quick test with example fixtures" },
         { "attempt",        "Full attempt with all tests" },
         { "submit",         "Finalize solution (after passing attempt)" },
@@ -686,6 +687,10 @@ local function parse_kyu(values)
         end
     end
     return ranks
+end
+
+function cmd.recent()
+    require("codewars.picker").recent()
 end
 
 --- Open a random kata from the cached problem list (client-side).
@@ -1547,6 +1552,7 @@ cmd.commands = {
     info = { cmd.info },
     stats = { cmd.stats },
     completed = { cmd.completed },
+    recent = { cmd.recent },
     list = {
         cmd.list,
         _args = arguments.list,

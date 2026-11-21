@@ -23,7 +23,7 @@ local cfg = {
     user = { templates = { solution = {} } },
     lang = "python",
     langs = require("codewars.config.langs"),
-    storage = { home = P:new(tmp) },
+    storage = { home = P:new(tmp), cache = P:new(tmp) },
 }
 package.loaded["codewars.config"] = cfg
 

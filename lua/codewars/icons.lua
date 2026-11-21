@@ -34,6 +34,7 @@ local defaults = {
 
     -- Choose Today's Focus (FA-classic codepoints, stable across NF v2/v3)
     focus = "\u{f140}", -- bullseye
+    recent = "\u{f017}", -- clock
     focus_fundamentals = "\u{f02d}", -- book
     focus_rank_up = "\u{f012}", -- signal bars
     focus_practice_and_repeat = "\u{f021}", -- refresh

@@ -54,7 +54,18 @@ end
 function M.sort_items(items, mode)
     if mode == "shuffle" then return shuffle(items) end
     local sorted = vim.list_slice(items, 1, #items)
-    if mode == "name" then
+    if mode == "recent" then
+        -- ISO 8601 UTC strings sort chronologically as text. Items without a
+        -- date (catalogue entries) keep their order, after the dated ones.
+        local pos = {}
+        for i, item in ipairs(sorted) do pos[item] = i end
+        table.sort(sorted, function(a, b)
+            local da, db = a.completedAt, b.completedAt
+            if (da == nil) ~= (db == nil) then return db == nil end
+            if da and da ~= db then return da > db end
+            return pos[a] < pos[b]
+        end)
+    elseif mode == "name" then
         table.sort(sorted, function(a, b)
             return (a.name or a.slug or "") < (b.name or b.slug or "")
         end)
