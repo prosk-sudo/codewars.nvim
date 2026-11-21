@@ -509,14 +509,14 @@ describe(":CW unfinished", function()
         end)
 
         -- The list the fetch produced is what the picker judges by. Reading
-        -- the disk afterwards finds the old partial cache whenever the new
-        -- list could not be saved (a read-only or full cache directory).
+        -- the disk afterwards finds the old partial cache, or worse, whenever
+        -- the new list could not be saved (a read-only or full cache directory).
         it("judges by the list the fetch produced, not by what is on disk afterwards", function()
             config.user.username = "me"
             completed, fetched, stale = MARKED, false, true
             package.loaded["codewars.cache.completed"].update = function(cb)
                 order[#order + 1] = "fetch"
-                -- The save failed: the disk still holds only the marked kata.
+                -- The save failed: the disk holds only the marked kata (or worse).
                 cb({ { slug = "fetched", completedLanguages = { "python" } } })
             end
             picker.unfinished()

@@ -127,18 +127,7 @@ All notable changes to codewars.nvim are documented here.
   was fetched is still the one used and a warning says it could not be
   saved, instead of reading back what was on disk; the same for the kata
   names looked up, which stay in memory for the open picker, with one
-  warning for the whole lookup, and are written once a write lands. Cache
-  files are now replaced whole -- written to a temporary file beside them
-  and renamed into place -- so a write that fails halfway, a full disk say,
-  keeps the previous cache, the kata marked locally in it included, where it
-  used to leave an empty or partial file. A replaced file keeps its
-  permissions exactly, a group-writable one and the setgid and sticky bits
-  included, and so does its owner and group: the new file is given them, or
-  just the group, and when the system will not allow either (a shared cache
-  owned by someone else), or no file can be created beside the cache (a
-  directory you may not write to), the file is written in place instead,
-  which keeps them but is no longer atomic, the trade Vim makes with
-  `backupcopy=auto`. A cache in your own cache directory never needs that.
+  warning for the whole lookup, and are written once a write lands.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

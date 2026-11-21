@@ -53,8 +53,8 @@ local function ensure_completed_items(cb, opts)
             picker.invalidate_completed_cache()
             -- The list the fetch produced, not whatever the disk holds after
             -- it: when the list could not be saved (a read-only or full
-            -- cache directory) the disk still has what it had before, which
-            -- may be only the kata marked on this machine.
+            -- cache directory) the disk may hold the old list, only the kata
+            -- marked on this machine, or a file the failed write damaged.
             vim.schedule(function() cb(fetched_items, err) end)
         end)
     end

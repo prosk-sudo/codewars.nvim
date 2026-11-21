@@ -32,7 +32,8 @@ end
 --- Write the list. A write that did not land (a read-only or full cache
 --- directory) is reported, not swallowed: the caller says so in its own
 --- words, once, and goes on with the list it has in memory rather than
---- reading the disk back and finding whatever was there before.
+--- reading the disk back: after a failed write the file may hold the old
+--- list, or less, or be damaged (the write is in place).
 ---@param data table[]
 ---@param timestamp integer? keep an existing stamp instead of "now"
 ---@return boolean saved
@@ -281,8 +282,10 @@ function completed.update(cb)
         all = merge_local_marks(all, (completed.get()))
         local saved, save_err = completed.save(all)
         if not saved then
-            -- The fetch worked: its callers get the list, from memory. What is
-            -- on disk is still whatever it was, so say that this did not stick.
+            -- The fetch worked: its callers get the list, from memory. The
+            -- disk may hold something else (the old list, only the kata marked
+            -- here, or a file the failed write damaged), so say that this did
+            -- not stick.
             log.warn(("Fetched your completed kata, but could not save them (%s); "
                 .. "using the fetched list for now."):format(tostring(save_err or "the write failed")))
         end

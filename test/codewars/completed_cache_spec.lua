@@ -145,7 +145,7 @@ describe("cache.completed", function()
             assert.equals(1, #warns, vim.inspect(warns))
             assert.truthy(warns[1]:find("disk full", 1, true), warns[1])
             assert.truthy(warns[1]:find("save", 1, true), warns[1])
-            -- and what is on disk is still the partial cache, unstamped
+            -- and the failed write did not mark the list as fetched
             assert.equals(0, store["mem:completed.json"].timestamp)
         end)
 
