@@ -29,33 +29,58 @@ local UNWRAP = { "center", "div", "span", "p" }
 --- `<bool>` — and once it pairs with a real `</b>` further down the text it
 --- deletes everything in between. Descriptions are full of generics that start
 --- with an allowlisted tag name (`List<bool>`, `Dictionary<int, string>`), so
---- every tag name is anchored on `>` or whitespace instead.
+--- the tag name must be followed by `>` or whitespace to be an opener.
+---
+--- This is a scan, not the pattern `<tag%s[^>]*>`. That pattern re-reads the
+--- rest of the text from every `<tag ` that has no `>` after it, which is
+--- quadratic on malformed markup (`("<b "):rep(20000)` took seconds). Here the
+--- search for a `>` runs once per opener and only ever moves forward: an
+--- opener ends at its first `>` and the scan resumes after it, and a start
+--- with no `>` left ends the scan, because no later start can have one.
+---@param text string
 ---@param tag string
----@return string[] # the bare form and the with-attributes form
-local function openers(tag)
-    return { "<" .. tag .. ">", "<" .. tag .. "%s[^>]*>" }
+---@return { kind: string, s: integer, e: integer }[]
+local function find_openers(text, tag)
+    local openers = {}
+    local head = "<" .. tag
+    local pos = 1
+    while true do
+        local s = text:find(head, pos, true)
+        if not s then return openers end
+        local after = s + #head -- the character after the tag name
+        local e
+        if text:sub(after, after) == ">" then
+            e = after
+        elseif text:find("^%s", after) then
+            e = text:find(">", after, true)
+            if not e then return openers end
+        end
+        if e then
+            openers[#openers + 1] = { kind = "open", s = s, e = e }
+            pos = e + 1
+        else
+            pos = after
+        end
+    end
 end
 
 --- Every opening and closing tag of `tag` in `text`, in document order, as
---- `{ kind = "open"|"close", s = start, e = end }`. A tag that starts inside
---- the previous one (a bare `<b>` inside `<b <b>`) is not a tag of its own and
---- is dropped.
+--- `{ kind = "open"|"close", s = start, e = end }`. A closing tag may have
+--- whitespace before its `>`. A tag that starts inside the previous one (a
+--- closing tag inside an attribute value) is not a tag of its own and is
+--- dropped.
 ---@param text string
 ---@param tag string
 ---@return { kind: string, s: integer, e: integer }[]
 local function tag_tokens(text, tag)
-    local found = {}
-    local function collect(pattern, kind, plain)
-        local pos = 1
-        while true do
-            local s, e = text:find(pattern, pos, plain)
-            if not s then return end
-            found[#found + 1] = { kind = kind, s = s, e = e }
-            pos = e + 1
-        end
+    local found = find_openers(text, tag)
+    local closing, pos = "</" .. tag .. "%s*>", 1
+    while true do
+        local s, e = text:find(closing, pos)
+        if not s then break end
+        found[#found + 1] = { kind = "close", s = s, e = e }
+        pos = e + 1
     end
-    for _, pattern in ipairs(openers(tag)) do collect(pattern, "open") end
-    collect("</" .. tag .. ">", "close", true)
     table.sort(found, function(a, b) return a.s < b.s end)
 
     local tokens, last_end = {}, 0
@@ -68,14 +93,16 @@ local function tag_tokens(text, tag)
     return tokens
 end
 
---- The replacement for one matched construct: `repl(inner)` for a function,
---- or the string with its `%1` (the inner text) and `%%` expanded the way
---- gsub reads them. A function must return a string.
----@param repl string|fun(inner: string): string
+--- The replacement for one matched construct: `repl(inner, opener)` for a
+--- function (`opener` is the opening tag as written, for its attributes), or
+--- the string with its `%1` (the inner text) and `%%` expanded the way gsub
+--- reads them. A function may return nil to leave the construct as written.
+---@param repl string|fun(inner: string, opener: string): string?
 ---@param inner string
----@return string
-local function expand(repl, inner)
-    if type(repl) == "function" then return repl(inner) end
+---@param opener string
+---@return string?
+local function expand(repl, inner, opener)
+    if type(repl) == "function" then return repl(inner, opener) end
     return (repl:gsub("%%([%%1])", function(c) return c == "1" and inner or "%" end))
 end
 
@@ -98,7 +125,7 @@ local MAX_NEST_DEPTH = 64
 --- nested deeper than MAX_NEST_DEPTH. One pass over the tags, no recursion.
 ---@param text string
 ---@param tag string
----@param repl string|fun(inner: string): string
+---@param repl string|fun(inner: string, opener: string): string?
 ---@return string
 local function paired(text, tag, repl)
     -- `out` is the converted text so far, in pieces. An opener goes in as
@@ -119,9 +146,10 @@ local function paired(text, tag, repl)
         elseif #waiting > 0 then
             local opener = table.remove(waiting)
             if opener then
-                local inner = table.concat(out, "", opener + 1)
+                local opening, inner = out[opener], table.concat(out, "", opener + 1)
                 for i = #out, opener, -1 do out[i] = nil end
-                out[#out + 1] = expand(repl, inner)
+                -- A nil from `repl` leaves the construct exactly as written.
+                out[#out + 1] = expand(repl, inner, opening) or (opening .. inner .. literal)
             else
                 out[#out + 1] = literal -- closes an opener past the depth cap
             end
@@ -131,6 +159,36 @@ local function paired(text, tag, repl)
     end
     out[#out + 1] = text:sub(pos)
     return table.concat(out)
+end
+
+--- Rewrite every single tag of `tag` (openers and closers) on its own, for the
+--- tags with no inner text to convert: `fn(tag_text, kind)` returns the
+--- replacement, or nil to leave that tag as written. Same scan as `paired`, so
+--- an unfinished `<p ` costs no more than its length, which the gsubs this
+--- replaces (`</?p%s[^>]*>`) did not.
+---@param text string
+---@param tag string
+---@param fn fun(tag_text: string, kind: string): string?
+---@return string
+local function rewrite_tags(text, tag, fn)
+    local out, pos = {}, 1
+    for _, token in ipairs(tag_tokens(text, tag)) do
+        local literal = text:sub(token.s, token.e)
+        out[#out + 1] = text:sub(pos, token.s - 1)
+        out[#out + 1] = fn(literal, token.kind) or literal
+        pos = token.e + 1
+    end
+    out[#out + 1] = text:sub(pos)
+    return table.concat(out)
+end
+
+--- The attribute text of an opening tag as written: `<a href="u">` gives
+--- `href="u"`, and a bare `<a>` gives "".
+---@param opener string
+---@param tag string
+---@return string
+local function tag_attrs(opener, tag)
+    return opener:sub(#tag + 3, -2) -- past "<tag" and the whitespace, before ">"
 end
 
 --- A placeholder stash. Anything handed to `keep` is swapped for an opaque
@@ -230,29 +288,37 @@ function M.from_html(text)
     -- end cannot eat the blank lines inside it, the way it would for any other
     -- generated block. Only the framing newlines are trimmed.
     text = paired(text, "pre", function(inner)
-        inner = inner:gsub("^%s*\n", ""):gsub("%s+$", "")
+        -- `.*%S` ends at the last non-space in one backwards walk; the
+        -- obvious `%s+$` retries from every space of a long run.
+        inner = (inner:gsub("^%s*\n", "")):match("^(.*%S)") or ""
         return "\n" .. keep("```\n" .. inner .. "\n```") .. "\n"
     end)
 
     -- Links and images keep their target. Attribute order varies and a bare
     -- <img> has no closing tag, so read the attribute blob rather than pinning
     -- a fixed order. Returning nil leaves a tag we cannot parse untouched.
-    text = text:gsub("<a%s([^>]*)>(.-)</a>", function(attrs, label)
-        local href = attr(attrs, "href")
+    text = paired(text, "a", function(label, opener)
+        local href = attr(tag_attrs(opener, "a"), "href")
         return href and ("[%s](%s)"):format(label, href) or nil
     end)
-    text = text:gsub("<img%s([^>]*)>", function(attrs)
+    text = rewrite_tags(text, "img", function(tag_text, kind)
+        if kind ~= "open" then return nil end
+        local attrs = tag_attrs(tag_text, "img")
         local src = attr(attrs, "src")
         return src and ("![%s](%s)"):format(attr(attrs, "alt") or "", src) or nil
     end)
 
     -- Lists: <li> becomes a bullet, the container just goes away.
     text = paired(text, "li", "\n- %1")
-    text = text:gsub("</?[ou]l>", "\n"):gsub("</?[ou]l%s[^>]*>", "\n")
+    for _, tag in ipairs({ "ul", "ol" }) do
+        text = rewrite_tags(text, tag, function() return "\n" end)
+    end
 
-    text = text:gsub("<h(%d)[^>]*>(.-)</h%d>", function(level, inner)
-        return "\n\n" .. ("#"):rep(tonumber(level)) .. " " .. vim.trim(inner) .. "\n\n"
-    end)
+    for level = 1, 6 do
+        text = paired(text, "h" .. level, function(inner)
+            return "\n\n" .. ("#"):rep(level) .. " " .. vim.trim(inner) .. "\n\n"
+        end)
+    end
 
     -- Longest tag names first: `strong`/`em` must convert before `b`/`i` get a
     -- chance at them, and pairs() order is not deterministic in Lua.
@@ -266,7 +332,7 @@ function M.from_html(text)
     text = paired(text, "sub", "_%1")
 
     for _, tag in ipairs(UNWRAP) do
-        text = text:gsub("</?" .. tag .. ">", ""):gsub("</?" .. tag .. "%s[^>]*>", "")
+        text = rewrite_tags(text, tag, function() return "" end)
     end
 
     -- The conversions above insert generous blank lines; collapse the runs so

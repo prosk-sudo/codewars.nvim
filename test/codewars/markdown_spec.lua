@@ -328,3 +328,117 @@ describe("markdown.from_html unbalanced tags", function()
         assert.are.equal(deep, md.from_html(deep))
     end)
 end)
+
+-- Behaviour of the tags that are rewritten one by one (links, images, lists,
+-- headings, the unwrapped containers). They all used to be gsubs built on
+-- `[^>]*` and `(.-)`; these pin what they produce on well-formed markup.
+describe("markdown.from_html rewritten tags", function()
+    it("converts a heading of each level and trims its text", function()
+        assert.are.equal("## Title", vim.trim(md.from_html("<h2> Title </h2>")))
+        assert.are.equal("### T", vim.trim(md.from_html('<h3 class="x">T</h3>')))
+        assert.are.equal("###### six", vim.trim(md.from_html("<h6>six</h6>")))
+    end)
+
+    it("converts markup inside a heading and inside a link label", function()
+        assert.are.equal("# a **b**", vim.trim(md.from_html("<h1>a <b>b</b></h1>")))
+        assert.are.equal("[**x**](u)", md.from_html('<a href="u"><b>x</b></a>'))
+    end)
+
+    it("leaves a link without an href, and an image without a src, as written", function()
+        for _, src in ipairs({ '<a name="top">t</a>', "<a>t</a>", '<img alt="x">', "<img>" }) do
+            assert.are.equal(src, md.from_html(src))
+        end
+    end)
+
+    it("converts two links and two images in one description", function()
+        assert.are.equal("[a](1) and [b](2)", md.from_html('<a href="1">a</a> and <a href="2">b</a>'))
+        assert.are.equal("![](1)![](2)", md.from_html('<img src="1"><img src="2">'))
+    end)
+
+    it("drops list containers and unwrapped containers, with attributes or a space before >", function()
+        local out = md.from_html('<ol class="steps"><li>a</li></ol>')
+        assert.is_nil(out:find("<", 1, true))
+        assert.truthy(out:find("- a", 1, true))
+        assert.are.equal("t", md.from_html('<p style="x">t</p >'))
+        assert.are.equal("x y", md.from_html('<div class="a">x</div> <span id=s>y</span >'))
+        assert.are.equal("mid", vim.trim(md.from_html("<center>mid</center>")))
+    end)
+
+    it("pairs a closing tag that has whitespace before its >", function()
+        assert.are.equal("**x**", md.from_html("<b>x</b >"))
+    end)
+end)
+
+-- Malformed markup must cost time proportional to its length. A tag with
+-- attributes ends at the first `>` after it, and the old patterns (`[^>]*`,
+-- `.-`) re-read the rest of the text from every start when there was none:
+-- `("<b "):rep(20000)` took 2.7 s and doubling it took four times as long, so a
+-- malformed description could stall the editor while it rendered.
+describe("markdown.from_html tags that never end", function()
+    local uv = vim.uv or vim.loop
+    local LIMIT_MS = 1000
+
+    local function render(src)
+        collectgarbage()
+        local started = uv.hrtime()
+        local out = md.from_html(src)
+        return (uv.hrtime() - started) / 1e6, out
+    end
+
+    local function best_ms(src)
+        local best = math.huge
+        for _ = 1, 3 do best = math.min(best, (render(src))) end
+        return best
+    end
+
+    it("renders 100000 attribute openers with no > anywhere, unchanged and fast", function()
+        local src = ("<b "):rep(100000)
+        local ms, out = render(src)
+        assert.are.equal(src, out)
+        assert.is_true(ms < LIMIT_MS, ("took %d ms"):format(ms))
+    end)
+
+    it("does the same for a long tag name with an unfinished attribute", function()
+        local src = ("<blockquote x="):rep(50000)
+        local ms, out = render(src)
+        assert.are.equal(src, out)
+        assert.is_true(ms < LIMIT_MS, ("took %d ms"):format(ms))
+    end)
+
+    it("scales linearly: twice the text takes about twice the time", function()
+        local small, large = best_ms(("<b "):rep(20000)), best_ms(("<b "):rep(40000))
+        -- Linear is 2, quadratic 4. The floor keeps a sub-millisecond small
+        -- run from turning timer noise into a ratio.
+        assert.is_true(large < 3 * math.max(small, 2),
+            ("20000 took %.1f ms but 40000 took %.1f ms"):format(small, large))
+    end)
+
+    it("is linear for every tag the converter reads, in each unfinished shape", function()
+        local tags = {
+            "blockquote", "pre", "a", "img", "li", "ul", "ol", "h1", "h4", "strong", "code",
+            "em", "b", "i", "sup", "sub", "center", "div", "span", "p",
+        }
+        -- A finished `<ul x>` or `<p x>` is dropped even with no closer; every
+        -- other shape here is unpaired or unfinished, so it stays as written.
+        local dropped = { ul = true, ol = true, center = true, div = true, span = true, p = true }
+        for _, tag in ipairs(tags) do
+            for _, unit in ipairs({ "<" .. tag .. " ", "<" .. tag .. " x>", "</" .. tag .. " " }) do
+                local src = unit:rep(20000)
+                local ms, out = render(src)
+                assert.is_true(ms < LIMIT_MS, ("%q x20000 took %d ms"):format(unit, ms))
+                if not (dropped[tag] and unit == "<" .. tag .. " x>") then
+                    assert.are.equal(src, out, ("%q x20000 was rewritten"):format(unit))
+                end
+            end
+        end
+    end)
+
+    it("is linear for an opener whose only > is the one in a distant closing tag", function()
+        -- Every `<a ` has the same far `>`; the closer after it is gone, so
+        -- nothing pairs and nothing is rewritten.
+        local src = ("<a "):rep(20000) .. "</a>"
+        local ms, out = render(src)
+        assert.is_true(ms < LIMIT_MS, ("took %d ms"):format(ms))
+        assert.are.equal(src, out)
+    end)
+end)
