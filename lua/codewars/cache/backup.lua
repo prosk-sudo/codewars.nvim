@@ -13,6 +13,15 @@
 ---    (or the editor died mid-write). Then it is the one good copy of the
 ---    previous cache, and no later write replaces it with a cache that does not
 ---    decode: it stays the backup, and goes only once a write has fully landed.
+---  * A .bak that cannot be read (permission, an I/O error, anything short of a
+---    full read of a regular file) is unknown, not junk: next to a cache that is
+---    no good it may be the one good copy, so the write is refused and neither
+---    file is touched, and a read recovers nothing from it. Only a .bak that was
+---    read in full and does not decode, one beside a cache that decodes, or a
+---    symlink or other non-regular file, is ever removed or replaced.
+---  * Nothing is read blind: every file read here is opened without blocking and its
+---    descriptor checked (a regular file, the very one that was lstat-ed) before a
+---    byte is read, so one swapped for a pipe cannot hang the editor.
 ---  * An existing .bak is never opened for writing, as that would follow a
 ---    symlink planted at the predictable name. A stale one, or one that is a
 ---    symlink or other non-regular file, is unlinked (which removes a link, not
@@ -33,6 +42,18 @@ local SUFFIX = ".bak"
 local DEFAULT_MODE = 438 -- 0666: what a new file is created with, before the umask trims it
 local PERMISSION_BITS = 511 -- 0777
 local READ_CHUNK = 65536
+
+-- Opening a pipe for reading waits until something opens its other end, so a file
+-- swapped for one just before it is opened would hang the editor for good.
+-- O_NONBLOCK makes the open return at once (it does nothing to a regular file) and
+-- the descriptor is checked before a byte is read. luv (Neovim 0.9 and up) takes
+-- integer flags and exposes O_NONBLOCK, but not O_NOFOLLOW: it is used only if a
+-- build has it, and the lstat before the open plus the inode check after it do
+-- the work otherwise. A luv without `constants` falls back to a plain read-only
+-- open, which still has those two checks.
+local constants = uv.constants or {}
+local READ_FLAGS = bit.bor(constants.O_RDONLY or 0, constants.O_NONBLOCK or 0)
+local READ_BACKUP_FLAGS = bit.bor(READ_FLAGS, constants.O_NOFOLLOW or 0)
 
 ---@param file string
 ---@return string
@@ -114,25 +135,37 @@ local function write_file(path, data, opts)
     return ok == true, err, true
 end
 
---- The bytes of a file. With `expect` (a stat of `path`), only that very file:
---- one swapped for a symlink since is refused.
+---@param stat table? what fstat says of the open descriptor
+---@param expect table? the lstat taken just before the open, when the file must be that very one
+---@return string? why the descriptor is not fit to be read
+local function unfit(stat, expect)
+    if not stat then return "it could not be examined" end
+    if stat.type ~= "file" then return "it is not a regular file" end
+    if expect and (stat.ino ~= expect.ino or stat.dev ~= expect.dev) then return "it changed while being opened" end
+end
+
+--- The bytes of a regular file. The open cannot block, and the descriptor is
+--- checked (a regular file, and with `expect`, the very file that was
+--- lstat-ed: one swapped for a link, a pipe or another file since is refused)
+--- before a byte is read from it.
 ---@param path string
----@param expect table? uv stat of `path` taken just before
----@return string? bytes nil when the file cannot be read
+---@param expect table? uv stat of `path` taken just before; the open then also refuses a symlink where it can
+---@return string? bytes
+---@return string? err why it could not be read
 local function read_file(path, expect)
-    local fd = uv.fs_open(path, "r", DEFAULT_MODE)
-    if not fd then return nil end
-    local stat = expect and uv.fs_fstat(fd)
-    if expect and not (stat and stat.ino == expect.ino and stat.dev == expect.dev) then
+    local fd, err = uv.fs_open(path, expect and READ_BACKUP_FLAGS or READ_FLAGS, DEFAULT_MODE)
+    if not fd then return nil, err end
+    local problem = unfit(uv.fs_fstat(fd), expect)
+    if problem then
         uv.fs_close(fd)
-        return nil
+        return nil, problem
     end
     local chunks, offset = {}, 0
     while true do
-        local chunk = uv.fs_read(fd, READ_CHUNK, offset)
+        local chunk, read_err = uv.fs_read(fd, READ_CHUNK, offset)
         if not chunk then
             uv.fs_close(fd)
-            return nil
+            return nil, read_err
         end
         if chunk == "" then break end
         chunks[#chunks + 1] = chunk
@@ -142,33 +175,44 @@ local function read_file(path, expect)
     return table.concat(chunks)
 end
 
---- The backup's bytes, from a regular file only: not through a symlink, and
---- not from a directory, a device or a pipe.
----@param bak string
+--- The bytes of a cache file, nil when it is not a regular file that reads in full.
+---@param file string absolute path
 ---@return string? bytes
----@return string? kind what is there when it is not a regular file
-local function read_backup(bak)
-    local stat = uv.fs_lstat(bak)
-    if not stat then return nil end
-    if stat.type ~= "file" then return nil, stat.type end
-    return read_file(bak, stat)
+function M.read(file)
+    return (read_file(file))
 end
 
----@alias cw.cache.BackupState "absent"|"foreign"|"good"|"unusable"
+---@alias cw.cache.BackupState "absent"|"foreign"|"unreadable"|"good"|"unusable"
 
---- What is at the backup's name: nothing, something that is not a regular
---- file, a regular file that decodes (a good copy), or one that does not.
+--- What is at the backup's name, from lstat first (never through a symlink):
+---  * "absent": nothing
+---  * "foreign": not a regular file; `detail` is what it is
+---  * "unreadable": a regular file that could not be opened or read in full;
+---    `detail` is why. Unknown, not junk: it may be the one good copy.
+---  * "read": a regular file read in full; `detail` is its bytes
+---@param bak string
+---@return "absent"|"foreign"|"unreadable"|"read" state
+---@return string? detail
+local function read_backup(bak)
+    local stat = uv.fs_lstat(bak)
+    if not stat then return "absent" end
+    if stat.type ~= "file" then return "foreign", stat.type end
+    local bytes, err = read_file(bak, stat)
+    if not bytes then return "unreadable", err end
+    return "read", bytes
+end
+
+--- `read_backup`, with a regular file that was read in full sorted into one
+--- that decodes (a good copy; `detail` is its bytes) and one that does not.
 ---@param bak string
 ---@param parse fun(text: string): any?
 ---@return cw.cache.BackupState state
----@return string? bytes of a good copy
----@return string? kind what a foreign thing is
+---@return string? detail
 local function inspect_backup(bak, parse)
-    local bytes, kind = read_backup(bak)
-    if kind then return "foreign", nil, kind end
-    if bytes and parse(bytes) ~= nil then return "good", bytes end
-    if uv.fs_lstat(bak) then return "unusable" end
-    return "absent"
+    local state, detail = read_backup(bak)
+    if state ~= "read" then return state, detail end
+    if parse(detail) ~= nil then return "good", detail end
+    return "unusable"
 end
 
 --- Copy `original` to a fresh backup, with the original's permission bits (so
@@ -220,15 +264,24 @@ end
 --- `file` exists, with `stat`: back it up, write it in place, restore on failure.
 local function write_over(file, bytes, stat, parse)
     local bak = M.backup_path(file)
-    local original = read_file(file)
-    if not original then return false, not_backed_up(file, "it could not be read") end
+    local original, read_err = read_file(file)
+    if not original then return false, not_backed_up(file, "it could not be read: " .. tostring(read_err)) end
+    local function decodes() return parse(original) ~= nil end
+
+    -- A copy that could not be read is unknown, not junk: beside a cache that is
+    -- no good it may be the one good copy, so nothing is touched.
+    local state, kept = inspect_backup(bak, parse)
+    if state == "unreadable" and not decodes() then
+        return false, not_backed_up(file, ("%s could not be read (%s), and may be the only good copy"):format(
+            bak, tostring(kept)))
+    end
 
     -- A good copy already at the backup's name, with a cache that is no good
     -- beside it, IS the backup: keep it as it is, restore from it, and remove
     -- it only after the new bytes have landed. Anything else there is replaced.
-    local state, kept, kind = inspect_backup(bak, parse)
+    local kind = state == "foreign" and kept or nil
     local restore_from, note = original, nil
-    if state == "good" and parse(original) == nil then
+    if state == "good" and not decodes() then
         restore_from = kept
     else
         local ok, err
@@ -279,13 +332,18 @@ end
 ---@return string? err why it could not be written back into `file`
 function M.settle(file, parse)
     local bak = M.backup_path(file)
-    local text = read_backup(bak)
-    if not text then return nil end
+    -- Not read in full from a regular file (absent, foreign, unreadable): it is
+    -- unknown, so nothing is touched.
+    local state, text = read_backup(bak)
+    if state ~= "read" then return nil end
     local data = parse(text)
     if data == nil then return nil end
 
+    local main = uv.fs_stat(file)
+    -- Opening a pipe or a device for writing could wait for ever.
+    if main and main.type ~= "file" then return data, "it is not a regular file" end
     local mode
-    if not uv.fs_stat(file) then
+    if not main then
         local stat = uv.fs_stat(bak)
         mode = stat and bit.band(stat.mode, PERMISSION_BITS)
     end

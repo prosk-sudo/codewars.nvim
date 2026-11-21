@@ -36,6 +36,7 @@ describe("cache.utils write_json, state by state", function()
     local log = require("codewars.logger")
     local cache_utils = require("codewars.cache.utils")
     local saved_storage, real_error, real_warn, real_write, real_open, errors, warnings
+    local real_read, real_fstat, real_lstat
     local tmp, file, bak, original, good_bak, fresh, payload
 
     before_each(function()
@@ -43,6 +44,7 @@ describe("cache.utils write_json, state by state", function()
         vim.fn.mkdir(tmp, "p")
         saved_storage, real_error, real_warn = config.storage, log.error, log.warn
         real_write, real_open, errors, warnings = uv.fs_write, uv.fs_open, {}, {}
+        real_read, real_fstat, real_lstat = uv.fs_read, uv.fs_fstat, uv.fs_lstat
         config.storage = { home = P:new(tmp), cache = P:new(tmp) }
         log.error = function(msg) errors[#errors + 1] = tostring(msg) end
         log.warn = function(msg) warnings[#warnings + 1] = tostring(msg) end
@@ -54,7 +56,8 @@ describe("cache.utils write_json, state by state", function()
     end)
 
     after_each(function()
-        uv.fs_write, uv.fs_open = real_write, real_open
+        uv.fs_write, uv.fs_open, uv.fs_read = real_write, real_open, real_read
+        uv.fs_fstat, uv.fs_lstat = real_fstat, real_lstat
         config.storage, log.error, log.warn = saved_storage, real_error, real_warn
         pcall(uv.fs_chmod, tmp, 493)
         pcall(uv.fs_chmod, file, 420)
@@ -293,6 +296,237 @@ describe("cache.utils write_json, state by state", function()
             assert.equals("{ torn", slurp(file))
             assert.is_nil(uv.fs_stat(bak))
         end)
+    end)
+
+    --- Whether an open is for reading: by name before, by number now.
+    local function is_read_open(flags) return flags == "r" or type(flags) == "number" end
+
+    --- Reads of the backup fail the way a permission or an I/O error would:
+    --- the open itself ("open"), or a read after a good open ("read").
+    local function bak_unreadable(how)
+        local fds = {}
+        uv.fs_open = function(path, flags, mode)
+            if path ~= bak or not is_read_open(flags) then return real_open(path, flags, mode) end
+            if how == "open" then return nil, "EACCES: permission denied: " .. bak end
+            local fd, err = real_open(path, flags, mode)
+            if fd then fds[fd] = true end
+            return fd, err
+        end
+        uv.fs_read = function(fd, size, offset)
+            if fds[fd] then return nil, "EIO: i/o error" end
+            return real_read(fd, size, offset)
+        end
+    end
+
+    describe("a .bak that cannot be read", function()
+        -- Unknown, not junk: it may be the one good copy. Only a .bak that was read in
+        -- full and does not decode, one beside a cache that decodes, or a non-regular
+        -- file may be removed or replaced.
+        for _, how in ipairs({ "open", "read", "mode" }) do
+            it(("refuses the write over a damaged cache, touching neither file (%s error)"):format(how), function()
+                spit(file, "{ torn")
+                spit(bak, good_bak)
+                local before = uv.fs_stat(file)
+                if how == "mode" then
+                    uv.fs_chmod(bak, 0)
+                    if uv.fs_access(bak, "R") then return pending("running as a user that ignores file modes") end
+                else
+                    bak_unreadable(how)
+                end
+
+                local ok, err = write()
+
+                uv.fs_open, uv.fs_read = real_open, real_read
+                uv.fs_chmod(bak, 420)
+                assert.is_false(ok)
+                assert.matches(vim.pesc(bak), err)
+                assert.equals("{ torn", slurp(file))
+                assert.equals(before.mtime.nsec, uv.fs_stat(file).mtime.nsec)
+                assert.equals(good_bak, slurp(bak), "a backup that could not be read was replaced")
+                assert.equals(1, #errors, vim.inspect(errors))
+            end)
+        end
+
+        it("refuses it over an empty cache as well, and says nothing when quiet", function()
+            spit(file, "")
+            spit(bak, good_bak)
+            bak_unreadable("open")
+
+            local ok, err = write({ quiet = true })
+
+            uv.fs_open = real_open
+            assert.is_false(ok)
+            assert.matches(vim.pesc(bak), err)
+            assert.equals("", slurp(file))
+            assert.equals(good_bak, slurp(bak))
+            assert.same({}, errors)
+        end)
+
+        it("is stale beside a cache that decodes, so it is replaced and the write goes ahead", function()
+            spit(file, original)
+            spit(bak, good_bak)
+            bak_unreadable("open")
+
+            local ok = write()
+
+            uv.fs_open = real_open
+            assert.is_true(ok)
+            assert.same(fresh, vim.json.decode(slurp(file)))
+            assert.is_nil(uv.fs_lstat(bak))
+        end)
+
+        it("is left alone beside a new file, which touches no backup", function()
+            spit(bak, good_bak)
+            bak_unreadable("open")
+
+            local ok = write()
+
+            uv.fs_open = real_open
+            assert.is_true(ok)
+            assert.same(fresh, vim.json.decode(slurp(file)))
+            assert.equals(good_bak, slurp(bak))
+        end)
+    end)
+
+    describe("a .bak swapped under the open", function()
+        --- Run Lua in a fresh Neovim that must finish before `ms` is up: a blocking
+        --- open would hang it for good, and the test must say so instead of hanging.
+        local function in_child(body, ms)
+            local script = tmp .. "/child.lua"
+            spit(script, ("vim.opt.rtp:prepend(%s)\n%s"):format(vim.inspect(vim.fn.getcwd()), body))
+            local res = vim.system({ vim.v.progpath, "--headless", "-u", "NONE", "-c", "luafile " .. script,
+                "-c", "qa!" }, { timeout = ms, text = true }):wait()
+            return { done = res.code ~= 124 and res.signal == 0, text = (res.stdout or "") .. (res.stderr or "") }
+        end
+
+        local function can_run_child()
+            return vim.system ~= nil and vim.fn.executable("mkfifo") == 1
+        end
+
+        local function fifo_at(path)
+            vim.fn.system({ "mkfifo", path })
+            return vim.v.shell_error == 0
+        end
+
+        --- lstat says "a regular file" for `bak`, as it did before the swap; the open meets a pipe.
+        local function child_body(main_text)
+            return ([[
+local uv = vim.uv or vim.loop
+local backup = require("codewars.cache.backup")
+local real_lstat = uv.fs_lstat
+uv.fs_lstat = function(p, ...)
+    local st = real_lstat(p, ...)
+    if p == %s and st then st.type = "file" end
+    return st
+end
+local function parse(t) local ok, d = pcall(vim.json.decode, t); return ok and d or nil end
+local f = assert(io.open(%s, "wb")); f:write(%s); f:close()
+local ok, err = backup.write(%s, "{}", parse)
+print("RESULT", tostring(ok), tostring(err))
+]]):format(vim.inspect(bak), vim.inspect(file), vim.inspect(main_text), vim.inspect(file))
+        end
+
+        it("does not block: the pipe is opened without waiting and refused before a byte is read", function()
+            if not can_run_child() then return pending("needs vim.system (Neovim 0.10) and mkfifo") end
+            assert(fifo_at(bak))
+
+            local res = in_child(child_body("{ torn"), 5000)
+
+            assert.is_true(res.done, "the open of the pipe blocked: " .. res.text)
+            assert.matches("RESULT%s+false", res.text)
+            assert.matches("could not be read", res.text)
+            assert.equals("{ torn", slurp(file))
+        end)
+
+        it("is replaced when the cache beside it decodes", function()
+            if not can_run_child() then return pending("needs vim.system (Neovim 0.10) and mkfifo") end
+            assert(fifo_at(bak))
+
+            local res = in_child(child_body(original), 5000)
+
+            assert.is_true(res.done, "the open of the pipe blocked: " .. res.text)
+            assert.matches("RESULT%s+true", res.text)
+        end)
+
+        it("is never opened when it is a pipe from the start", function()
+            if not can_run_child() then return pending("needs vim.system (Neovim 0.10) and mkfifo") end
+            assert(fifo_at(bak))
+            local body = ([[
+local backup = require("codewars.cache.backup")
+local function parse(t) local ok, d = pcall(vim.json.decode, t); return ok and d or nil end
+local f = assert(io.open(%s, "wb")); f:write(%s); f:close()
+print("RESULT", tostring((backup.write(%s, "{}", parse))))
+]]):format(vim.inspect(file), vim.inspect(original), vim.inspect(file))
+
+            local res = in_child(body, 5000)
+
+            assert.is_true(res.done, "something opened the pipe: " .. res.text)
+            assert.matches("RESULT%s+true", res.text)
+        end)
+
+        it("opens everything it reads without blocking, so a pipe cannot hang it", function()
+            local nonblock = uv.constants and uv.constants.O_NONBLOCK
+            if not nonblock then return pending("this luv does not expose O_NONBLOCK") end
+            spit(file, original)
+            spit(bak, good_bak)
+            local reads = {}
+            uv.fs_open = function(path, flags, mode)
+                if is_read_open(flags) then reads[path] = flags end
+                return real_open(path, flags, mode)
+            end
+
+            assert.is_true((write()))
+            spit(file, "{ torn")
+            spit(bak, good_bak)
+            cache_utils.read_json(P:new(file))
+
+            for _, path in ipairs({ file, bak }) do
+                assert.equals("number", type(reads[path]), path .. " was opened by name, which can block on a pipe")
+                assert.is_true(bit.band(reads[path], nonblock) ~= 0, path .. " was opened without O_NONBLOCK")
+            end
+        end)
+
+        --- Make the descriptor of the backup say something else than the lstat did.
+        local function fstat_says(change)
+            local fds = {}
+            uv.fs_open = function(path, flags, mode)
+                local fd, err = real_open(path, flags, mode)
+                if fd and path == bak and is_read_open(flags) then fds[fd] = true end
+                return fd, err
+            end
+            uv.fs_fstat = function(fd)
+                local st = real_fstat(fd)
+                if st and fds[fd] then change(st) end
+                return st
+            end
+            local read_any = false
+            uv.fs_read = function(fd, size, offset)
+                if fds[fd] then read_any = true end
+                return real_read(fd, size, offset)
+            end
+            return function() return read_any end
+        end
+
+        for name, change in pairs({
+            ["is not a regular file"] = function(st) st.type = "fifo" end,
+            ["is another file than the one that was checked"] = function(st) st.ino = st.ino + 1 end,
+            ["is on another device than the one that was checked"] = function(st) st.dev = st.dev + 1 end,
+        }) do
+            it(("is refused before a byte is read when the opened descriptor %s"):format(name), function()
+                spit(file, "{ torn")
+                spit(bak, good_bak)
+                local read_any = fstat_says(change)
+
+                local ok, err = write()
+
+                uv.fs_open, uv.fs_fstat, uv.fs_read = real_open, real_fstat, real_read
+                assert.is_false(read_any(), "a byte was read from a file that failed the check")
+                assert.is_false(ok)
+                assert.matches(vim.pesc(bak), err)
+                assert.equals("{ torn", slurp(file))
+                assert.equals(good_bak, slurp(bak))
+            end)
+        end
     end)
 
     describe("a .bak that is stale or no use", function()

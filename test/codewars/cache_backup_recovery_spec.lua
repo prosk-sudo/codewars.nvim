@@ -116,6 +116,34 @@ describe("cache backups", function()
             assert.equals("link", uv.fs_lstat(bak).type)
         end)
 
+        for _, how in ipairs({ "open fails", "mode" }) do
+            it(("does nothing when the backup cannot be read (%s): it may be the one good copy"):format(how), function()
+                spit(file, "{ torn")
+                spit(bak, good)
+                local real_open = uv.fs_open
+                if how == "mode" then
+                    uv.fs_chmod(bak, 0)
+                    if uv.fs_access(bak, "R") then return pending("running as a user that ignores file modes") end
+                else
+                    uv.fs_open = function(path, flags, mode)
+                        if path == bak and (flags == "r" or type(flags) == "number") then
+                            return nil, "EACCES: permission denied: " .. bak
+                        end
+                        return real_open(path, flags, mode)
+                    end
+                end
+
+                local data = read()
+
+                uv.fs_open = real_open
+                uv.fs_chmod(bak, 420)
+                assert.is_nil(data)
+                assert.equals("{ torn", slurp(file))
+                assert.equals(good, slurp(bak))
+                assert.same({}, warnings)
+            end)
+        end
+
         it("does not use a backup that is not a regular file", function()
             spit(file, "{ torn")
             vim.fn.mkdir(bak)

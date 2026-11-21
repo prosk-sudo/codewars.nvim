@@ -58,8 +58,8 @@ end
 ---@param path Path
 ---@return table?
 function M.read_json(path)
-    local read, text = pcall(function() return path:read() end)
-    local data = read and parse(text) or nil
+    local text = backup.read(backup.file_name(path))
+    local data = text and parse(text) or nil
     if data ~= nil then return data end
     return recover(path)
 end
