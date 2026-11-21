@@ -72,10 +72,12 @@ describe("api.httpdate", function()
         end)
     end)
 
-    -- RFC 9110 section 5.6.7: a two-digit year is read as the current
-    -- century, unless that puts the WHOLE timestamp -- date and time of day,
-    -- not just the year -- more than 50 years after now; then it is the
-    -- previous century.
+    -- RFC 9110 section 5.6.7: a two-digit year that puts the timestamp more
+    -- than 50 years ahead means the most recent past year with those digits.
+    -- The whole timestamp -- date and time of day, not just the year -- is
+    -- held against the line, and the line slides with the clock: of the
+    -- candidates a century apart, the latest one no more than 50 years ahead
+    -- is the year, so a date just past a century boundary resolves forward.
     describe("RFC 850 two-digit years", function()
         local NOW_2026 = 1795305600 -- 2026-11-22 00:00:00 UTC
         local NOON_2026 = 1795348800 -- 2026-11-22 12:00:00 UTC
@@ -127,12 +129,34 @@ describe("api.httpdate", function()
             assert.are.equal(257558400, resolved("01-Mar-78 00:00:00", leap_day)) -- 1978
         end)
 
-        -- Only a date too far ahead is moved. A past one stays where the
-        -- current century puts it.
-        it("does not move a past date forward a century", function()
+        it("lets a date just past a century boundary resolve forward", function()
+            local dec_2099 = 4100976000 -- 2099-12-15 00:00:00 UTC
+            assert.are.equal(4102444800, resolved("01-Jan-00 00:00:00", dec_2099)) -- 2100-01-01
+            -- Not the 2000 a current-century reading gives, a 99-year-old date.
+            assert.are_not.equal(946684800, resolved("01-Jan-00 00:00:00", dec_2099))
+
             local year_2090 = 3786912000 -- 2090-01-01 00:00:00 UTC
-            assert.are.equal(1131266977, resolved("06-Nov-05 08:49:37", year_2090)) -- 2005
+            assert.are.equal(4286940577, resolved("06-Nov-05 08:49:37", year_2090)) -- 2105
             assert.are.equal(3845177377, resolved("06-Nov-91 08:49:37", year_2090)) -- 2091
+        end)
+
+        it("still sends one more than 50 years ahead back, across the boundary", function()
+            local dec_2099 = 4100976000 -- 2099-12-15 00:00:00 UTC
+            -- 2150-01-01 is past 2149-12-15, so it is 2050.
+            assert.are.equal(2524608000, resolved("01-Jan-50 00:00:00", dec_2099))
+            -- Exactly 50 years ahead stays ahead, as it does in 2026; one second on does not.
+            assert.are.equal(5678812800, resolved("15-Dec-49 00:00:00", dec_2099)) -- 2149-12-15
+            assert.are.equal(2523139201, resolved("15-Dec-49 00:00:01", dec_2099)) -- 2049-12-15 00:00:01
+        end)
+
+        it("keeps a past date in the past", function()
+            assert.are.equal(1131266977, resolved("06-Nov-05 08:49:37", NOW_2026)) -- 2005, not 2105
+            assert.are.equal(689417377, resolved("06-Nov-91 08:49:37", NOW_2026)) -- 1991, not 2091
+            assert.are.equal(1667724577, resolved("06-Nov-22 08:49:37", NOW_2026)) -- 2022
+
+            local dec_2099 = 4100976000 -- 2099-12-15 00:00:00 UTC
+            assert.are.equal(4076006400, resolved("01-Mar-99 00:00:00", dec_2099)) -- 2099, not 2199
+            assert.are.equal(4101408000, resolved("20-Dec-99 00:00:00", dec_2099)) -- 2099, five days on
         end)
     end)
 

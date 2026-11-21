@@ -62,21 +62,28 @@ local function moment_key(year, month, day, hour, min, sec)
     return ((((year * 13 + month) * 32 + day) * 24 + hour) * 60 + min) * 61 + sec
 end
 
---- The year a two-digit RFC 850 year means (RFC 9110 section 5.6.7): this
---- century, unless that puts the timestamp more than MAX_YEARS_AHEAD years
---- after `now`, and then the previous one. The whole date and time is held
---- against the limit, not the year alone: on 2026-11-22, 01-Dec-76 is past
---- the limit and 21-Nov-76 is not. A timestamp exactly that far ahead is not
---- MORE than that far ahead, so it stays in the future.
+--- The year a two-digit RFC 850 year means (RFC 9110 section 5.6.7): of the
+--- years ending in `yy` a century apart, the latest whose timestamp is no
+--- more than MAX_YEARS_AHEAD years after `now`. Anything further ahead is the
+--- previous century, and a date just past a century boundary resolves
+--- forward: on 2099-12-15, 01-Jan-00 is 2100, not 2000. The whole date and
+--- time is held against the limit, not the year alone -- on 2026-11-22,
+--- 01-Dec-76 is past it and 21-Nov-76 is not -- and a timestamp exactly that
+--- far ahead is not MORE than that far ahead, so it stays in the future.
 ---@param yy integer 0-99
 ---@param now integer epoch seconds
 ---@return integer
 local function expand_year(yy, month, day, hour, min, sec, now)
     local at = os.date("!*t", now)
     local limit = moment_key(at.year + MAX_YEARS_AHEAD, at.month, at.day, at.hour, at.min, at.sec)
-    local year = at.year - at.year % 100 + yy
-    if moment_key(year, month, day, hour, min, sec) > limit then return year - 100 end
-    return year
+    local this_century = at.year - at.year % 100 + yy
+    for _, year in ipairs({ this_century + 100, this_century }) do
+        if moment_key(year, month, day, hour, min, sec) <= limit then return year end
+    end
+    -- The previous century is always the last candidate: it is behind this
+    -- year (this_century is at most 99 years past the century's start), so
+    -- it can never be too far ahead.
+    return this_century - 100
 end
 
 ---@return integer? year, integer? month, integer? day, integer? hour, integer? min, integer? sec
