@@ -154,6 +154,14 @@ local function fetch_user_data(menu, cb, opts)
 
     detect = function()
         scrape(function(profile, err)
+            if err and err.auth then
+                -- The bounced session verify() reports. With no cached
+                -- profile -- the state right after every sign-in -- verify
+                -- never runs, so this is the only place left to say it, and
+                -- a cookie Codewars refused read as "Signed in".
+                menu._session_expired = true
+                return done()
+            end
             if err or not profile or not profile.username then
                 -- Swallowing this left a menu that looks signed in, has no
                 -- username, and explains nothing -- while every feature
@@ -284,12 +292,12 @@ local function build_pages(menu)
         end
     end
 
+    -- Saving the cookie already reached Menu.session_changed(), which
+    -- fetches the new identity; fetching here too scraped /dashboard twice.
     local function signin_fn()
         require("codewars.command").cookie_prompt(function(success)
             if success then
-                fetch_user_data(menu, function()
-                    menu:set_page("main")
-                end)
+                menu:set_page("main")
             end
         end)
     end
@@ -880,19 +888,40 @@ end
 
 Menu._active = nil
 
---- The cookie changed under us: a sign-in or a sign-out. An "expired"
---- header over a brand-new session is wrong, and nothing else on that path
---- reaches the menu -- `:CW cookie` from the command line never touches it.
---- Called from Cookie.identity_changed(), the one place that enumerates
---- identity-scoped state.
+--- A redraw callback that survives the menu being closed in the meantime.
+local function repaint(m)
+    return function()
+        if m.bufnr and api.nvim_buf_is_valid(m.bufnr) then
+            m._redraw_only = true
+            m:draw()
+        end
+    end
+end
+
+--- The cookie changed under us: a sign-in or a sign-out. Called from
+--- Cookie.set() and Cookie.delete(), whichever command caused it --
+--- `:CW cookie` from the command line never touches the menu itself.
+---
+--- Saving a cookie blanks the username and the cached profile, and only
+--- clearing the "expired" flag here left the header at a nameless
+--- "Signed in" until a restart: nothing asked who the new session was.
 function Menu.session_changed()
     local m = Menu._active or (_Cw_state or {}).menu
-    if not m or not m._session_expired then return end
+    if not m then return end
     m._session_expired = nil
-    if m.bufnr and api.nvim_buf_is_valid(m.bufnr) then
-        m._redraw_only = true
-        m:draw()
+    -- The previous session's numbers; another account's, on a switch.
+    m._stats = nil
+    if not (m.bufnr and api.nvim_buf_is_valid(m.bufnr)) then return end
+
+    if not cookie_cache.get() then
+        return m:set_page("signin")
     end
+    if m.page == "signin" then
+        m:set_page("main")
+    else
+        repaint(m)()
+    end
+    fetch_user_data(m, repaint(m))
 end
 
 --- Refresh stats from API (called after submit, etc.)
@@ -910,12 +939,7 @@ function Menu.refresh_stats()
     if m._stats then
         m._stats.completed = (m._stats.completed or 0) + 1
     end
-    fetch_user_data(m, function()
-        if m.bufnr and api.nvim_buf_is_valid(m.bufnr) then
-            m._redraw_only = true
-            m:draw()
-        end
-    end)
+    fetch_user_data(m, repaint(m))
 end
 
 ---@return cw.ui.Menu

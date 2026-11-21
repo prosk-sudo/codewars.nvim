@@ -121,16 +121,35 @@ describe("Cookie identity change", function()
             assert.are.equal("alice", config.user.username)
         end)
 
-        -- The dashboard header can be in an "expired" state. A new cookie
-        -- must reach it, or it keeps saying so over a session that is fine.
-        it("tells the menu the session changed", function()
+        -- The dashboard header can be in an "expired" state, and names the
+        -- account. A sign-in or sign-out must reach it, once, or it keeps
+        -- showing the old session -- and it must find the cookie already
+        -- final when it reads it back.
+        it("tells the menu the session changed, on sign-in and sign-out", function()
+            local seen = {}
+            package.loaded["codewars-ui.renderer.menu"] = {
+                session_changed = function()
+                    local c = Cookie.get()
+                    seen[#seen + 1] = c and c.session_id or "signed out"
+                end,
+            }
+            assert.is_nil(Cookie.set("CSRF-TOKEN=abc; _session_id=xyz"))
+            Cookie.delete()
+            package.loaded["codewars-ui.renderer.menu"] = nil
+            assert.are.same({ "xyz", "signed out" }, seen)
+        end)
+
+        -- verify() calls identity_changed() itself on finding the cookie
+        -- belongs to somebody else, and is already fetching that identity;
+        -- the menu re-fetching too would scrape /dashboard twice.
+        it("leaves the menu alone when only the identity is purged", function()
             local told = 0
             package.loaded["codewars-ui.renderer.menu"] = {
                 session_changed = function() told = told + 1 end,
             }
-            assert.is_nil(Cookie.set("CSRF-TOKEN=abc; _session_id=xyz"))
+            Cookie.identity_changed()
             package.loaded["codewars-ui.renderer.menu"] = nil
-            assert.are.equal(1, told, "identity_changed did not reach the menu")
+            assert.are.equal(0, told)
         end)
 
         it("keeps going when one hook fails", function()

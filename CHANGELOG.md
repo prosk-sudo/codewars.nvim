@@ -45,6 +45,21 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- Signing in again with `:CW cookie` now puts your name back in the dashboard
+  header. Saving the cookie cleared the detected username, but only the
+  dashboard's own Cookie > Update button looked it up again, so the command
+  the "Session expired" header points you to left a nameless grey
+  `Signed in` until Neovim restarted. Any cookie change now reaches the
+  dashboard, whichever command made it: a sign-in looks the account up
+  (once — the button no longer scrapes the dashboard a second time) and
+  drops the previous session's stats, and a sign-out, `:CW cookie delete`
+  included, returns it to the Sign In page.
+- Signing out while the dashboard said "Session expired" really signs out.
+  The deleted cookie was read back and kept in memory, and sent with every
+  request for the rest of the session.
+- A cookie Codewars refuses now reads `Session expired` instead of
+  `Signed in`. Only the check against a cached profile could say so, and
+  there is never one right after a sign-in.
 - A language switch that failed part-way no longer forgets that the previous
   language's attempt was still being registered, which let `:CW submit` go
   out before Codewars had counted the attempt.
