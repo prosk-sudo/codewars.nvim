@@ -128,6 +128,57 @@ describe("Kata and :CW unfinished", function()
         assert.is_false(cfg.storage.home:joinpath(slug .. ".py"):exists(), "seeded a second file beside it")
     end)
 
+    -- The picker lists each file, so a row for `id.py` is that file. Opening
+    -- the slug's file instead, because one exists too, shows work the user
+    -- did not pick.
+    describe("when the user picked a file", function()
+        local function both_files()
+            n = n + 1
+            local slug, id = "unfinished-kata-" .. n, ("%024x"):format(n)
+            cfg.storage.home:joinpath(slug .. ".py"):write("def f(x):\n    return 'slug'", "w")
+            cfg.storage.home:joinpath(id .. ".py"):write("def f(x):\n    return 'id'", "w")
+            return slug, id
+        end
+
+        local function open_with(slug, id, lang, opts)
+            local kata = Kata:new(slug, lang, opts)
+            kata.kata_id = id
+            kata.setup_code = STUB
+            kata:create_buffer()
+            return kata
+        end
+
+        local function body(kata)
+            return table.concat(vim.api.nvim_buf_get_lines(kata.bufnr, 0, -1, false), "\n")
+        end
+
+        it("opens that file, not the slug's, when both exist", function()
+            local slug, id = both_files()
+            local kata = open_with(slug, id, "python", { file = id .. ".py" })
+            assert.are.equal(id .. ".py", kata._file_name)
+            assert.truthy(body(kata):find("'id'", 1, true), body(kata))
+        end)
+
+        it("still prefers the slug's file when nothing was picked", function()
+            local slug, id = both_files()
+            local kata = open_with(slug, id, "python")
+            assert.are.equal(slug .. ".py", kata._file_name)
+            assert.truthy(body(kata):find("'slug'", 1, true), body(kata))
+        end)
+
+        it("falls back to the usual file when the picked one is gone", function()
+            local slug, id = both_files()
+            local kata = open_with(slug, id, "python", { file = "gone-" .. id .. ".py" })
+            assert.are.equal(slug .. ".py", kata._file_name)
+        end)
+
+        it("does not carry the picked file over to another language", function()
+            local slug, id = both_files()
+            local kata = open_with(slug, id, "javascript", { file = id .. ".py" })
+            assert.are.equal(slug .. ".js", kata._file_name)
+        end)
+    end)
+
     it("keeps an untouched kata off the list through a template toggle", function()
         cfg.user.templates = { solution = { python = "import logging\n\n{{starter}}" } }
         templates.set_enabled(false)

@@ -91,8 +91,8 @@ describe(":CW unfinished", function()
             list = function(c) listed_with = c; return entries end,
         }
         package.loaded["codewars-ui.kata"] = {
-            new = function(_, key, lang)
-                return { mount = function() mounted = { key = key, lang = lang } end }
+            new = function(_, key, lang, opts)
+                return { mount = function() mounted = { key = key, lang = lang, file = opts and opts.file } end }
             end,
         }
         package.loaded["codewars.picker"] = nil
@@ -214,12 +214,15 @@ describe(":CW unfinished", function()
         assert.truthy(entry.ordinal:find("Java", 1, true), entry.ordinal)
     end)
 
-    it("opens the chosen kata in that file's language", function()
+    -- The row is a file: a kata with an old `<id>.py` and a newer `<slug>.py`
+    -- has a row for each, and the one picked is the one that opens.
+    it("opens the chosen kata in that file's language, and that very file", function()
         picker.unfinished()
         opened.cfg.attach_mappings(1, function() end)
         opened.selected = opened.cfg.finder.entry_maker(opened.cfg.finder.results[2])
         opened.select()
-        assert.are.same({ key = "5264d2b162488dc400000001", lang = "java" }, mounted)
+        assert.are.same({ key = "5264d2b162488dc400000001", lang = "java", file = "5264d2b162488dc400000001.java" },
+            mounted)
     end)
 
     -- Without telescope every picker goes through vim.ui.select: the same
@@ -237,7 +240,8 @@ describe(":CW unfinished", function()
             assert.truthy(first:find(part, 1, true), first)
         end
         shown.cb(shown.items[2])
-        assert.are.same({ key = "5264d2b162488dc400000001", lang = "java" }, mounted)
+        assert.are.same({ key = "5264d2b162488dc400000001", lang = "java", file = "5264d2b162488dc400000001.java" },
+            mounted)
     end)
 
     it("leaves out what you completed, judged on your completed list", function()

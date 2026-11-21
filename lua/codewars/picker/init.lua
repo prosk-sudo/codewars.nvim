@@ -712,6 +712,7 @@ local function unfinished_row(entry, catalogue, details, now)
     return {
         key = entry.key,
         lang = entry.lang,
+        file = entry.file,
         name = item.name or entry.name or looked_up.name or readable(entry.key),
         rank_id = rank_id,
         -- Left blank rather than "beta" when nothing says what the rank is.
@@ -785,7 +786,8 @@ local function open_unfinished(t, rows)
                 local selection = t.action_state.get_selected_entry()
                 if not selection then return end
                 t.actions.close(prompt_bufnr)
-                require("codewars-ui.kata"):new(selection.value.key, selection.value.lang):mount()
+                local row = selection.value
+                require("codewars-ui.kata"):new(row.key, row.lang, { file = row.file }):mount()
             end)
             return true
         end,
@@ -815,7 +817,7 @@ local function select_unfinished(rows)
             }, " "))
         end,
     }, function(row)
-        if row then require("codewars-ui.kata"):new(row.key, row.lang):mount() end
+        if row then require("codewars-ui.kata"):new(row.key, row.lang, { file = row.file }):mount() end
     end)
     return function() end
 end

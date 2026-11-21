@@ -13,7 +13,8 @@ All notable changes to codewars.nvim are documented here.
   as a safety net. `cache.check_interval` sets how often it looks.
 - `:CW unfinished` lists the kata you started and never submitted, most
   recently changed first, and opens the one you pick in the language you were
-  writing it in. A kata counts once its solution file no longer holds the
+  writing it in, in the very file you picked: a kata with an older `<id>.py`
+  and a `<slug>.py` is two rows, and each opens its own. A kata counts once its solution file no longer holds the
   starter it was seeded with — one you only opened is left out; re-indenting,
   blank lines and a final newline do not count as a change, but a space
   between two tokens does — and once it is not completed in that language.

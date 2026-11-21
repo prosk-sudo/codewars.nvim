@@ -23,6 +23,7 @@ local session_cache = require("codewars.cache.session")
 ---@field bufnr integer?
 ---@field winid integer?
 ---@field file Path?
+---@field _picked_file string? solution file the user chose, to open rather than the one the slug names
 ---@field description cw.ui.Description
 ---@field console cw.ui.Console
 ---@field last_attempt_success boolean
@@ -104,6 +105,35 @@ function Kata:retemplate(op)
     return true
 end
 
+--- The file the user chose from a list of solution files, when there is one
+--- to open in `lang`: it still exists, and is for this language -- a switch to
+--- another language has its own file to open.
+---@param lang table an entry from config.langs
+---@return string?
+function Kata:_picked_file_name(lang)
+    local picked = self._picked_file
+    if not picked or vim.fn.fnamemodify(picked, ":e") ~= lang.ft then return nil end
+    if not config.storage.home:joinpath(picked):exists() then return nil end
+    return picked
+end
+
+--- The solution file a kata opens when nothing says which: the one named
+--- after its slug.
+---@param lang table an entry from config.langs
+---@return string
+function Kata:_default_file_name(lang)
+    local by_slug = ("%s.%s"):format(self.slug, lang.ft)
+    -- Older versions named a kata opened by its id after the id. The kata has
+    -- its slug by now, so look for that file too, or the work in it never
+    -- shows and a fresh starter is seeded beside it.
+    local by_id = self.kata_id and self.kata_id ~= self.slug and ("%s.%s"):format(self.kata_id, lang.ft)
+    if by_id and not config.storage.home:joinpath(by_slug):exists()
+        and config.storage.home:joinpath(by_id):exists() then
+        return by_id
+    end
+    return by_slug
+end
+
 --- Point self.file at this kata's solution in self.lang, seeding the starter
 --- when there is no file yet. Either way the starter goes on record, so that
 --- :CW unfinished can tell a kata you are working in from one you only opened.
@@ -111,15 +141,7 @@ end
 function Kata:_open_file()
     local lang = utils.get_lang(self.lang)
     assert(lang, "Unsupported language: " .. self.lang)
-    self._file_name = ("%s.%s"):format(self.slug, lang.ft)
-    -- Older versions named a kata opened by its id after the id. The kata has
-    -- its slug by now, so look for that file too, or the work in it never
-    -- shows and a fresh starter is seeded beside it.
-    local by_id = self.kata_id and self.kata_id ~= self.slug and ("%s.%s"):format(self.kata_id, lang.ft)
-    if by_id and not config.storage.home:joinpath(self._file_name):exists()
-        and config.storage.home:joinpath(by_id):exists() then
-        self._file_name = by_id
-    end
+    self._file_name = self:_picked_file_name(lang) or self:_default_file_name(lang)
     self.file = config.storage.home:joinpath(self._file_name)
 
     local unfinished = require("codewars.unfinished")
@@ -696,13 +718,18 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
     end)
 end)
 
+---@class cw.ui.KataOpts
+---@field file string? a solution file in storage.home to open, where the kata has more than one
+
 ---@param slug string
 ---@param lang? string
+---@param opts? cw.ui.KataOpts
 ---@return cw.ui.Kata
-function Kata:new(slug, lang)
+function Kata:new(slug, lang, opts)
     local obj = setmetatable({}, self)
     obj.slug = slug
     obj.lang = lang or config.lang
+    obj._picked_file = opts and opts.file or nil
     obj.last_attempt_success = false
     obj.finalized = false
     return obj
