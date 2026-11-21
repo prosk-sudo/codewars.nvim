@@ -25,8 +25,10 @@ All notable changes to codewars.nvim are documented here.
   `not checked`, until you next open the kata. Rows read like the kata list's:
   rank in its colour, the kata's name, its language and how long ago you last
   changed it. A kata the cached catalogue does not hold is named from when you
-  last opened it, or looked up as `:CW completed` does, in the background so
-  the picker opens at once and fills the rest in.
+  last opened it, then from `:CW recent`, or looked up as `:CW completed`
+  does, in the background so the picker opens at once and fills the rest in.
+  Kata details cached before names were kept have a rank and no name; those
+  are looked up again for this list too.
 - `indent` option: one indentation style per language, set in `setup()` the
   way templates are — `indent = { python = 4, c = 4, go = "tabs" }`. Codewars'
   starter code is not consistently indented; the same language arrives with

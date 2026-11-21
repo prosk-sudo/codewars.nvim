@@ -697,36 +697,70 @@ local function readable(key)
     return (key:gsub("-", " "):gsub("^%l", string.upper))
 end
 
---- What one :CW unfinished row shows. The catalogue does not hold every
---- kata; what it lacks comes from what the kata was last opened with, then
---- from kata details looked up before (cache.completed keeps those).
+--- Each kata in the :CW recent history by slug, newest opening first. The
+--- history is keyed by slug: a file named after a kata's id finds nothing
+--- there, and is named by the catalogue or a lookup.
+---@return table<string, cw.RecentEntry>
+local function recent_index()
+    local index = {}
+    for _, e in ipairs(require("codewars.cache.recent").get()) do
+        if not index[e.slug] then index[e.slug] = e end
+    end
+    return index
+end
+
+--- Everything that can name a :CW unfinished kata. The catalogue does not
+--- hold every kata; what it lacks comes from what the kata was last opened
+--- with (its entry, from the solutions record), then the :CW recent history,
+--- then kata details looked up before.
+---@class cw.UnfinishedSources
+---@field catalogue table<string, table>
+---@field recent table<string, cw.RecentEntry>
+---@field details table<string, table> cache.completed's kata details; older ones have no name
+
 ---@param entry cw.UnfinishedEntry
----@param catalogue table<string, table>
----@param details table<string, table> cache.completed's kata details
+---@param sources cw.UnfinishedSources
+---@return { name: string?, rank_id: integer?, rank_name: string? }
+local function known_of(entry, sources)
+    local item = sources.catalogue[entry.key] or {}
+    local recent = sources.recent[entry.key] or {}
+    local looked_up = sources.details[entry.key] or {}
+    return {
+        name = item.name or entry.name or recent.name or looked_up.name,
+        rank_id = item.rank_id or entry.rank_id or recent.rank or (looked_up.rank and looked_up.rank.id),
+        rank_name = item.rank_name,
+    }
+end
+
+--- What one :CW unfinished row shows.
+---@param entry cw.UnfinishedEntry
+---@param sources cw.UnfinishedSources
 ---@param now integer
-local function unfinished_row(entry, catalogue, details, now)
-    local item = catalogue[entry.key] or {}
-    local looked_up = details[entry.key] or {}
-    local rank_id = item.rank_id or entry.rank_id or (looked_up.rank and looked_up.rank.id)
+local function unfinished_row(entry, sources, now)
+    local known = known_of(entry, sources)
     local lang = require("codewars.utils").get_lang(entry.lang)
     return {
         key = entry.key,
         lang = entry.lang,
         file = entry.file,
-        name = item.name or entry.name or looked_up.name or readable(entry.key),
-        rank_id = rank_id,
+        name = known.name or readable(entry.key),
+        rank_id = known.rank_id,
         -- Left blank rather than "beta" when nothing says what the rank is.
-        rank_name = item.rank_name or (rank_id and theme.rank_str(rank_id)) or "",
+        rank_name = known.rank_name or (known.rank_id and theme.rank_str(known.rank_id)) or "",
         lang_name = lang and lang.lang or entry.lang,
         when = when(entry.mtime, now),
         checked = entry.checked,
     }
 end
 
---- Whether a row would have no rank to show: nothing knows the kata.
-local function unnamed(entry, catalogue, details)
-    local looked_up = details[entry.key]
-    return not (catalogue[entry.key] or entry.rank_id or (looked_up and looked_up.rank))
+--- Whether a row would lack a name or a rank to show: a kata nothing knows,
+--- or one known by its rank alone, as the details cached before names were
+--- kept are.
+---@param entry cw.UnfinishedEntry
+---@param sources cw.UnfinishedSources
+local function unnamed(entry, sources)
+    local known = known_of(entry, sources)
+    return not (known.name and known.rank_id)
 end
 
 --- The :CW unfinished picker, laid out as the kata list is: rank in its
@@ -838,24 +872,28 @@ function picker.unfinished()
             return log.info("Nothing unfinished: every kata you have opened is completed or untouched.")
         end
         local completed_cache = require("codewars.cache.completed")
-        local catalogue = catalogue_index()
+        local catalogue, recent = catalogue_index(), recent_index()
+        --- Read again each time: the details grow as lookups come in.
+        local function sources()
+            return { catalogue = catalogue, recent = recent, details = completed_cache.get_details() }
+        end
         local function rows()
-            local details, now = completed_cache.get_details(), os.time()
-            return vim.tbl_map(function(e) return unfinished_row(e, catalogue, details, now) end, found)
+            local known, now = sources(), os.time()
+            return vim.tbl_map(function(e) return unfinished_row(e, known, now) end, found)
         end
         local update = use_select and select_unfinished(rows()) or open_unfinished(t, rows())
 
-        -- What nothing knows yet is looked up as :CW completed does, and
+        -- What nothing names yet is looked up as :CW completed does, and
         -- filled in once Codewars answers rather than held up for.
-        local details = completed_cache.get_details()
+        local known = sources()
         local unknown = {}
         for _, e in ipairs(found) do
-            if unnamed(e, catalogue, details) then unknown[#unknown + 1] = { slug = e.key } end
+            if unnamed(e, known) then unknown[#unknown + 1] = { slug = e.key } end
         end
         if #unknown == 0 then return end
         completed_cache.enrich(unknown, function()
             vim.schedule(function() update(rows()) end)
-        end)
+        end, { names = true })
     end)
 end
 

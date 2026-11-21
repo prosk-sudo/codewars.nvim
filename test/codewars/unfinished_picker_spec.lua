@@ -4,11 +4,12 @@
 describe(":CW unfinished", function()
     local config = require("codewars.config")
     local picker, opened, mounted, said, entries, catalogue, completed, updates, listed_with
-    local details, asked, provider
+    local details, asked, asked_opts, provider, recent_items
     local saved = {}
     local STUBBED = {
         "codewars.picker", "codewars.picker.dropdown", "codewars.cache.completed",
-        "codewars.cache.problemlist", "codewars.unfinished", "codewars-ui.kata", "codewars.logger",
+        "codewars.cache.problemlist", "codewars.cache.recent", "codewars.unfinished", "codewars-ui.kata",
+        "codewars.logger",
     }
     local NOW = os.time()
     local DAY = 86400
@@ -44,7 +45,7 @@ describe(":CW unfinished", function()
     before_each(function()
         for _, m in ipairs(STUBBED) do saved[m] = package.loaded[m] end
         opened, mounted, said, updates, listed_with = nil, nil, {}, 0, nil
-        details, asked, provider = {}, nil, "telescope"
+        details, asked, asked_opts, provider, recent_items = {}, nil, nil, "telescope", {}
         completed = { { slug = "done", completedLanguages = { "python" } } }
         catalogue = {
             { slug = "multiply", id = "id-multiply", name = "Multiply", rank_id = -8, rank_name = "8 kyu" },
@@ -78,8 +79,9 @@ describe(":CW unfinished", function()
             mark = function() end,
             get_details = function() return details end,
             -- As the real one does: looks the kata up, caches what it found.
-            enrich = function(items, cb)
+            enrich = function(items, cb, opts)
                 asked = vim.tbl_map(function(i) return i.slug end, items)
+                asked_opts = opts
                 for _, i in ipairs(items) do
                     details[i.slug] = { rank = { id = -5, name = "5 kyu" }, name = "Looked Up " .. i.slug }
                 end
@@ -87,6 +89,7 @@ describe(":CW unfinished", function()
             end,
         }
         package.loaded["codewars.cache.problemlist"] = { get = function() return catalogue end }
+        package.loaded["codewars.cache.recent"] = { get = function() return recent_items end }
         package.loaded["codewars.unfinished"] = {
             list = function(c) listed_with = c; return entries end,
         }
@@ -191,6 +194,61 @@ describe(":CW unfinished", function()
         local row = rows()[1]
         assert.truthy(text(row[2]):find("5 kyu", 1, true), vim.inspect(row[2]))
         assert.are.equal("Looked Up multiply", text(row[4]))
+    end)
+
+    -- :CW recent keeps the name and rank of every kata opened lately, and a
+    -- solution file is a kata opened at some point: a good deal of what the
+    -- catalogue lacks is there, with no call to Codewars.
+    it("names a kata from the recent history when nothing else does", function()
+        catalogue = {}
+        recent_items = { { slug = "multiply", lang = "python", name = "Multiply Lately", rank = -7, opened_at = NOW } }
+        entries = { entries[1] }
+        picker.unfinished()
+        local row = rows()[1]
+        assert.are.equal("Multiply Lately", text(row[4]))
+        assert.truthy(text(row[2]):find("7 kyu", 1, true), vim.inspect(row[2]))
+        assert.is_nil(asked, "looked up a kata the recent history names")
+    end)
+
+    it("takes a name from the catalogue, then the kata's own record, then recent history, then cached details", function()
+        entries = { entries[1] }
+        local function name_shown()
+            picker.unfinished()
+            return text(rows()[1][4])
+        end
+        entries[1].name = "From Record"
+        recent_items = { { slug = "multiply", lang = "python", name = "From Recent", rank = -7, opened_at = NOW } }
+        details = { multiply = { rank = { id = -6, name = "6 kyu" }, name = "From Details" } }
+        catalogue = { { slug = "multiply", name = "From Catalogue", rank_id = -8, rank_name = "8 kyu" } }
+        assert.are.equal("From Catalogue", name_shown())
+        catalogue = {}
+        assert.are.equal("From Record", name_shown())
+        entries[1].name = nil
+        assert.are.equal("From Recent", name_shown())
+        recent_items = {}
+        assert.are.equal("From Details", name_shown())
+    end)
+
+    it("does not take another kata's name from the recent history", function()
+        catalogue = {}
+        recent_items = { { slug = "something-else", lang = "python", name = "Something Else", rank = -7, opened_at = NOW } }
+        entries = { entries[1] }
+        picker.unfinished()
+        assert.are.equal("Multiply", text(rows()[1][4])) -- the file's own name, made readable
+        assert.are.same({ "multiply" }, asked)
+    end)
+
+    -- kata_details.json written before names were kept holds a rank and tags
+    -- and no name: a rank on its own no longer settles it.
+    it("looks a kata up again when its cached details have a rank but no name", function()
+        catalogue = {}
+        details = { multiply = { rank = { id = -8, name = "8 kyu" }, tags = { "Fundamentals" } } }
+        entries = { entries[1] }
+        picker.unfinished()
+        assert.are.same({ "multiply" }, asked)
+        assert.are.same({ names = true }, asked_opts, "the cache would have kept the nameless entry")
+        vim.wait(200, function() return opened.refreshed end)
+        assert.are.equal("Looked Up multiply", text(rows()[1][4]))
     end)
 
     it("looks up nothing the catalogue or the kata's own record already names", function()

@@ -155,19 +155,29 @@ function completed.mark(kata_id, slug, lang)
     completed.save(vim.list_extend({ marked }, items), raw.timestamp or 0)
 end
 
+---@class cw.EnrichOpts
+---@field names boolean? look a kata up again when its cached details have no name
+
 --- Enrich completed kata with rank/tag details.
+---
+--- Details cached before names were kept hold a rank and tags and no name.
+--- :CW completed has no use for the name and leaves them be; a caller that
+--- names kata from them (:CW unfinished) asks with `names`.
 ---@param items table[]
 ---@param cb function callback(enriched_items)
-function completed.enrich(items, cb)
+---@param opts cw.EnrichOpts?
+function completed.enrich(items, cb, opts)
     local details = completed.get_details()
+    local need_names = opts and opts.names
     local missing = {}
 
     for _, item in ipairs(items) do
         local slug = item.slug or item.id
         if not slug then goto continue end
-        if details[slug] then
-            item.rank = details[slug].rank
-            item.tags = details[slug].tags
+        local cached = details[slug]
+        if cached and (cached.name or not need_names) then
+            item.rank = cached.rank
+            item.tags = cached.tags
         else
             table.insert(missing, slug)
         end
