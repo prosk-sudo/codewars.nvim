@@ -103,7 +103,7 @@ local highlights = {
     codewars_lang_cfml = { fg = "#ED2CD6" },        -- CFML magenta
 }
 
-function theme.setup()
+local function apply()
     local config = require("codewars.config")
     local overrides = config.user.theme or {}
 
@@ -111,6 +111,22 @@ function theme.setup()
         local hl = vim.tbl_deep_extend("force", val, overrides[name] or {})
         vim.api.nvim_set_hl(0, name, hl)
     end
+end
+
+function theme.setup()
+    apply()
+
+    -- `:colorscheme` clears every highlight group, ours included. The group is
+    -- created with clear = true so a second setup() replaces this autocmd
+    -- instead of stacking another copy.
+    local group = vim.api.nvim_create_augroup("codewars_theme", { clear = true })
+    vim.api.nvim_create_autocmd("ColorScheme", {
+        group = group,
+        desc = "codewars.nvim: re-apply highlights after a colorscheme change",
+        callback = function()
+            apply()
+        end,
+    })
 end
 
 --- Unranked (beta) kata carry no numeric rank — JSON null upstream, so
