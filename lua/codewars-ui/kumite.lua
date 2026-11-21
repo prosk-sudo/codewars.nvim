@@ -26,6 +26,11 @@ Kumite.__index = Kumite
 
 local INSERT_KEYS = { "i", "I", "a", "A", "o", "O", "c", "C", "s", "S", "R" }
 
+-- Marks the read-only guard's own mappings, so clearing the guard removes
+-- exactly what it installed. A FileType autocmd can map the same keys in an
+-- editable buffer, and those mappings are the user's to keep.
+local GUARD_DESC = "codewars: read-only kumite"
+
 
 --- The always-visible key legend shown at the top of the description panel,
 --- adapted to the current state so users know what they can do right now.
@@ -170,11 +175,11 @@ function Kumite:apply_readonly_guard()
     for _, key in ipairs(INSERT_KEYS) do
         vim.keymap.set("n", key, function()
             log.warn(edit_err)
-        end, { buffer = self.bufnr, nowait = true })
+        end, { buffer = self.bufnr, nowait = true, desc = GUARD_DESC })
     end
     vim.keymap.set("n", "q", function()
         self:close()
-    end, { buffer = self.bufnr, nowait = true })
+    end, { buffer = self.bufnr, nowait = true, desc = GUARD_DESC })
 end
 
 --- Lock or unlock the editable buffers. Used while a save/publish is in
@@ -203,7 +208,8 @@ function Kumite:set_state(next_state)
         -- The other half of the guard below: unpublish and convert hand a
         -- published kumite back as an editable draft, and a guard left behind
         -- made i/a/o warn "read-only" on a buffer that was modifiable.
-        -- Idempotent, so a state that never had the guard is unaffected.
+        -- Safe on every transition into an editable state, including a failed
+        -- save or publish: it removes only mappings the guard itself made.
         self:clear_readonly_guard()
     elseif not kstate.is_locked(next_state) then
         -- Entering a read-only resting state (from editing, or from an
@@ -213,17 +219,23 @@ function Kumite:set_state(next_state)
     end
 end
 
+--- Remove the guard's mappings, and only those: they are found by GUARD_DESC
+--- rather than by key, so a mapping the user made on one of the same keys
+--- survives. That also frees `q` for macro recording again.
 function Kumite:clear_readonly_guard()
-    -- Not mounted yet: with no buffer, keymap.del would fall back to the
-    -- user's GLOBAL mappings of these keys (leap and flash bind s and S).
-    if not self.bufnr then
+    -- pcall: a workspace that is not mounted yet has no buffer, and one whose
+    -- window closed mid-request has an invalid one. Without a buffer,
+    -- keymap.del would fall back to the user's GLOBAL mappings of these keys
+    -- (leap and flash bind s and S), so there is nothing safe to do.
+    local ok, maps = pcall(api.nvim_buf_get_keymap, self.bufnr, "n")
+    if not ok then
         return
     end
-    for _, key in ipairs(INSERT_KEYS) do
-        pcall(vim.keymap.del, "n", key, { buffer = self.bufnr })
+    for _, map in ipairs(maps) do
+        if map.desc == GUARD_DESC then
+            pcall(vim.keymap.del, "n", map.lhs, { buffer = self.bufnr })
+        end
     end
-    -- Editing needs `q` back as the normal macro-record key.
-    pcall(vim.keymap.del, "n", "q", { buffer = self.bufnr })
 end
 
 --- Fork this kumite into an editable local copy. Pure local

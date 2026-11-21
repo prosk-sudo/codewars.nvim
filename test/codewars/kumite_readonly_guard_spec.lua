@@ -36,6 +36,20 @@ local function guarded(ws)
     end, GUARDED_KEYS)
 end
 
+--- The buffer-local normal-mode mapping of `key` in the code buffer, if any.
+local function buffer_map(ws, key)
+    for _, map in ipairs(vim.api.nvim_buf_get_keymap(ws.bufnr, "n")) do
+        if map.lhs == key then
+            return map
+        end
+    end
+end
+
+--- A mapping that belongs to the user, e.g. from their FileType autocmd.
+local function map_as_user(ws, key)
+    vim.keymap.set("n", key, "<Nop>", { buffer = ws.bufnr, desc = "user's own" })
+end
+
 describe("Kumite read-only guard follows the state", function()
     local real_api, real_confirm
 
@@ -131,5 +145,95 @@ describe("Kumite read-only guard follows the state", function()
         local survived = vim.fn.maparg("s", "n") ~= ""
         pcall(vim.keymap.del, "n", "s")
         assert.is_true(survived)
+    end)
+end)
+
+describe("Kumite read-only guard only removes its own mappings", function()
+    local real_api, real_confirm, real_publish
+
+    before_each(function()
+        real_api = package.loaded["codewars.api.kumite"]
+        real_confirm = package.loaded["codewars-ui.popup.confirm"]
+        real_publish = package.loaded["codewars.kumite.publish"]
+        package.loaded["codewars-ui.popup.confirm"] = {
+            open = function(_, done)
+                done(true)
+            end,
+        }
+    end)
+
+    after_each(function()
+        package.loaded["codewars.api.kumite"] = real_api
+        package.loaded["codewars-ui.popup.confirm"] = real_confirm
+        package.loaded["codewars.kumite.publish"] = real_publish
+        vim.cmd("silent! tabonly!")
+    end)
+
+    local function stub_save(res, err)
+        package.loaded["codewars.api.kumite"] = {
+            is_server_id = function(id)
+                return type(id) == "string" and #id == 24 and id:match("^%x+$") ~= nil
+            end,
+            default_version = function()
+                return "3.8"
+            end,
+            save_draft = function(_, _, done)
+                done(res, err)
+            end,
+            unpublish = function(_, done)
+                done(nil)
+            end,
+        }
+    end
+
+    it("keeps a user's mapping through the first save of an editable kumite", function()
+        -- A FileType autocmd maps keys in a new buffer; a guard that was never
+        -- installed here has nothing of its own to remove.
+        stub_save({ id = "6a63e7e085269ff93dc63388" }, nil)
+        local ws = mount("local_fork")
+        map_as_user(ws, "s")
+
+        ws:save()
+
+        assert.are.equal("server_draft", ws.state)
+        assert.are.equal("user's own", (buffer_map(ws, "s") or {}).desc)
+    end)
+
+    it("keeps a user's mapping when a save fails and the state is restored", function()
+        stub_save(nil, { msg = "boom" })
+        local ws = mount("local_fork")
+        map_as_user(ws, "s")
+
+        ws:save()
+
+        assert.are.equal("local_fork", ws.state)
+        assert.are.equal("user's own", (buffer_map(ws, "s") or {}).desc)
+    end)
+
+    it("keeps a user's mapping when a publish fails and the state is restored", function()
+        stub_save(nil, nil)
+        package.loaded["codewars.kumite.publish"] = {
+            run_and_publish = function(_, done)
+                done(nil, { msg = "tests failed" })
+            end,
+        }
+        local ws = mount("server_draft")
+        map_as_user(ws, "q")
+
+        ws:publish()
+
+        assert.are.equal("server_draft", ws.state)
+        assert.are.equal("user's own", (buffer_map(ws, "q") or {}).desc)
+    end)
+
+    it("keeps a mapping the user put over the guard once the kumite is editable", function()
+        stub_save(nil, nil)
+        local ws = mount("published")
+        map_as_user(ws, "s") -- replaces the guard's own `s`
+
+        ws:unpublish()
+
+        assert.are.equal("user's own", (buffer_map(ws, "s") or {}).desc)
+        assert.is_nil(buffer_map(ws, "i"), "the guard's other keys must still go")
     end)
 end)
