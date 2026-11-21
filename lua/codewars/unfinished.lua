@@ -185,6 +185,7 @@ end
 ---@field lang string language slug
 ---@field file string file name in storage.home
 ---@field mtime integer last changed, in seconds since the epoch
+---@field mtime_nsec integer the nanoseconds past `mtime`; saves in the same second still sort
 ---@field checked boolean false when nothing was on record to check it against
 ---@field name string? the kata's name as it was last opened with, when on record
 ---@field rank_id integer? its rank, likewise
@@ -216,6 +217,7 @@ function M.list(completed)
                     lang = lang,
                     file = name,
                     mtime = stat and stat.mtime.sec or 0,
+                    mtime_nsec = stat and stat.mtime.nsec or 0,
                     checked = rec ~= nil,
                     name = rec and rec.name,
                     rank_id = rec and rec.rank_id,
@@ -226,6 +228,7 @@ function M.list(completed)
 
     table.sort(entries, function(a, b)
         if a.mtime ~= b.mtime then return a.mtime > b.mtime end
+        if a.mtime_nsec ~= b.mtime_nsec then return a.mtime_nsec > b.mtime_nsec end
         return a.file < b.file
     end)
     return entries

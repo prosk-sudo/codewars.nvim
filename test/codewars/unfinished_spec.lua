@@ -139,6 +139,17 @@ describe("unfinished", function()
         assert.are.same({ "new.py", "mid.java", "old.py" }, listed())
     end)
 
+    -- Two saves in the same second are still two moments: the order is the
+    -- full modification time, and only a tie on that goes by file name.
+    it("orders files saved within the same second by the fraction of it", function()
+        file("a-older.py", "a", 1000.25)
+        local stat = vim.loop.fs_stat(tmp .. "/a-older.py")
+        if stat.mtime.nsec == 0 then return pending("this filesystem keeps whole seconds only") end
+        file("z-newer.py", "z", 1000.75)
+        file("m-newer-too.py", "m", 1000.75)
+        assert.are.same({ "m-newer-too.py", "z-newer.py", "a-older.py" }, listed())
+    end)
+
     -- :CW reset seeds the kata again: what counts as untouched is the new
     -- starter, not the first one.
     it("takes a fresh seed over an earlier one", function()
