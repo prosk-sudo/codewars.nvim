@@ -91,6 +91,13 @@ All notable changes to codewars.nvim are documented here.
 - Signing in as a different account while `:CW focus` or `:CW focus skip` is
   fetching no longer lets that fetch carry on under the new account (it could
   pop the new account's queue) or become the remembered focus.
+- The kata editor now locks while an unpublish or delete is in flight, as it
+  already did for a save or publish, so a save can no longer cross an
+  unpublish and leave the editor showing Published for a kata that is a
+  draft. Other open editors of the same kata get the result too; after a
+  delete they stay open, read-only and marked Deleted, so unsaved text is
+  not lost. An editor that finishes opening after the reply arrives still
+  shows the state it loaded with until you reopen it.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it
