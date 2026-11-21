@@ -21,11 +21,12 @@ All notable changes to codewars.nvim are documented here.
   was seeded with — one you only opened is left out. Indentation, trailing
   spaces, blank lines and the final newline do not count as work on it;
   anything else does, down to a space inside a string. A kata completed in
-  that language is left out too. To know the starter, the plugin now records
-  a fingerprint of it in `.seeded.json` beside your solutions whenever it
-  seeds one, resets one or toggles a template on an untouched one. A reset
-  adds the new starter and keeps the earlier ones, since the file on disk
-  holds what it held until you save, and an untouched file must not turn up
+  that language is left out too. A solution that is a symlink counts like
+  any other, by the file it points at. To know the starter, the plugin now
+  records a fingerprint of it in `.seeded.json` beside your solutions
+  whenever it seeds one, resets one or toggles a template on an untouched
+  one. A reset adds the new starter and keeps the earlier ones, since the
+  file on disk holds what it held until you save, and an untouched file must not turn up
   in the list because you reset and then discarded the buffer. Files from
   before that cannot be checked yet: they are listed, marked
   `not checked`, until you next open the kata. Rows read like the kata

@@ -197,6 +197,22 @@ local function completed_index(completed)
     return done
 end
 
+--- Whether a directory entry is a solution file, and its stat: a regular
+--- file, or a symlink to one -- a kata opens a solution through a link as
+--- readily as through a file, and what is done in it is as real. A link to
+--- nothing, or to a directory, is not. The stat follows the link, so it is the
+--- target's: its time is when the solution was last changed.
+---@param path string
+---@param kind string as vim.fs.dir reports it ("file", "link", "directory"...)
+---@return boolean is_solution
+---@return table? stat
+local function solution_file(path, kind)
+    if kind ~= "file" and kind ~= "link" then return false end
+    local stat = vim.loop.fs_stat(path)
+    if kind == "link" then return stat ~= nil and stat.type == "file", stat end
+    return true, stat
+end
+
 ---@param path string
 ---@return string?
 local function read(path)
@@ -230,12 +246,13 @@ function M.list(completed)
     for name, kind in vim.fs.dir(home) do
         local key, ext = name:match("^(.+)%.([^.]+)$")
         local lang = ext and lang_of[ext]
-        if kind == "file" and lang and not done[key .. "|" .. lang] then
-            local path = home .. "/" .. name
+        local path = home .. "/" .. name
+        local is_solution, stat
+        if lang and not done[key .. "|" .. lang] then is_solution, stat = solution_file(path, kind) end
+        if is_solution then
             local rec = record[name]
             local text = rec and read(path)
             if not (text and holds_starter(rec.prints, text)) then
-                local stat = vim.loop.fs_stat(path)
                 entries[#entries + 1] = {
                     key = key,
                     lang = lang,

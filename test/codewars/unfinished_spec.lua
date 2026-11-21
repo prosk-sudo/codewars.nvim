@@ -163,6 +163,51 @@ describe("unfinished", function()
         assert.are.same({ "m-newer-too.py", "z-newer.py", "a-older.py" }, listed())
     end)
 
+    -- A kata opens a solution through a symlink in storage.home, and the work
+    -- done in it is as real as in any other file.
+    describe("a solution that is a symlink", function()
+        local uv = vim.uv or vim.loop
+
+        --- `name` in storage.home as a link to a file elsewhere, with `text`.
+        local function linked(name, text, mtime)
+            vim.fn.mkdir(tmp .. "/elsewhere", "p")
+            local target = tmp .. "/elsewhere/" .. name
+            vim.fn.writefile(vim.split(text, "\n"), target)
+            if mtime then uv.fs_utime(target, mtime, mtime) end
+            assert(uv.fs_symlink(target, tmp .. "/" .. name))
+            return target
+        end
+
+        it("is listed when the file it points at has been changed, by that file's time", function()
+            unfinished.seeded("multiply.py", STUB)
+            linked("multiply.py", "def f(x):\n    return x * 2", 5000)
+            local entries = unfinished.list({})
+            assert.are.equal(1, #entries)
+            assert.are.equal("multiply.py", entries[1].file)
+            assert.are.equal(5000, entries[1].mtime, "sorted by the link's own time, not the file's")
+            assert.is_true(entries[1].checked)
+        end)
+
+        it("is left out when the file it points at is still the starter", function()
+            unfinished.seeded("multiply.py", STUB)
+            linked("multiply.py", STUB)
+            assert.are.same({}, listed())
+        end)
+
+        it("is skipped, without an error, when it points at nothing", function()
+            assert(uv.fs_symlink(tmp .. "/gone/nothing.py", tmp .. "/dangling.py"))
+            local ok, found = pcall(listed)
+            assert.is_true(ok, tostring(found))
+            assert.are.same({}, found)
+        end)
+
+        it("is skipped when it points at a directory", function()
+            vim.fn.mkdir(tmp .. "/a-directory", "p")
+            assert(uv.fs_symlink(tmp .. "/a-directory", tmp .. "/folder.py"))
+            assert.are.same({}, listed())
+        end)
+    end)
+
     -- :CW reset seeds the kata again: what counts as untouched is the new
     -- starter, not the first one.
     it("takes a fresh seed over an earlier one", function()
