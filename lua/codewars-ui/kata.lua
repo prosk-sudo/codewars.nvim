@@ -618,10 +618,11 @@ function Kata:reset_code()
     if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
         local starter = self:_starter_code()
         self:_set_code(starter)
-        -- A fresh start: this starter, not the first one, is what counts as
-        -- untouched now.
+        -- This starter counts as untouched now too. The earlier ones stay on
+        -- record: only the buffer changed, and the file on disk, which the
+        -- list reads, still holds what it did until the buffer is saved.
         if self._file_name then
-            require("codewars.unfinished").seeded(self._file_name, starter, self:_info())
+            require("codewars.unfinished").reseeded(self._file_name, starter, self:_info())
         end
         -- Forced: the rewrite moved the user's code out from under wherever
         -- they were standing, so the old position is not a claim on anything.

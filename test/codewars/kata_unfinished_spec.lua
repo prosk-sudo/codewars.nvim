@@ -110,6 +110,36 @@ describe("Kata and :CW unfinished", function()
         assert.is_nil(listed(file), "a just-reset kata was listed")
     end)
 
+    -- The buffer is rewritten at once but the file only when it is saved, and
+    -- the list reads the file.
+    describe("a reset the user does not save", function()
+        local NEW_STUB = "def f(x, y):\n    pass"
+
+        it("leaves an untouched kata off the list, when its starter has changed since", function()
+            local kata, file = open(STUB)
+            kata.setup_code = NEW_STUB
+            kata:reset_code()
+            assert.is_nil(listed(file), "the untouched file on disk was listed after a discarded reset")
+        end)
+
+        it("leaves it off the list once it is saved too", function()
+            local kata, file = open(STUB)
+            kata.setup_code = NEW_STUB
+            kata:reset_code()
+            save(kata)
+            assert.is_nil(listed(file))
+        end)
+
+        it("still lists a kata you had changed", function()
+            local kata, file = open(STUB)
+            vim.api.nvim_buf_set_lines(kata.bufnr, 0, -1, false, { "def f(x):", "    return x" })
+            save(kata)
+            kata.setup_code = NEW_STUB
+            kata:reset_code()
+            assert.is_not_nil(listed(file), "a discarded reset hid the work on disk")
+        end)
+    end)
+
     -- Older versions named a kata opened by its id after the id. The kata now
     -- resolves to its slug before the file is opened, so without this the
     -- work in that file never showed: a fresh starter was seeded beside it.

@@ -112,8 +112,8 @@ local function with_info(rec, info)
     }
 end
 
---- `file_name` now holds a freshly seeded starter: a new kata, or :CW reset.
---- The starters on record go, since that one is gone; the name stays.
+--- A file was just written with a freshly seeded starter. REPLACES the
+--- starters on record, since the file that held them is gone; the name stays.
 ---@param file_name string
 ---@param text string
 ---@param info cw.KataInfo?
@@ -121,6 +121,27 @@ function M.seeded(file_name, text, info)
     local data = load()
     local old = data[file_name] or {}
     data[file_name] = with_info({ prints = { M.fingerprint(text) }, name = old.name, rank_id = old.rank_id }, info)
+    save(data)
+end
+
+--- :CW reset put a fresh starter in the buffer. ADDS it to the starters on
+--- record, where `seeded` replaces them: the file is not rewritten until the
+--- buffer is saved, and the list reads the file, so until then it still holds
+--- whatever it held -- an untouched old starter, say -- and that must not
+--- start to look like work. With nothing on record the record starts with
+--- this one; one already there is not added twice.
+---@param file_name string
+---@param text string
+---@param info cw.KataInfo?
+function M.reseeded(file_name, text, info)
+    local data = load()
+    local old = data[file_name] or { prints = {} }
+    local fresh = M.fingerprint(text)
+    local prints = old.prints
+    if not vim.tbl_contains(prints, fresh) then
+        prints = vim.list_extend(vim.list_slice(prints), { fresh })
+    end
+    data[file_name] = with_info({ prints = prints, name = old.name, rank_id = old.rank_id }, info)
     save(data)
 end
 
