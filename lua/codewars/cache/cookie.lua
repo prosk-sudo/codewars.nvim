@@ -157,27 +157,40 @@ end
 --- Write the cookie so that only its owner can read it.
 ---
 --- The file holds a live session, so any other local account that can read
---- it can act as this user. The mode is set on the open file descriptor,
---- BEFORE the cookie goes in. The mode passed to open only applies when the
---- file is created, and then only after the umask is subtracted: a file an
---- older version left world-readable would keep its mode, and a strict umask
---- can leave a file the owner cannot reopen. Going through the path instead
---- (look, chmod, then open) lets another process create the file in between,
---- so what is written is not what was checked. fchmod acts on the file we
---- hold, ignores the umask, and runs before the secret is in it.
+--- it can act as this user. It is written to a new file of its own next to
+--- the cookie, made private BEFORE the cookie goes in, and then renamed over
+--- the cookie. Anything that opens the existing file instead gets it wrong:
+--- the mode passed to open only applies when the file is created, and then
+--- only after the umask is subtracted, so a world-readable file keeps its
+--- mode; a read-only one cannot be opened for writing at all; opening it for
+--- writing empties it before anything can go wrong; and looking at the path
+--- and then opening it lets another process create the file in between. A
+--- new file has none of those: it is exclusive, so nothing else is in it,
+--- fchmod acts on the file we hold and ignores the umask, and the saved
+--- cookie stays intact until the new one is complete.
 ---
---- Raises on failure, as Path:write did, closing the descriptor first.
+--- Raises on failure, as Path:write did, with the previous cookie untouched
+--- and the new file closed and removed.
 ---@param path string
 ---@param str string
 local function write_private(path, str)
     local uv = vim.uv or vim.loop
-    local fd = assert(uv.fs_open(path, "w", OWNER_ONLY))
+    local tmp = ("%s.tmp.%d.%.0f"):format(path, uv.os_getpid(), uv.hrtime())
+    local fd = assert(uv.fs_open(tmp, "wx", OWNER_ONLY))
     local ok, err = pcall(function()
         assert(uv.fs_fchmod(fd, OWNER_ONLY))
         assert(uv.fs_write(fd, str, -1))
     end)
-    uv.fs_close(fd)
+    -- Closed whether or not the writes worked, so a failure leaks nothing.
+    local closed, close_err = uv.fs_close(fd)
+    if ok then
+        ok, err = closed, close_err
+    end
+    if ok then
+        ok, err = uv.fs_rename(tmp, path)
+    end
     if not ok then
+        uv.fs_unlink(tmp)
         error(err, 0)
     end
 end
