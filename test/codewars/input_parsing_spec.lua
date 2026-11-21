@@ -120,10 +120,17 @@ describe(":CW list order", function()
         assert.same({}, cmd.complete(nil, "CW list order=hardest,"))
     end)
 
-    it("accepts exactly the picker's sort modes", function()
+    -- Every sort but the ones that need a completion date, which the
+    -- catalogue's kata never carry: "Recently completed" sorts :CW completed.
+    it("accepts exactly the picker's sort modes the kata list can use", function()
         package.loaded["codewars.picker"] = real_picker
-        local keys = vim.tbl_map(function(m) return m.key end, require("codewars.picker").sort_modes)
-        assert.same(keys, require("codewars.command").arguments.list.order)
+        local keys = {}
+        for _, m in ipairs(require("codewars.picker").sort_modes) do
+            if not m.dated then keys[#keys + 1] = m.key end
+        end
+        local order = require("codewars.command").arguments.list.order
+        assert.same(keys, order)
+        assert.is_false(vim.tbl_contains(order, "recent"))
     end)
 
     it("rejects an empty difficulty= instead of filtering everything out", function()

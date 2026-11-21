@@ -105,7 +105,10 @@ local sort_modes = {
     { key = "satisfaction", label = "Satisfaction (%)" },
     { key = "hardest", label = "Hardest first" },
     { key = "easiest", label = "Easiest first" },
-    { key = "recent", label = "Recently completed" },
+    -- Needs a completion date, which only :CW completed's kata carry: the
+    -- kata list does not offer it, and it is never remembered for the
+    -- next list or :CW next.
+    { key = "recent", label = "Recently completed", dated = true },
 }
 
 -- Exposed so `:CW list order=` completion/validation can be pinned to it.
@@ -164,13 +167,20 @@ function picker._show_kata_list(items, title, completed_set, initial)
     end
     local reopen
     local cached_languages = problemlist_utils.collect_languages(items)
+    -- Only kata you solved carry a completion date (:CW completed).
+    local has_dates = false
+    for _, item in ipairs(items) do
+        if item.completedAt then has_dates = true break end
+    end
 
     -- Remember only what the user just chose in a menu. Values seeded by a
     -- caller (`:CW list order=… difficulty=…`) are not persisted by touching
     -- an unrelated menu, so other list views never inherit them.
     ---@param field "sort"|"lang"|"rank"|nil nil = all three (the reset)
     local function save_state(field)
-        if field == "sort" or not field then _saved_sort_idx = current_sort_idx end
+        if (field == "sort" or not field) and not sort_modes[current_sort_idx].dated then
+            _saved_sort_idx = current_sort_idx
+        end
         if field == "lang" or not field then _saved_lang_filter = current_lang_filter end
         if field == "rank" or not field then _saved_rank_filter = current_rank_filter end
     end
@@ -307,18 +317,21 @@ function picker._show_kata_list(items, title, completed_set, initial)
     end
 
     local function open_sort_dropdown()
-        local sort_entries = {}
+        local sort_entries, default_idx = {}, 1
         for i, mode in ipairs(sort_modes) do
-            local prefix = i == current_sort_idx and "● " or "  "
-            table.insert(sort_entries, { label = prefix .. mode.label, value = i })
+            if has_dates or not mode.dated then
+                local prefix = i == current_sort_idx and "● " or "  "
+                table.insert(sort_entries, { label = prefix .. mode.label, value = i })
+                if i == current_sort_idx then default_idx = #sort_entries end
+            end
         end
 
         dropdown.open({
             prompt_title = "Sort by",
             entries = sort_entries,
-            default_idx = current_sort_idx,
+            default_idx = default_idx,
             width = 50,
-            height = #sort_modes + 4,
+            height = #sort_entries + 4,
             on_select = function(idx)
                 current_sort_idx = idx
                 save_state("sort")

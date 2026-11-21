@@ -54,8 +54,9 @@ All notable changes to codewars.nvim are documented here.
 
 ### Changed
 - `:CW completed` lists your most recently completed kata first. A new
-  "Recently completed" sort mode (`order=recent`) does this; the Sort menu
-  still switches to the others.
+  "Recently completed" sort does this; the Sort menu still switches to the
+  others. Only the completed list offers it, since the kata list's kata carry
+  no completion date, and it is not remembered for `:CW list` or `:CW next`.
 - The dashboard header no longer waits on a network round trip to show who you
   are. Your username, rank, honor and completed count are remembered between
   launches, so the menu paints them immediately instead of sitting on a bare

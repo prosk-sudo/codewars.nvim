@@ -25,9 +25,10 @@ local kata_pane_keys = { "answer", "setup", "fixture", "example", "description" 
 local arguments = {
     list = {
         difficulty = kyu_values,
-        -- Keep in sync with picker.sort_modes keys (pinned by
-        -- input_parsing_spec; literal so completion does not load the picker).
-        order = { "shuffle", "name", "satisfaction", "hardest", "easiest", "recent" },
+        -- Keep in sync with the picker.sort_modes keys that are not `dated`
+        -- (pinned by input_parsing_spec; literal so completion does not load
+        -- the picker). The catalogue's kata carry no completion date.
+        order = { "shuffle", "name", "satisfaction", "hardest", "easiest" },
     },
 }
 
