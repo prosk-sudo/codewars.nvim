@@ -190,6 +190,13 @@ All notable changes to codewars.nvim are documented here.
   2026 07:28:00 GMT`) is now honoured like one that says it in seconds,
   instead of always waiting the longest backoff. The two obsolete date forms
   are read too (#26).
+- A search page whose results Codewars marked up a little differently is no
+  longer dropped without a word. Kata links with more attributes, single
+  quotes or a trailing path are read. A page with results that all fail to
+  read now stops the kata list build (the cache is left as it was) and the
+  daily check with a warning that the markup may have changed, instead of
+  passing for the end of a rank. When only some are dropped, the rest are
+  kept and one warning says how many (#27).
 
 ## [0.3.4] - 2026-08-29
 

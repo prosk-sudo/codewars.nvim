@@ -3,16 +3,18 @@
 -- interval and hides every kata the aborted run never fetched. Nothing
 -- exercised problemlist.update before this file.
 describe("cache.problemlist update", function()
+    local warned = {} -- logger.warn messages
+    local spinner_errors = {} -- what the build's spinner ended on
     package.loaded["codewars.logger"] = {
-        info = function() end, warn = function() end, error = function() end,
-        err = function() end, debug = function() end,
+        info = function() end, warn = function(msg) warned[#warned + 1] = tostring(msg) end,
+        error = function() end, err = function() end, debug = function() end,
     }
     package.loaded["codewars.logger.spinner"] = {
         start = function()
             return {
                 update = function() end,
                 success = function() end,
-                error = function() end,
+                error = function(_, msg) spinner_errors[#spinner_errors + 1] = tostring(msg) end,
             }
         end,
     }
@@ -82,6 +84,8 @@ describe("cache.problemlist update", function()
         stored = {}
         page_calls = 0
         requested = {}
+        warned = {}
+        spinner_errors = {}
         os.remove(CHECKPOINT)
     end)
 
@@ -250,6 +254,95 @@ describe("cache.problemlist update", function()
         end
         local items = run()
         assert.are.equal(1, #items)
+    end)
+
+    -- A page that has result blocks but parses to none is the markup
+    -- moving, not a rank running out. It used to read as the end of the rank
+    -- and the short list was cached as complete.
+    describe("when the search markup drifts", function()
+        local DRIFT = { drift = true, msg = "30 results, none readable" }
+
+        it("aborts without writing the cache, and says the markup may have changed", function()
+            page_script = function(n)
+                if n == 1 then return { { slug = "kata-1" } }, true, nil end
+                return {}, false, DRIFT
+            end
+            local items, partial = run()
+            assert.is_true(partial)
+            assert.are.equal(0, #writes_to(LIST), "a partial cache was written")
+            assert.are.equal(1, #items) -- what was collected still goes to the caller
+            assert.are.equal(1, #spinner_errors)
+            assert.truthy(spinner_errors[1]:find("markup may have changed", 1, true), spinner_errors[1])
+        end)
+
+        it("does not carry on to the next rank", function()
+            page_script = function() return {}, false, DRIFT end
+            run()
+            assert.are.equal(1, page_calls)
+        end)
+
+        it("never checkpoints the rank it drifted in", function()
+            page_script = function(n)
+                if n == 1 then return { { slug = "kata-1" } }, true, nil end
+                return {}, false, DRIFT
+            end
+            run()
+            assert.are.equal(0, #writes_to(CHECKPOINT))
+        end)
+
+        it("does not retry the page the way it does a rate limit", function()
+            page_script = function() return {}, false, DRIFT end
+            run()
+            assert.are.equal(1, #requested)
+        end)
+    end)
+
+    -- Blocks that fail to parse on an otherwise readable page are dropped.
+    -- That is told once at the end of the build, not once per page.
+    describe("when some result blocks cannot be read", function()
+        --- Every rank is two pages: one kata, then the empty page that ends it.
+        --- `dropped_on` names which calls report dropped blocks, and how many.
+        local function with_dropped(dropped_on)
+            return function(n)
+                if n % 2 == 1 then
+                    return { { slug = "kata-" .. n } }, true, nil, dropped_on[n]
+                end
+                return {}, false, nil
+            end
+        end
+
+        it("keeps the kata that were read", function()
+            page_script = with_dropped({ [1] = 2 })
+            local items, partial = run()
+            assert.is_nil(partial)
+            assert.are.equal(1, #writes_to(LIST))
+            assert.are.equal(8, #items)
+        end)
+
+        it("warns once, with the total, however many pages dropped some", function()
+            page_script = with_dropped({ [1] = 2, [3] = 1, [9] = 4 })
+            run()
+            assert.are.equal(1, #warned, vim.inspect(warned))
+            assert.truthy(warned[1]:find("7", 1, true), warned[1])
+            assert.truthy(warned[1]:find("markup may have changed", 1, true), warned[1])
+        end)
+
+        it("stays quiet when nothing was dropped", function()
+            page_script = with_dropped({})
+            run()
+            assert.are.same({}, warned)
+        end)
+
+        it("still tells how many were dropped when the build stops early", function()
+            page_script = function(n)
+                if n == 1 then return { { slug = "kata-1" } }, true, nil, 3 end
+                return {}, false, { status = 502, msg = "http error 502" }
+            end
+            local _, partial = run()
+            assert.is_true(partial)
+            assert.are.equal(1, #warned, vim.inspect(warned))
+            assert.truthy(warned[1]:find("3", 1, true), warned[1])
+        end)
     end)
 end)
 
@@ -546,6 +639,69 @@ describe("cache.problemlist daily check", function()
         settle()
 
         assert.equals(0, #list_writes())
+    end)
+
+    local function warnings()
+        return vim.tbl_filter(function(s) return s.level == "warn" end, said)
+    end
+
+    -- A page of results that parses to nothing is the markup moving, not a
+    -- quiet day. The look stops, says so, and merges nothing -- not even the
+    -- kata an earlier page read.
+    it("stops with a warning, and merges nothing, when a page's markup drifted", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then return { kata("b") }, true end
+            return {}, false, { drift = true, msg = "30 results, none readable" }
+        end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(0, #list_writes())
+        assert.equals(2, #requested, "carried on past the drifted page")
+        local warns = warnings()
+        assert.equals(1, #warns, vim.inspect(said))
+        assert.truthy(warns[1].msg:find("markup may have changed", 1, true), warns[1].msg)
+    end)
+
+    it("looks again at the next open after a drifted page", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function() return {}, false, { drift = true, msg = "none readable" } end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.is_nil(stored[LIST].checked_at)
+        assert.is_true(problemlist.check_for_new())
+        settle() -- let that look finish before the next test resets the stubs
+    end)
+
+    it("warns once with the total when pages dropped some blocks, and still merges", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function(page)
+            if page == 0 then return { kata("b") }, true, nil, 2 end
+            if page == 1 then return { kata("c") }, true, nil, 3 end
+            return { kata("a") }, true, nil, 0
+        end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.same({ "a", "b", "c" }, ids(list_writes()[1].data.items))
+        local warns = warnings()
+        assert.equals(1, #warns, vim.inspect(said))
+        assert.truthy(warns[1].msg:find("5", 1, true), warns[1].msg)
+    end)
+
+    it("does not warn when no block was dropped", function()
+        stored[LIST] = list_of({ kata("a") }, 2 * DAY)
+        page_script = function() return { kata("b") }, true, nil, 0 end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(0, #warnings())
     end)
 
     it("does not overwrite a list rebuilt while it was looking", function()

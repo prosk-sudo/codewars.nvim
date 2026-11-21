@@ -140,6 +140,17 @@ local function differs(old, new)
     return false
 end
 
+--- Said once when a run is over, not once per page: result blocks the
+--- search parser could not read are left out of what the run collected.
+---@param count integer
+local function warn_dropped(count)
+    if count <= 0 then return end
+    require("codewars.logger").warn(
+        ("%d kata on the search pages could not be read and were left out"
+            .. " — the site markup may have changed"):format(count)
+    )
+end
+
 local checking = false
 
 --- Merge in the kata published or changed since the list was built or last
@@ -167,12 +178,13 @@ function problemlist.check_for_new()
         local key = item.id or item.slug
         if key then index[key] = i end
     end
-    local added, updated = 0, 0
+    local added, updated, dropped = 0, 0, 0
 
     --- Only a look that finished is recorded: a failed one leaves
     --- checked_at alone, so the next open tries again.
     local function finish(ok)
         checking = false
+        warn_dropped(dropped)
         if not ok then return end
         -- A full build that ran meanwhile wrote a newer list; this one,
         -- read before it, would put the old one back.
@@ -191,11 +203,18 @@ function problemlist.check_for_new()
         search.fetch_page({
             language = "", -- every kata, as the full build has
             order = "sort_date+desc", -- the site's "Newest"
-        }, page, function(results, has_more, err)
+        }, page, function(results, has_more, err, page_dropped)
             if err then
                 log.debug("kata list check failed: " .. tostring(err.msg))
+                -- Not a failure to retry quietly: the markup moved, so
+                -- every look will fail the same way until it is fixed.
+                if err.drift then
+                    log.warn("Kata list check stopped: the search results could not be read"
+                        .. " — the site markup may have changed. Nothing was merged.")
+                end
                 return finish(false)
             end
+            dropped = dropped + (page_dropped or 0)
             local changes = 0
             for _, entry in ipairs(results or {}) do
                 local key = entry.id or entry.slug
@@ -300,6 +319,8 @@ function problemlist.update(opts, cb)
     local aborted = false
     local pace_ms = problemlist.PACE_MS
     local cooldowns = 0
+    -- Result blocks the parser could not read, over every page of this run.
+    local dropped = 0
 
     -- The rank being fetched and what it has produced so far. Not in
     -- by_rank until it finishes (by_rank is what resumes skip), but an
@@ -332,6 +353,8 @@ function problemlist.update(opts, cb)
     ---@param partial boolean? true when we stopped early and must not
     --- pretend the cache is complete
     local function finish(partial)
+        warn_dropped(dropped)
+
         -- Deduplicate
         local seen = {}
         local unique = {}
@@ -343,10 +366,11 @@ function problemlist.update(opts, cb)
             end
         end
 
-        -- Every page parsing as empty is not "Codewars has no kata": it is
-        -- search-markup drift or an interstitial page that returned 200.
-        -- fetch_page reports parse-empty as an ordinary end of rank, so this
-        -- is the one place that can tell the two apart.
+        -- Every page being empty is not "Codewars has no kata": it is an
+        -- interstitial page that returned 200, or a markup change that left
+        -- no result blocks to notice. A page whose blocks fail to parse is
+        -- reported by fetch_page as drift and aborts before getting here, so
+        -- this is the backstop for the rest.
         if not partial and #unique == 0 then
             spinner:error("No kata found on any search page — the site markup may have changed; cache left as is.")
             partial = true
@@ -419,7 +443,7 @@ function problemlist.update(opts, cb)
                 -- Once the run has given up, a 5xx retry still in flight
                 -- inside the request layer must not keep going.
                 cancelled = function() return aborted end,
-            }, page, function(results, has_more, err)
+            }, page, function(results, has_more, err, page_dropped)
                 if aborted then return end
 
                 -- Every abort is partial: writing here would stamp a
@@ -447,6 +471,13 @@ function problemlist.update(opts, cb)
                     end, wait)
                 end
 
+                if err and err.drift then
+                    -- The page has result blocks and none could be read. It
+                    -- is not the end of this rank, and retrying the same
+                    -- markup cannot help: stop, and leave the cache as it is.
+                    return abort(("Search results could not be read after %d kata — the site markup may have changed; cache left as is."):format(this.found))
+                end
+
                 if err then
                     -- Any other failure (5xx after retries, curl could
                     -- not connect, unexpected status). Treating it as an
@@ -457,6 +488,7 @@ function problemlist.update(opts, cb)
                 end
 
                 cooldowns = 0
+                dropped = dropped + (page_dropped or 0)
 
                 if results and #results > 0 then
                     vim.list_extend(items, results)

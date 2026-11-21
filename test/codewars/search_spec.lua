@@ -3,9 +3,10 @@
 -- rank" and silently truncated, and the interactive search reported
 -- "No kata found".
 describe("api.search", function()
+    local warnings = {}
     package.loaded["codewars.logger"] = {
-        info = function() end, warn = function() end, error = function() end,
-        err = function() end, debug = function() end,
+        info = function() end, warn = function(msg) warnings[#warnings + 1] = tostring(msg) end,
+        error = function() end, err = function() end, debug = function() end,
     }
     package.loaded["codewars.config"] = { lang = "python", user = {} }
     package.loaded["codewars.api.headers"] = { get = function() return {} end }
@@ -36,6 +37,19 @@ describe("api.search", function()
             <div class="item-title"><a href="/kata/%s">Valid Braces</a></div></div>]]):format(SLUG, SLUG)
     end
 
+    --- A result block around `inner`, laid out as the real page does.
+    local function block(inner)
+        return ([[<div class="list-item-kata bg-ui-section" id="%s"><div><span>6 kyu</span>%s</div></div>]]):format(SLUG, inner)
+    end
+    --- A block whose title link parses.
+    local function readable(name)
+        return block(('<a class="ml-2" href="/kata/%s">%s</a>'):format(SLUG, name or "Braces"))
+    end
+    --- A block the parser cannot read: the title link left /kata/<hex>.
+    local function unreadable()
+        return block('<a class="ml-2" href="/challenges/valid-braces">Braces</a>')
+    end
+
     local function limited(n)
         for _ = 1, n do
             table.insert(responses, { exit = 0, status = 429, body = "", headers = {} })
@@ -54,6 +68,7 @@ describe("api.search", function()
     before_each(function()
         calls = {}
         responses = {}
+        warnings = {}
     end)
 
     describe("fetch_page", function()
@@ -213,6 +228,172 @@ describe("api.search", function()
             local results = search.parse_html(html)
             assert.are.equal(1, #results)
             assert.are.equal("My Very Own Python's Split & Join", results[1].name)
+        end)
+    end)
+
+    -- Result links used to be matched as exactly `href="/kata/<hex>">`, so
+    -- any drift from that -- a class after the href, single quotes, a
+    -- trailing path -- dropped the kata without a word.
+    describe("parse_html result links", function()
+        local function parse_link(anchor)
+            return search.parse_html(block(anchor))
+        end
+
+        it("accepts attributes after the href", function()
+            local results = parse_link(('<a href="/kata/%s" class="ml-2" data-x="1">Braces</a>'):format(SLUG))
+            assert.are.equal(1, #results)
+            assert.are.equal(SLUG, results[1].slug)
+            assert.are.equal("Braces", results[1].name)
+        end)
+
+        it("accepts single quotes", function()
+            local results = parse_link(("<a class='ml-2' href='/kata/%s'>Braces</a>"):format(SLUG))
+            assert.are.equal(1, #results)
+            assert.are.equal(SLUG, results[1].slug)
+        end)
+
+        it("accepts a trailing path, as /kata/<hex>/train/python", function()
+            local results = parse_link(('<a href="/kata/%s/train/python">Braces</a>'):format(SLUG))
+            assert.are.equal(1, #results)
+            assert.are.equal(SLUG, results[1].slug)
+            assert.are.equal("Braces", results[1].name)
+        end)
+
+        it("accepts a trailing query or fragment", function()
+            assert.are.equal(1, #parse_link(('<a href="/kata/%s?beta=false">Braces</a>'):format(SLUG)))
+            assert.are.equal(1, #parse_link(('<a href="/kata/%s#discuss">Braces</a>'):format(SLUG)))
+        end)
+
+        it("names the kata from its own link, not a train link that comes first", function()
+            local results = parse_link(
+                ('<a href="/kata/%s/train/python">Train</a><a href="/kata/%s">Valid Braces</a>'):format(SLUG, SLUG)
+            )
+            assert.are.equal("Valid Braces", results[1].name)
+        end)
+
+        it("skips the language icons, which carry a train link and no text", function()
+            local results = parse_link(
+                ('<a data-language="python" href="/kata/%s/train/python"><div class="icon"></div></a>'
+                    .. '<a href="/kata/%s">Valid Braces</a>'):format(SLUG, SLUG)
+            )
+            assert.are.equal("Valid Braces", results[1].name)
+        end)
+
+        it("does not take a data-href for the link", function()
+            assert.are.equal(0, #parse_link(('<a data-href="/kata/%s">Braces</a>'):format(SLUG)))
+        end)
+
+        it("does not accept an id that is not 24 hex characters", function()
+            for _, id in ipairs({
+                SLUG:sub(1, 23), -- too short
+                SLUG .. "a", -- too long
+                SLUG:sub(1, 23) .. "g", -- not hex
+                "valid-braces", -- a slug, not an id
+                "bead", -- hex, but not an id
+            }) do
+                assert.are.equal(0, #parse_link(('<a href="/kata/%s">Braces</a>'):format(id)), id)
+            end
+        end)
+    end)
+
+    -- A page with result blocks that parses to nothing is not a rank that
+    -- ran out: the markup moved. Reported as an error, it stops a cache
+    -- build instead of ending the rank early and caching the short list.
+    describe("parse_html markup drift", function()
+        it("is not an error when the page has no result blocks", function()
+            local results, err, dropped = search.parse_html("<html><body>No kata found</body></html>")
+            assert.are.same({}, results)
+            assert.is_nil(err)
+            assert.are.equal(0, dropped)
+        end)
+
+        it("is an error when the page has result blocks and none can be read", function()
+            local results, err, dropped = search.parse_html(unreadable() .. unreadable())
+            assert.are.same({}, results)
+            assert.is_true(err.drift)
+            assert.truthy(err.msg:find("markup may have changed", 1, true), err.msg)
+            assert.are.equal(2, dropped)
+        end)
+
+        it("keeps the blocks it can read and counts the others", function()
+            local results, err, dropped = search.parse_html(readable("One") .. unreadable() .. readable("Two"))
+            assert.is_nil(err)
+            assert.are.equal(2, #results)
+            assert.are.equal("One", results[1].name)
+            assert.are.equal("Two", results[2].name)
+            assert.are.equal(1, dropped)
+        end)
+
+        it("counts nothing dropped on a clean page", function()
+            local _, err, dropped = search.parse_html(readable("One") .. readable("Two"))
+            assert.is_nil(err)
+            assert.are.equal(0, dropped)
+        end)
+    end)
+
+    describe("fetch_page markup drift", function()
+        it("reports a page whose blocks all fail to parse as an error, not the end of a rank", function()
+            table.insert(responses, { exit = 0, status = 200, body = unreadable() })
+            local got = drive(function(cb) search.fetch_page({ language = "python" }, 0, cb) end)
+            assert.are.same({}, got[1])
+            assert.is_false(got[2])
+            assert.is_true(got[3].drift)
+        end)
+
+        it("still reports a page with no result blocks as the end of a rank", function()
+            table.insert(responses, { exit = 0, status = 200, body = "<html>No kata found</html>" })
+            local got = drive(function(cb) search.fetch_page({ language = "python" }, 0, cb) end)
+            assert.are.same({}, got[1])
+            assert.is_false(got[2])
+            assert.is_nil(got[3])
+        end)
+
+        it("hands back what it parsed and how many blocks it left out", function()
+            table.insert(responses, { exit = 0, status = 200, body = readable("One") .. unreadable() })
+            local got = drive(function(cb) search.fetch_page({ language = "python" }, 0, cb) end)
+            assert.are.equal(1, #got[1])
+            assert.is_true(got[2])
+            assert.is_nil(got[3])
+            assert.are.equal(1, got[4])
+        end)
+
+        it("hands back zero dropped for a clean page", function()
+            table.insert(responses, { exit = 0, status = 200, body = page_html() })
+            local got = drive(function(cb) search.fetch_page({ language = "python" }, 0, cb) end)
+            assert.are.equal(0, got[4])
+        end)
+
+        it("does not warn per page", function()
+            table.insert(responses, { exit = 0, status = 200, body = readable("One") .. unreadable() })
+            drive(function(cb) search.fetch_page({ language = "python" }, 0, cb) end)
+            assert.are.same({}, warnings)
+        end)
+    end)
+
+    describe("kata markup drift", function()
+        it("propagates the error to its caller", function()
+            table.insert(responses, { exit = 0, status = 200, body = unreadable() })
+            local got = drive(function(cb) search.kata({ language = "python", max_pages = 3 }, cb) end)
+            assert.is_true(got[2].drift)
+            assert.are.same({}, got[1])
+        end)
+
+        it("warns once with the total dropped, not once per page", function()
+            table.insert(responses, { exit = 0, status = 200, body = readable("One") .. unreadable() })
+            table.insert(responses, { exit = 0, status = 200, body = readable("Two") .. unreadable() .. unreadable() })
+            table.insert(responses, { exit = 0, status = 200, body = "" })
+            local got = drive(function(cb) search.kata({ language = "python", max_pages = 3 }, cb) end)
+            assert.is_nil(got[2])
+            assert.are.equal(2, #got[1])
+            assert.are.equal(1, #warnings, vim.inspect(warnings))
+            assert.truthy(warnings[1]:find("3", 1, true), warnings[1])
+        end)
+
+        it("does not warn when nothing was dropped", function()
+            table.insert(responses, { exit = 0, status = 200, body = page_html() })
+            table.insert(responses, { exit = 0, status = 200, body = "" })
+            drive(function(cb) search.kata({ language = "python", max_pages = 3 }, cb) end)
+            assert.are.same({}, warnings)
         end)
     end)
 end)
