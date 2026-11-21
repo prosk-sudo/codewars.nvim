@@ -129,18 +129,30 @@ function completed.mark(kata_id, slug, lang)
     -- complete and fresh for a whole cache interval.
     local raw = cache_utils.read_json(list_file()) or {}
     local items = raw.items or {}
-    -- Check if already present
-    for _, item in ipairs(items) do
-        if item.id == kata_id then return end
+    for i, item in ipairs(items) do
+        if item.id == kata_id then
+            -- Already there, but a second language is a completion of its
+            -- own: without it the kata's solution in that language would
+            -- keep showing as unfinished until the next refresh.
+            local langs = item.completedLanguages or {}
+            if not lang or vim.tbl_contains(langs, lang) then return end
+            local updated = vim.tbl_extend("force", item, {
+                completedLanguages = vim.list_extend(vim.list_slice(langs), { lang }),
+            })
+            local with_language = vim.list_slice(items)
+            with_language[i] = updated
+            completed.save(with_language, raw.timestamp or 0)
+            return
+        end
     end
-    table.insert(items, 1, {
+    local marked = {
         id = kata_id,
         slug = slug or kata_id,
         completedLanguages = lang and { lang } or {},
         completedAt = os.date("!%Y-%m-%dT%H:%M:%S.000Z"),
         local_mark = true,
-    })
-    completed.save(items, raw.timestamp or 0)
+    }
+    completed.save(vim.list_extend({ marked }, items), raw.timestamp or 0)
 end
 
 --- Enrich completed kata with rank/tag details.

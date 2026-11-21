@@ -84,6 +84,11 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- Submitting a kata you had already solved in another language now records
+  the new language as completed straight away. Only a kata missing from the
+  completed cache was recorded, so the solution you had just submitted kept
+  showing in `:CW unfinished` (and `:CW focus` could still treat the kata as
+  unsolved in that language) until the next successful refresh.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

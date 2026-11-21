@@ -45,6 +45,54 @@ describe("cache.completed", function()
         assert.is_true(stale)
     end)
 
+    -- A kata solved in one language is already in the cache; solving it again
+    -- in a second one must still be recorded, or :CW unfinished keeps listing
+    -- that second solution until the next successful refresh.
+    describe("mark on a kata already in the cache", function()
+        local function cached(item, timestamp)
+            store["mem:completed.json"] = { timestamp = timestamp, items = { item } }
+        end
+
+        it("adds the new language to the kata's completed languages", function()
+            cached({ id = "k1", slug = "kata-one", completedLanguages = { "python" } }, os.time())
+            completed.mark("k1", "kata-one", "java")
+            local items = completed.get()
+            assert.same({ "python", "java" }, items[1].completedLanguages)
+            assert.equals(1, #items, "added a second entry for the kata")
+        end)
+
+        it("gives a kata with no languages on record its first", function()
+            cached({ id = "k1", slug = "kata-one" }, os.time())
+            completed.mark("k1", "kata-one", "java")
+            assert.same({ "java" }, completed.get()[1].completedLanguages)
+        end)
+
+        it("leaves the cache's stamp alone, as it does for a kata not yet in it", function()
+            cached({ id = "k1", slug = "kata-one", completedLanguages = { "python" } }, 5)
+            completed.mark("k1", "kata-one", "java")
+            assert.equals(5, store["mem:completed.json"].timestamp)
+            local _, stale = completed.get()
+            assert.is_true(stale)
+        end)
+
+        it("does not touch the cache when the language is already there, or none was given", function()
+            cached({ id = "k1", slug = "kata-one", completedLanguages = { "python" } }, 5)
+            local before = vim.deepcopy(store["mem:completed.json"])
+            package.loaded["codewars.cache.utils"].write_json = function() error("wrote an unchanged cache") end
+            completed.mark("k1", "kata-one", "python")
+            completed.mark("k1", "kata-one", nil)
+            assert.same(before, store["mem:completed.json"])
+        end)
+
+        it("builds a new item rather than changing the cached one in place", function()
+            local item = { id = "k1", slug = "kata-one", completedLanguages = { "python" } }
+            cached(item, os.time())
+            completed.mark("k1", "kata-one", "java")
+            assert.same({ "python" }, item.completedLanguages)
+            assert.same({ "python", "java" }, store["mem:completed.json"].items[1].completedLanguages)
+        end)
+    end)
+
     it("update refuses a reply without `data` and hands back the cached list with an error", function()
         store["mem:completed.json"] = { timestamp = os.time(), items = { { id = "old" } } }
         script = function() return { totalPages = 1 } end
