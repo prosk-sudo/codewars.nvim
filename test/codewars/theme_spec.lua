@@ -32,12 +32,17 @@ describe("theme highlights", function()
     vim.fn.mkdir(scheme_dir .. "/colors", "p")
     vim.opt.runtimepath:append(scheme_dir)
 
-    local function use_colorscheme(comment_fg)
+    -- `aliases` (name -> definition) are groups of the colorscheme's own that
+    -- the colorscheme defines after clearing, as a real one would.
+    local function use_colorscheme(comment_fg, aliases)
         local source = ([[
 vim.cmd("highlight clear")
 vim.g.colors_name = "cwtest"
 vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
-]]):format(comment_fg)
+for name, def in pairs(%s) do
+    vim.api.nvim_set_hl(0, name, def)
+end
+]]):format(comment_fg, vim.inspect(aliases or {}))
         vim.fn.writefile(vim.split(source, "\n"), scheme_dir .. "/colors/cwtest.lua")
         vim.cmd.colorscheme("cwtest")
     end
@@ -49,9 +54,14 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
 
     -- A cold start, like the first setup() of a session or the apply right
     -- after a `:colorscheme`: none of our groups is defined when apply() runs.
-    local function setup_cold(overrides)
+    -- `aliases`: groups that are not ours (name -> definition), defined before
+    -- setup() the way a colorscheme defines its own.
+    local function setup_cold(overrides, aliases)
         vim.cmd("highlight clear")
         define_colorscheme_groups()
+        for name, def in pairs(aliases or {}) do
+            vim.api.nvim_set_hl(0, name, def)
+        end
         config_stub.user = { theme = overrides }
         theme.setup()
     end
@@ -310,6 +320,73 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
                     end)
                 end)
             end
+
+            -- A link can also go through a group that is not ours (the
+            -- colorscheme's, or the user's own) which itself links into a
+            -- codewars group. Neovim would collapse that chain from whatever
+            -- the codewars group holds at that moment, so every step has to
+            -- be followed one link at a time. Each link of the chain goes
+            -- through `depth` such groups; `spell` spells the name of the
+            -- codewars group at the end of them.
+            local function alias_chain(head, depth, spell)
+                local overrides = { [CHAIN[1]] = head }
+                local aliases = {}
+                for i = 2, #CHAIN do
+                    local first = "CwAlias" .. i
+                    overrides[CHAIN[i]] = { link = first, italic = true }
+                    if depth == 2 then
+                        aliases[first] = { link = "CwOuter" .. i }
+                        aliases["CwOuter" .. i] = { link = spell(CHAIN[i - 1]) }
+                    else
+                        aliases[first] = { link = spell(CHAIN[i - 1]) }
+                    end
+                end
+                return overrides, aliases
+            end
+
+            local function as_declared(name)
+                return name
+            end
+
+            describe("a chain through other groups, " .. direction.name, function()
+                it("follows the default color of its head", function()
+                    local overrides, aliases = alias_chain(nil, 1, as_declared)
+                    setup_cold(overrides, aliases)
+                    assert_chain_follows(raw(CHAIN[1]).fg, nil)
+                end)
+
+                it("follows a merged override on its head through two groups per link", function()
+                    local overrides, aliases = alias_chain({ fg = "#010203" }, 2, as_declared)
+                    setup_cold(overrides, aliases)
+                    assert_chain_follows(0x010203, nil)
+                end)
+
+                it("follows a styled link on its head", function()
+                    local overrides, aliases = alias_chain({ link = "Title", bold = true }, 1, as_declared)
+                    setup_cold(overrides, aliases)
+                    assert_chain_follows(0x112233, nil)
+                end)
+
+                it("follows the head when the codewars names are written in mixed case", function()
+                    local overrides, aliases = alias_chain({ fg = "#010203" }, 1, mixed_case)
+                    setup_cold(overrides, aliases)
+                    assert_chain_follows(0x010203, nil)
+                end)
+
+                it("gives the same result after a :colorscheme that defines the groups", function()
+                    local overrides, aliases = alias_chain({ fg = "#010203" }, 1, as_declared)
+                    setup_cold(overrides, aliases)
+                    use_colorscheme(0x445566, aliases)
+                    assert_chain_follows(0x010203, nil)
+                end)
+
+                it("re-resolves a link-only head from the new colorscheme", function()
+                    local overrides, aliases = alias_chain({ link = "Comment" }, 2, as_declared)
+                    setup_cold(overrides, aliases)
+                    use_colorscheme(0xaabbcc, aliases)
+                    assert_chain_follows(0xaabbcc, 99)
+                end)
+            end)
         end
 
         describe("that form a cycle", function()
@@ -430,6 +507,73 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
                 assert.is_true(raw("codewars_rank_white").bold)
                 assert.is_nil(raw("codewars_rank_white").fg)
                 assert.are.equal(0xb1361e, raw("codewars_header").fg)
+            end)
+        end)
+
+        describe("through groups that are not ours", function()
+            it("takes the fg of an alias of an alias that has its own fg", function()
+                local aliases = {
+                    CwOuter = { link = "CwInner" },
+                    CwInner = { fg = 0x0a0b0c, ctermfg = 77 },
+                }
+                setup_cold({ codewars_rank_white = { link = "CwOuter", bold = true } }, aliases)
+                local h = raw("codewars_rank_white")
+                assert.are.equal(0x0a0b0c, h.fg)
+                assert.are.equal(77, h.ctermfg)
+                assert.is_true(h.bold)
+            end)
+
+            it("follows the link of a group that has both a link and an fg of its own", function()
+                -- what Neovim itself does: the link wins over the group's own fg
+                local aliases = { CwBoth = { link = "Comment", fg = 0x0a0b0c } }
+                setup_cold({ codewars_rank_white = { link = "CwBoth", bold = true } }, aliases)
+                assert.are.equal(0x778899, raw("codewars_rank_white").fg)
+            end)
+
+            it("gives no color to a cycle of such groups and does not error", function()
+                local aliases = { CwA = { link = "CwB" }, CwB = { link = "CwA" } }
+                assert.has_no.errors(function()
+                    setup_cold({ codewars_rank_white = { link = "CwA", bold = true } }, aliases)
+                end)
+                assert.is_true(raw("codewars_rank_white").bold)
+                assert.is_nil(raw("codewars_rank_white").fg)
+            end)
+
+            it("gives no color to a cycle through such a group and a codewars group", function()
+                local aliases = { CwA = { link = "codewars_rank_yellow" } }
+                local overrides = {
+                    codewars_rank_yellow = { link = "CwA", italic = true },
+                    codewars_rank_white = { link = "CwA", bold = true },
+                }
+                assert.has_no.errors(function()
+                    setup_cold(overrides, aliases)
+                end)
+                assert.is_true(raw("codewars_rank_white").bold)
+                assert.is_nil(raw("codewars_rank_white").fg)
+                assert.is_true(raw("codewars_rank_yellow").italic)
+                assert.is_nil(raw("codewars_rank_yellow").fg)
+            end)
+
+            it("survives a :colorscheme re-apply of such a cycle", function()
+                local aliases = { CwA = { link = "CwB" }, CwB = { link = "CwA" } }
+                setup_cold({ codewars_rank_white = { link = "CwA", bold = true } }, aliases)
+                use_colorscheme(0x445566, aliases)
+                assert.is_true(raw("codewars_rank_white").bold)
+                assert.is_nil(raw("codewars_rank_white").fg)
+                assert.are.equal(0xb1361e, raw("codewars_header").fg)
+            end)
+
+            it("takes the color of a codewars group whose override is itself a styled link", function()
+                local aliases = { CwAlias = { link = "codewars_rank_yellow" } }
+                local overrides = {
+                    codewars_rank_yellow = { link = "Title", bold = true },
+                    codewars_rank_white = { link = "CwAlias", italic = true },
+                }
+                setup_cold(overrides, aliases)
+                assert.are.equal(0x112233, raw("codewars_rank_white").fg)
+                -- a new colorscheme with another Title: the link follows it
+                use_colorscheme(0x445566, vim.tbl_extend("force", aliases, { Title = { fg = 0x998877 } }))
+                assert.are.equal(0x998877, raw("codewars_rank_white").fg)
             end)
         end)
     end)

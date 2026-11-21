@@ -139,18 +139,25 @@ local function definition(name, overrides, seen)
 end
 
 --- The foreground (fg, ctermfg) that `target` has once apply() has run.
---- A codewars group is worked out from its default and the user's override,
---- not read back from Neovim: apply() visits the groups in no particular
---- order, so the target may not be set yet, and straight after a `:colorscheme`
---- it holds nothing. Any other group is read from the colorscheme as it is now;
---- apply() runs again after every `:colorscheme`.
---- A link that leads back to a group already on the chain (a -> b -> a, or
---- a -> a) has no color to give. Every group in such a cycle keeps only its own
---- style keys, whichever of them is being applied.
+--- The chain of links is followed one step at a time and Neovim is never asked
+--- to collapse it: apply() visits the groups in no particular order, and
+--- straight after a `:colorscheme` ours hold nothing, so what Neovim would
+--- resolve through a codewars group is not what that group will hold. Every
+--- step lands on one of two things:
+---   * a codewars group: worked out from its default and the user's override;
+---   * any other group: read with `link = true`. A group that links gives
+---     `{ link = "X" }` and the walk goes on with X (a group that has both a
+---     link and an fg of its own follows the link, as Neovim does); a group
+---     that does not link gives its own fg and ctermfg. These are the
+---     colorscheme as it is now; apply() runs again after every `:colorscheme`.
+--- A link that leads back to a group already on the chain (a -> b -> a, a -> a,
+--- or one that mixes codewars groups with others) has no color to give. Every
+--- codewars group in such a cycle keeps only its own style keys, whichever of
+--- them is being applied.
 --- Neovim matches group names without regard to case, so "CODEWARS_HEADER"
 --- names the same group as "codewars_header". Every key of `highlights` is
---- lowercase, so the lowered target is the key for both the lookup and the
---- cycle check. (Only the lookup is folded: a link-only override still goes to
+--- lowercase, so the lowered target is the key for the lookup and for the
+--- cycle check, whichever group it names. (A link-only override still goes to
 --- Neovim as the user wrote it, and Neovim resolves it.)
 ---@param target string
 ---@param overrides table the user's `theme`
@@ -159,20 +166,24 @@ end
 colors = function(target, overrides, seen)
     -- tostring: a `link` that is not a string is Neovim's to reject, below
     local key = tostring(target):lower()
-    if not highlights[key] then
-        local base = vim.api.nvim_get_hl(0, { name = target, link = false })
-        return { fg = base.fg, ctermfg = base.ctermfg }
-    end
     if seen[key] then
         return {}
     end
-
     local chain = vim.tbl_extend("force", seen, { [key] = true })
-    local def = definition(key, overrides, chain)
-    if def.link then
-        return colors(def.link, overrides, chain)
+
+    if highlights[key] then
+        local def = definition(key, overrides, chain)
+        if def.link then
+            return colors(def.link, overrides, chain)
+        end
+        return { fg = def.fg, ctermfg = def.ctermfg }
     end
-    return { fg = def.fg, ctermfg = def.ctermfg }
+
+    local group = vim.api.nvim_get_hl(0, { name = target, link = true })
+    if group.link then
+        return colors(group.link, overrides, chain)
+    end
+    return { fg = group.fg, ctermfg = group.ctermfg }
 end
 
 local function apply()
