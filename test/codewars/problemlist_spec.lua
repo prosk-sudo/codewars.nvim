@@ -344,6 +344,121 @@ describe("cache.problemlist update", function()
             assert.truthy(warned[1]:find("3", 1, true), warned[1])
         end)
     end)
+
+    -- A rank finished by a cut-short run is not fetched again, so what its
+    -- pages dropped has to travel in the checkpoint, or the build that
+    -- completes the list reports success without saying it is missing them.
+    describe("when a build is resumed from a checkpoint", function()
+        --- Every rank is two pages: one kata, then the empty page that ends it.
+        --- `dropped_on` names which calls report dropped blocks, and how many.
+        local function with_dropped(dropped_on)
+            return function(n)
+                if n % 2 == 1 then
+                    return { { slug = "kata-" .. n } }, true, nil, dropped_on[n]
+                end
+                return {}, false, nil
+            end
+        end
+
+        --- What the most recent checkpoint write left on disk.
+        local function last_checkpoint()
+            local cps = writes_to(CHECKPOINT)
+            return vim.deepcopy(cps[#cps].data)
+        end
+
+        it("keeps each finished rank's dropped count in the checkpoint", function()
+            page_script = function(n)
+                if n == 1 then return { { slug = "a" } }, true, nil, 2 end
+                if n == 2 then return {}, false, nil end -- 8 kyu done
+                if n == 3 then return { { slug = "b" } }, true, nil, 0 end
+                if n == 4 then return {}, false, nil end -- 7 kyu done
+                return {}, false, { status = 502, msg = "http error 502" }
+            end
+            run()
+            local cp = last_checkpoint()
+            assert.are.equal(2, cp.dropped["-8"])
+            assert.is_true((cp.dropped["-7"] or 0) == 0)
+        end)
+
+        it("counts what a checkpointed rank dropped in the warning of the build that finishes", function()
+            -- Run one: 8 kyu drops 2 and is checkpointed; 7 kyu then fails.
+            page_script = function(n)
+                if n == 1 then return { { slug = "a" } }, true, nil, 2 end
+                if n == 2 then return {}, false, nil end
+                return {}, false, { status = 502, msg = "http error 502" }
+            end
+            local _, partial = run()
+            assert.is_true(partial)
+            stored[CHECKPOINT] = last_checkpoint()
+            warned, page_calls, requested = {}, 0, {}
+
+            -- Run two resumes at 7 kyu, which drops 1.
+            page_script = with_dropped({ [1] = 1 })
+            local items, resumed_partial = run()
+            assert.is_nil(resumed_partial)
+            assert.are.equal(-7, requested[1].rank, "refetched the checkpointed rank")
+            assert.are.equal(1, #writes_to(LIST))
+            assert.is_true(#items > 0)
+            assert.are.equal(1, #warned, vim.inspect(warned))
+            assert.truthy(warned[1]:find("3", 1, true), warned[1])
+            assert.truthy(warned[1]:find("markup may have changed", 1, true), warned[1])
+        end)
+
+        it("does not count a rank it is about to fetch again", function()
+            -- 8 kyu is checkpointed with 2 dropped; 7 kyu is not, and its
+            -- earlier partial drops were never saved.
+            stored[CHECKPOINT] = {
+                timestamp = os.time() - 60,
+                ranks = { ["-8"] = { { slug = "eight" } } },
+                dropped = { ["-8"] = 2, ["-7"] = 9 },
+            }
+            page_script = with_dropped({ [1] = 1 })
+            run()
+            assert.are.equal(1, #warned, vim.inspect(warned))
+            assert.truthy(warned[1]:find("3", 1, true), warned[1])
+        end)
+
+        it("resumes from a checkpoint written before dropped counts, with no warning from it", function()
+            stored[CHECKPOINT] = {
+                timestamp = os.time() - 60,
+                ranks = { ["-8"] = { { slug = "eight" } }, ["-7"] = { { slug = "seven" } } },
+            }
+            page_script = with_dropped({})
+            local items, partial = run()
+            assert.is_nil(partial)
+            assert.are.equal(-6, requested[1].rank)
+            assert.are.equal("eight", items[1].slug)
+            assert.are.same({}, warned)
+            -- And the checkpoint it goes on to write has the field.
+            assert.is_table(last_checkpoint().dropped)
+        end)
+
+        it("ignores a dropped field that is not a table of counts", function()
+            for _, bad in ipairs({ "lots", 7, { ["-8"] = "many" } }) do
+                warned, page_calls, requested = {}, 0, {}
+                stored[CHECKPOINT] = {
+                    timestamp = os.time() - 60,
+                    ranks = { ["-8"] = { { slug = "eight" } } },
+                    dropped = bad,
+                }
+                page_script = with_dropped({})
+                local _, partial = run()
+                assert.is_nil(partial)
+                assert.are.same({}, warned, vim.inspect(bad))
+            end
+        end)
+
+        it("stays quiet when a resume drops nothing anywhere", function()
+            stored[CHECKPOINT] = {
+                timestamp = os.time() - 60,
+                ranks = { ["-8"] = { { slug = "eight" } } },
+                dropped = { ["-8"] = 0 },
+            }
+            page_script = with_dropped({})
+            run()
+            assert.are.same({}, warned)
+        end)
+    end)
 end)
 
 -- A stale list is still served; only its refresh moves to the background.

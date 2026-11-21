@@ -314,6 +314,15 @@ function problemlist.update(opts, cb)
     local checkpoint = load_checkpoint()
     local resumed = checkpoint ~= nil
     checkpoint = checkpoint or { timestamp = os.time(), ranks = {} }
+    -- What each checkpointed rank's pages dropped, by rank, saved next to its
+    -- items: a rank a resume skips is never fetched again, so this is the only
+    -- record of what it left out. A checkpoint from before this was kept has
+    -- none, and counts as nothing dropped.
+    if type(checkpoint.dropped) ~= "table" then checkpoint.dropped = {} end
+
+    -- Result blocks the parser could not read, over every page of the list
+    -- this run is building: the ranks taken from the checkpoint included.
+    local dropped = 0
 
     ---@type table<integer, table[]>
     local by_rank = {}
@@ -322,6 +331,8 @@ function problemlist.update(opts, cb)
         if type(saved) == "table" and #saved > 0 then
             by_rank[rank] = saved
             this.found = this.found + #saved
+            local saved_dropped = tonumber(checkpoint.dropped[tostring(rank)]) or 0
+            if saved_dropped > 0 then dropped = dropped + math.floor(saved_dropped) end
         end
     end
 
@@ -329,13 +340,13 @@ function problemlist.update(opts, cb)
     local aborted = false
     local pace_ms = problemlist.PACE_MS
     local cooldowns = 0
-    -- Result blocks the parser could not read, over every page of this run.
-    local dropped = 0
 
     -- The rank being fetched and what it has produced so far. Not in
     -- by_rank until it finishes (by_rank is what resumes skip), but an
     -- aborted run still hands these to the caller.
     local current_rank, current_items = nil, nil ---@type integer?, table[]?
+    -- What the rank being fetched has dropped so far; saved with it.
+    local current_dropped = 0
 
     local function collected()
         local all = {}
@@ -434,6 +445,7 @@ function problemlist.update(opts, cb)
             if #items > 0 then
                 by_rank[rank] = items
                 checkpoint.ranks[tostring(rank)] = items
+                checkpoint.dropped[tostring(rank)] = current_dropped
                 cache_utils.write_json(checkpoint_file(), checkpoint)
             end
             return fetch_rank()
@@ -499,6 +511,7 @@ function problemlist.update(opts, cb)
 
                 cooldowns = 0
                 dropped = dropped + (page_dropped or 0)
+                current_dropped = current_dropped + (page_dropped or 0)
 
                 if results and #results > 0 then
                     vim.list_extend(items, results)
@@ -527,7 +540,7 @@ function problemlist.update(opts, cb)
         if rank_idx > #ranks then
             return finish()
         end
-        current_rank, current_items = ranks[rank_idx], {}
+        current_rank, current_items, current_dropped = ranks[rank_idx], {}, 0
         fetch_page(current_rank, 0, current_items)
     end
 
