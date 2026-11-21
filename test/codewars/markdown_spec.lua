@@ -217,10 +217,60 @@ describe("markdown.from_html nested same-name tags", function()
         assert.are.equal("**a<bool>c</bool>**", md.from_html("<b>a<bool>c</bool></b>"))
     end)
 
-    it("nests deeply without recursing out of the stack", function()
-        local depth = 300
-        local out = md.from_html(("<blockquote>"):rep(depth) .. "x" .. ("</blockquote>"):rep(depth))
-        assert.are.equal(("> "):rep(depth) .. "x", vim.trim(out))
+end)
+
+-- Every closing tag copies the converted text inside it, so the work grows
+-- with nesting depth times length: a description of tens of thousands of
+-- nested tags used to stall the render. Nesting deeper than MAX_NEST_DEPTH
+-- (64, in markdown.lua) is left as written; real descriptions nest a few
+-- levels at most.
+describe("markdown.from_html nesting depth cap", function()
+    local CAP = 64
+
+    local function bold(depth, inner)
+        return ("<b>"):rep(depth) .. inner .. ("</b>"):rep(depth)
+    end
+
+    it("converts nesting up to the cap in full", function()
+        assert.are.equal(("**"):rep(CAP) .. "x" .. ("**"):rep(CAP), md.from_html(bold(CAP, "x")))
+        local out = md.from_html(("<blockquote>"):rep(CAP) .. "x" .. ("</blockquote>"):rep(CAP))
+        assert.are.equal(("> "):rep(CAP) .. "x", vim.trim(out))
+    end)
+
+    it("leaves the one tag past the cap as written, paired with its own closer", function()
+        assert.are.equal(
+            ("**"):rep(CAP) .. "<b>x</b>" .. ("**"):rep(CAP),
+            md.from_html(bold(CAP + 1, "x")))
+        local out = md.from_html(("<blockquote>"):rep(CAP + 1) .. "x" .. ("</blockquote>"):rep(CAP + 1))
+        assert.are.equal(("> "):rep(CAP) .. "<blockquote>x</blockquote>", vim.trim(out))
+    end)
+
+    it("leaves every tag past the cap as written, however many there are", function()
+        local extra = 19936
+        local out = md.from_html(bold(CAP + extra, "x"))
+        assert.are.equal(
+            ("**"):rep(CAP) .. ("<b>"):rep(extra) .. "x" .. ("</b>"):rep(extra) .. ("**"):rep(CAP),
+            out)
+    end)
+
+    it("converts what follows a too-deep run as if the run had closed", function()
+        local out = md.from_html(bold(CAP + 6, "x") .. " and " .. bold(1, "y"))
+        assert.are.equal(
+            ("**"):rep(CAP) .. ("<b>"):rep(6) .. "x" .. ("</b>"):rep(6) .. ("**"):rep(CAP) .. " and **y**",
+            out)
+    end)
+
+    it("renders tens of thousands of nested tags without stalling", function()
+        local uv = vim.uv or vim.loop
+        local src = bold(100000, "x")
+        local started = uv.hrtime()
+        local out = md.from_html(src)
+        local elapsed_ms = (uv.hrtime() - started) / 1e6
+        assert.are.equal(("**"):rep(CAP), out:sub(1, 2 * CAP))
+        -- Uncapped, this is quadratic in the depth (seconds); capped it is a
+        -- fraction of a second. The bound leaves generous room for a slow
+        -- machine; the structural specs above are the exact guard.
+        assert.is_true(elapsed_ms < 1500, ("took %d ms"):format(elapsed_ms))
     end)
 end)
 
@@ -270,7 +320,11 @@ describe("markdown.from_html unbalanced tags", function()
         local quotes = ("<blockquote>"):rep(3000) .. "x"
         assert.are.equal(quotes, md.from_html(quotes))
         -- More openers than closers: the extra ones stay, the pairs convert.
-        local half = md.from_html(("<b>"):rep(2000) .. "x" .. ("</b>"):rep(1000))
-        assert.are.equal(("<b>"):rep(1000) .. ("**"):rep(1000) .. "x" .. ("**"):rep(1000), half)
+        local half = md.from_html(("<b>"):rep(40) .. "x" .. ("</b>"):rep(20))
+        assert.are.equal(("<b>"):rep(20) .. ("**"):rep(20) .. "x" .. ("**"):rep(20), half)
+        -- Here every closer pairs with an opener past the depth cap (the 64
+        -- outer openers are never closed), so nothing converts.
+        local deep = ("<b>"):rep(2000) .. "x" .. ("</b>"):rep(1000)
+        assert.are.equal(deep, md.from_html(deep))
     end)
 end)

@@ -79,6 +79,14 @@ local function expand(repl, inner)
     return (repl:gsub("%%([%%1])", function(c) return c == "1" and inner or "%" end))
 end
 
+--- How deep one tag may nest and still be converted. Each closing tag copies
+--- the converted text inside it, so a character at depth d is copied d times:
+--- without a bound, tens of thousands of nested tags (or a hostile page) turn
+--- a description render into seconds of work. Real descriptions nest two or
+--- three levels. A tag nested deeper than this is left as written, together
+--- with its own closer, which caps the work at O(length * MAX_NEST_DEPTH).
+local MAX_NEST_DEPTH = 64
+
 --- Replace each paired `<tag>…</tag>` construct, both with and without
 --- attributes. Each closing tag pairs with the nearest unclosed opener of the
 --- same tag, so `<blockquote>a<blockquote>b</blockquote>c</blockquote>` is two
@@ -86,9 +94,8 @@ end
 --- converted first, and its result is part of the outer one's `inner`.
 ---
 --- Unbalanced markup never errors: a closing tag with no opener, and an opener
---- with no closer, stay in the text exactly as written. One pass over the
---- tags, no recursion, so neither a long run of unmatched tags nor deep
---- nesting costs more than its length.
+--- with no closer, stay in the text exactly as written, and so does every tag
+--- nested deeper than MAX_NEST_DEPTH. One pass over the tags, no recursion.
 ---@param text string
 ---@param tag string
 ---@param repl string|fun(inner: string): string
@@ -97,7 +104,9 @@ local function paired(text, tag, repl)
     -- `out` is the converted text so far, in pieces. An opener goes in as
     -- literal text and its index in `out` onto `waiting`; if a closer claims
     -- it, everything after it is the construct's inner text and is replaced,
-    -- and if none does, the opener is simply still there.
+    -- and if none does, the opener is simply still there. An opener past the
+    -- depth cap waits as `false`, so its closer still pairs with it (and
+    -- stays literal) instead of closing an outer construct by mistake.
     local out, waiting = {}, {}
     local pos = 1
     for _, token in ipairs(tag_tokens(text, tag)) do
@@ -106,12 +115,16 @@ local function paired(text, tag, repl)
         local literal = text:sub(token.s, token.e)
         if token.kind == "open" then
             out[#out + 1] = literal
-            waiting[#waiting + 1] = #out
+            waiting[#waiting + 1] = #waiting < MAX_NEST_DEPTH and #out
         elseif #waiting > 0 then
             local opener = table.remove(waiting)
-            local inner = table.concat(out, "", opener + 1)
-            for i = #out, opener, -1 do out[i] = nil end
-            out[#out + 1] = expand(repl, inner)
+            if opener then
+                local inner = table.concat(out, "", opener + 1)
+                for i = #out, opener, -1 do out[i] = nil end
+                out[#out + 1] = expand(repl, inner)
+            else
+                out[#out + 1] = literal -- closes an opener past the depth cap
+            end
         else
             out[#out + 1] = literal -- a closing tag with no opener
         end

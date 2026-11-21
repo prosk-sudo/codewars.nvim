@@ -73,7 +73,8 @@ All notable changes to codewars.nvim are documented here.
   The converter ended the outer tag at the first closing tag it met; it now
   pairs each closing tag with its own opener, so nested quotes render as `>`
   and `> >` and nested list items are all kept. A tag with no partner is left
-  as written (#30).
+  as written, and so is nesting more than 64 levels deep, which keeps a
+  description of thousands of nested tags from stalling the render (#30).
 - The solutions popup no longer runs off the screen on a very short editor.
   When there is no room for both panes it drops the info box (or the
   comments pane) and keeps the code, and it never starts above the top row.
