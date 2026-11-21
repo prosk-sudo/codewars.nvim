@@ -147,21 +147,28 @@ end
 --- A link that leads back to a group already on the chain (a -> b -> a, or
 --- a -> a) has no color to give. Every group in such a cycle keeps only its own
 --- style keys, whichever of them is being applied.
+--- Neovim matches group names without regard to case, so "CODEWARS_HEADER"
+--- names the same group as "codewars_header". Every key of `highlights` is
+--- lowercase, so the lowered target is the key for both the lookup and the
+--- cycle check. (Only the lookup is folded: a link-only override still goes to
+--- Neovim as the user wrote it, and Neovim resolves it.)
 ---@param target string
 ---@param overrides table the user's `theme`
 ---@param seen table<string, true> the groups on the chain of links that led here
 ---@return table
 colors = function(target, overrides, seen)
-    if not highlights[target] then
+    -- tostring: a `link` that is not a string is Neovim's to reject, below
+    local key = tostring(target):lower()
+    if not highlights[key] then
         local base = vim.api.nvim_get_hl(0, { name = target, link = false })
         return { fg = base.fg, ctermfg = base.ctermfg }
     end
-    if seen[target] then
+    if seen[key] then
         return {}
     end
 
-    local chain = vim.tbl_extend("force", seen, { [target] = true })
-    local def = definition(target, overrides, chain)
+    local chain = vim.tbl_extend("force", seen, { [key] = true })
+    local def = definition(key, overrides, chain)
     if def.link then
         return colors(def.link, overrides, chain)
     end

@@ -194,6 +194,19 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
             return out
         end
 
+        local function mixed_case(name)
+            local letters = 0
+            return (name:gsub("%a", function(letter)
+                letters = letters + 1
+                return letters % 2 == 0 and letter:upper() or letter:lower()
+            end))
+        end
+
+        local SPELLINGS = {
+            { name = "in upper case", spell = string.upper },
+            { name = "in mixed case", spell = mixed_case },
+        }
+
         local DIRECTIONS = {
             { name = "each linked to the group declared before it", chain = DECLARED },
             { name = "each linked to the group declared after it", chain = reversed(DECLARED) },
@@ -203,11 +216,15 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
             local CHAIN = direction.chain
 
             -- CHAIN[1] gets `head` (nil: its default); every later group is a
-            -- styled link to the one before it in CHAIN.
-            local function chain_overrides(head)
+            -- styled link to the one before it in CHAIN, the link target
+            -- written the way `spell` spells it (default: as declared).
+            local function chain_overrides(head, spell)
+                spell = spell or function(name)
+                    return name
+                end
                 local overrides = { [CHAIN[1]] = head }
                 for i = 2, #CHAIN do
-                    overrides[CHAIN[i]] = { link = CHAIN[i - 1], italic = true }
+                    overrides[CHAIN[i]] = { link = spell(CHAIN[i - 1]), italic = true }
                 end
                 return overrides
             end
@@ -262,6 +279,37 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
                     assert_chain_follows(0xaabbcc, 99)
                 end)
             end)
+
+            -- Neovim matches group names without regard to case, so a link
+            -- spelled "CODEWARS_LANG_PYTHON" names a codewars group too and
+            -- must be worked out the same way, not read back from Neovim.
+            for _, spelling in ipairs(SPELLINGS) do
+                local spell = spelling.spell
+
+                describe("a chain, " .. direction.name .. ", links written " .. spelling.name, function()
+                    it("follows the default color of its head", function()
+                        setup_cold(chain_overrides(nil, spell))
+                        assert_chain_follows(raw(CHAIN[1]).fg, nil)
+                    end)
+
+                    it("follows a merged override on its head", function()
+                        setup_cold(chain_overrides({ fg = "#010203" }, spell))
+                        assert_chain_follows(0x010203, nil)
+                    end)
+
+                    it("follows a link-only override on its head", function()
+                        setup_cold(chain_overrides({ link = spell("codewars_lang_cfml") }, spell))
+                        assert.are.equal("codewars_lang_cfml", raw(CHAIN[1]).link:lower())
+                        assert_chain_follows(0xed2cd6, nil)
+                    end)
+
+                    it("gives the same result after a :colorscheme re-apply", function()
+                        setup_cold(chain_overrides({ fg = "#010203" }, spell))
+                        vim.cmd.colorscheme("default")
+                        assert_chain_follows(0x010203, nil)
+                    end)
+                end)
+            end
         end
 
         describe("that form a cycle", function()
@@ -329,6 +377,58 @@ vim.api.nvim_set_hl(0, "Comment", { fg = %d, ctermfg = 99 })
                 assert.is_nil(raw("codewars_rank_white").fg)
                 assert.is_true(raw("codewars_rank_yellow").italic)
                 -- apply() ran to the end: a group after the cycle is still set
+                assert.are.equal(0xb1361e, raw("codewars_header").fg)
+            end)
+
+            -- Group names are case-insensitive, so a link back spelled in
+            -- another case is the same cycle.
+            it("counts a link back in another case as the same group", function()
+                local overrides = {
+                    codewars_rank_white = { link = "CODEWARS_RANK_YELLOW", bold = true },
+                    codewars_rank_yellow = { link = "Codewars_Rank_White", italic = true },
+                }
+                assert.has_no.errors(function()
+                    setup_cold(overrides)
+                end)
+                assert.is_true(raw("codewars_rank_white").bold)
+                assert.is_nil(raw("codewars_rank_white").fg)
+                assert.is_true(raw("codewars_rank_yellow").italic)
+                assert.is_nil(raw("codewars_rank_yellow").fg)
+            end)
+
+            it("covers a group that links to itself in another case", function()
+                local overrides = { codewars_rank_white = { link = "CODEWARS_RANK_WHITE", bold = true } }
+                assert.has_no.errors(function()
+                    setup_cold(overrides)
+                end)
+                assert.is_true(raw("codewars_rank_white").bold)
+                assert.is_nil(raw("codewars_rank_white").fg)
+            end)
+
+            it("covers link-only overrides that point at each other in another case", function()
+                local overrides = {
+                    codewars_rank_white = { link = "CODEWARS_RANK_YELLOW" },
+                    codewars_rank_yellow = { link = "Codewars_Rank_White" },
+                    codewars_rank_blue = { link = "CODEWARS_RANK_WHITE", bold = true },
+                }
+                assert.has_no.errors(function()
+                    setup_cold(overrides)
+                end)
+                -- the link is passed to Neovim as written; Neovim matches the name
+                assert.are.equal("codewars_rank_yellow", raw("codewars_rank_white").link:lower())
+                assert.is_true(raw("codewars_rank_blue").bold)
+                assert.is_nil(raw("codewars_rank_blue").fg)
+            end)
+
+            it("survives a :colorscheme re-apply with links in another case", function()
+                local overrides = {
+                    codewars_rank_white = { link = "CODEWARS_RANK_YELLOW", bold = true },
+                    codewars_rank_yellow = { link = "Codewars_Rank_White", italic = true },
+                }
+                setup_cold(overrides)
+                vim.cmd.colorscheme("default")
+                assert.is_true(raw("codewars_rank_white").bold)
+                assert.is_nil(raw("codewars_rank_white").fg)
                 assert.are.equal(0xb1361e, raw("codewars_header").fg)
             end)
         end)
