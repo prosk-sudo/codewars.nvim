@@ -1168,14 +1168,22 @@ function cmd.open()
     if vim.ui.open then
         vim.ui.open(url)
     else
+        -- The slug comes from the server, so the URL must never be spliced
+        -- into a string for the shell: an argv table hands it to the opener
+        -- as one argument whatever characters it holds.
         local os_name = vim.loop.os_uname().sysname
         local open_cmd
         if os_name == "Darwin" then
-            open_cmd = ("open '%s'"):format(url)
+            open_cmd = { "open", url }
         elseif os_name == "Linux" then
-            open_cmd = ("xdg-open '%s'"):format(url)
+            open_cmd = { "xdg-open", url }
         else
-            open_cmd = ('start "" "%s"'):format(url)
+            -- `start` is a cmd.exe builtin, so there is no way around cmd.exe.
+            -- It still reads & and | inside its arguments as command
+            -- separators, which an argv table cannot prevent; the empty
+            -- string is the window title that start would otherwise take
+            -- from the URL.
+            open_cmd = { "cmd.exe", "/c", "start", "", url }
         end
         vim.fn.jobstart(open_cmd, { detach = true })
     end
