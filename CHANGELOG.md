@@ -84,6 +84,11 @@ All notable changes to codewars.nvim are documented here.
   passes the URL as an argument instead of through the shell.
 
 ### Fixed
+- `:CW open` on a Neovim older than 0.10 no longer treats FreeBSD, OpenBSD,
+  NetBSD and other Unix systems as Windows: only Windows uses `cmd.exe`,
+  macOS uses `open`, and everything else uses `xdg-open`. If that opener is
+  not installed, nothing is started and the message names it and gives the
+  kata URL so you can open it yourself.
 - After `:CW kumite unpublish` or `:CW kumite convert` turns a published
   kumite back into a draft, `i`/`a`/`o` and `q` work again instead of still
   warning that it is read-only. Your own buffer-local mappings of those keys
