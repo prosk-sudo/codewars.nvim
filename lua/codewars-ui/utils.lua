@@ -166,8 +166,21 @@ function utils.rescue_or_delete(bufnr, rescue_label)
         return
     end
     if rescue_label then
+        -- The workspace's :w handler only prints a hint and clears 'modified'.
+        -- That is right while a stash exists; on the one remaining copy it
+        -- swallowed :write, reported nothing and let the text be closed away
+        -- unwritten. Drop it so :write writes a real file. By id: without a
+        -- group, nvim_clear_autocmds only clears autocmds that are in none,
+        -- and the workspace's live in its own group.
+        for _, autocmd in ipairs(vim.api.nvim_get_autocmds({ event = "BufWriteCmd", buffer = bufnr })) do
+            pcall(vim.api.nvim_del_autocmd, autocmd.id)
+        end
         pcall(utils.buf_set_opts, bufnr, { buflisted = true, buftype = "" })
         pcall(vim.api.nvim_buf_set_name, bufnr, rescue_label)
+        -- Never written to a file, whatever the workspace's :w did to the flag
+        -- (it clears it without writing). Modified is what makes :bdelete and
+        -- :q refuse, so Vim itself guards the only copy until it is written.
+        pcall(vim.api.nvim_set_option_value, "modified", true, { buf = bufnr })
     else
         vim.api.nvim_buf_delete(bufnr, { force = true, unload = false })
     end

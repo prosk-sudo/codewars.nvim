@@ -844,17 +844,28 @@ function Kumite:_unmount()
     end
 
     vim.schedule(function()
+        local rescue_label = rescued
+            and ("RESCUED kumite %s"):format(tostring(self.snippet.id):sub(1, 6)) or nil
         if self.console then
             self.console:unmount()
         end
         if self.fixture_split then
-            self.fixture_split:unmount()
+            if rescue_label then
+                -- The fixture is typed text too, and unmount() force-deletes
+                -- its buffer. Hide only closes the window; the buffer is kept
+                -- and handed over like the code buffer. A window that will not
+                -- close must not stop that.
+                local fixture_bufnr = self.fixture_split.bufnr
+                pcall(self.fixture_split.hide, self.fixture_split)
+                ui_utils.rescue_or_delete(fixture_bufnr, rescue_label .. " fixture")
+            else
+                self.fixture_split:unmount()
+            end
         end
         if self.description then
             self.description:unmount()
         end
-        ui_utils.rescue_or_delete(self.bufnr, rescued
-            and ("RESCUED kumite %s"):format(tostring(self.snippet.id):sub(1, 6)) or nil)
+        ui_utils.rescue_or_delete(self.bufnr, rescue_label)
         _Cw_state.kumite = vim.tbl_filter(function(ws)
             return ws.bufnr ~= self.bufnr
         end, _Cw_state.kumite or {})
