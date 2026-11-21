@@ -150,3 +150,127 @@ describe("markdown.from_html passthrough", function()
         assert.is_nil(out:find("CWMD", 1, true))
     end)
 end)
+
+-- `paired` used to match `<tag>(.-)</tag>`: the first closing tag ended the
+-- construct, so a same-name tag nested inside it left the outer one's tail as
+-- literal markup in the rendered description.
+describe("markdown.from_html nested same-name tags", function()
+    local function lines(text)
+        return vim.split(vim.trim(text), "\n", { plain = true })
+    end
+
+    it("renders a nested blockquote as > and > > lines", function()
+        local out = md.from_html("<blockquote>a<blockquote>b</blockquote>c</blockquote>")
+        assert.are.same({ "> a", ">", "> > b", ">", "> c" }, lines(out))
+        assert.is_nil(out:find("blockquote", 1, true))
+    end)
+
+    it("nests a blockquote three deep", function()
+        local out = md.from_html(
+            "<blockquote>a<blockquote>b<blockquote>c</blockquote></blockquote></blockquote>")
+        assert.are.same({ "> a", ">", "> > b", "> >", "> > > c" }, lines(out))
+    end)
+
+    it("pairs an outer opener that has attributes with the inner one that has none", function()
+        local out = md.from_html('<blockquote class="hint">a<blockquote>b</blockquote></blockquote>')
+        assert.are.same({ "> a", ">", "> > b" }, lines(out))
+        out = md.from_html('<blockquote>a<blockquote cite="x">b</blockquote>c</blockquote>')
+        assert.are.same({ "> a", ">", "> > b", ">", "> c" }, lines(out))
+    end)
+
+    it("converts the markup inside the inner and the outer construct", function()
+        local out = md.from_html(
+            "<blockquote>be <b>careful</b><blockquote>inner <i>note</i></blockquote></blockquote>")
+        assert.are.same({ "> be **careful**", ">", "> > inner *note*" }, lines(out))
+    end)
+
+    it("keeps every item of a nested list", function()
+        local out = md.from_html("<ul><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ul>")
+        for _, item in ipairs({ "a", "b", "c", "d" }) do
+            assert.truthy(out:find("- " .. item, 1, true), "missing item " .. item)
+        end
+        assert.is_nil(out:find("<li", 1, true))
+        assert.is_nil(out:find("</li>", 1, true))
+        assert.is_nil(out:find("<ul", 1, true))
+        assert.is_nil(out:find("</ul>", 1, true))
+        -- Document order survives.
+        assert.is_true(out:find("- a", 1, true) < out:find("- b", 1, true))
+        assert.is_true(out:find("- c", 1, true) < out:find("- d", 1, true))
+    end)
+
+    it("handles a string replacement (%1) through nesting, with or without attributes", function()
+        assert.are.equal("**x**y**z**", md.from_html("<b>x<b>y</b>z</b>"))
+        assert.are.equal("*x*y*z*", md.from_html('<i class="a">x<i>y</i>z</i>'))
+        assert.are.equal("**x**y**z**", md.from_html('<b>x<b class="n">y</b>z</b>'))
+    end)
+
+    it("still converts siblings, in both replacement forms", function()
+        assert.are.equal("**x** and **y**", md.from_html("<b>x</b> and <b>y</b>"))
+        local out = md.from_html("<blockquote>one</blockquote>between<blockquote>two</blockquote>")
+        assert.are.same({ "> one", "", "between", "", "> two" }, lines(out))
+        local pre = md.from_html("<pre>a</pre> text <pre>b</pre>")
+        assert.are.equal(4, select(2, pre:gsub("```", "")))
+        assert.truthy(pre:find("text", 1, true))
+    end)
+
+    it("does not count a longer tag name as a nested opener", function()
+        assert.are.equal("**a<bool>c</bool>**", md.from_html("<b>a<bool>c</bool></b>"))
+    end)
+
+    it("nests deeply without recursing out of the stack", function()
+        local depth = 300
+        local out = md.from_html(("<blockquote>"):rep(depth) .. "x" .. ("</blockquote>"):rep(depth))
+        assert.are.equal(("> "):rep(depth) .. "x", vim.trim(out))
+    end)
+end)
+
+-- Real descriptions are not always balanced. Whatever the markup, the
+-- conversion must finish, never raise, and leave a tag it cannot pair as text.
+describe("markdown.from_html unbalanced tags", function()
+    local function lines(text)
+        return vim.split(vim.trim(text), "\n", { plain = true })
+    end
+
+    it("leaves an unclosed tag as text", function()
+        for _, src in ipairs({
+            "<b>never closed",
+            "<blockquote>never closed",
+            "<li>one<li>two",
+            '<b class="x">never closed',
+        }) do
+            assert.are.equal(src, md.from_html(src))
+        end
+    end)
+
+    it("leaves a closing tag with no opener as text", function()
+        for _, src in ipairs({ "a</b>b", "</blockquote>", "x</li>y" }) do
+            assert.are.equal(src, md.from_html(src))
+        end
+        assert.are.equal("</b>**x**", md.from_html("</b><b>x</b>"))
+        assert.are.equal("**x**</b>", md.from_html("<b>x</b></b>"))
+    end)
+
+    it("converts the balanced inner pair when the outer opener has no closer", function()
+        assert.are.equal("<b>a**b**", md.from_html("<b>a<b>b</b>"))
+        local out = md.from_html("<blockquote>a<blockquote>b</blockquote>")
+        assert.are.same({ "<blockquote>a", "", "> b" }, lines(out))
+    end)
+
+    it("converts the balanced pair when the extra closer comes first or last", function()
+        assert.are.equal("**a**b</b>", md.from_html("<b>a</b>b</b>"))
+        local out = md.from_html("<blockquote>a</blockquote>b</blockquote>")
+        assert.are.same({ "> a", "", "b</blockquote>" }, lines(out))
+    end)
+
+    it("finishes on a long run of unmatched tags", function()
+        local openers = ("<b>"):rep(5000)
+        assert.are.equal(openers, md.from_html(openers))
+        local closers = ("</b>"):rep(5000)
+        assert.are.equal(closers, md.from_html(closers))
+        local quotes = ("<blockquote>"):rep(3000) .. "x"
+        assert.are.equal(quotes, md.from_html(quotes))
+        -- More openers than closers: the extra ones stay, the pairs convert.
+        local half = md.from_html(("<b>"):rep(2000) .. "x" .. ("</b>"):rep(1000))
+        assert.are.equal(("<b>"):rep(1000) .. ("**"):rep(1000) .. "x" .. ("**"):rep(1000), half)
+    end)
+end)

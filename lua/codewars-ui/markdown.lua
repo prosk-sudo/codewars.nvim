@@ -36,16 +36,88 @@ local function openers(tag)
     return { "<" .. tag .. ">", "<" .. tag .. "%s[^>]*>" }
 end
 
---- gsub a paired `<tag>…</tag>` construct, both with and without attributes.
+--- Every opening and closing tag of `tag` in `text`, in document order, as
+--- `{ kind = "open"|"close", s = start, e = end }`. A tag that starts inside
+--- the previous one (a bare `<b>` inside `<b <b>`) is not a tag of its own and
+--- is dropped.
 ---@param text string
 ---@param tag string
----@param repl string|function
+---@return { kind: string, s: integer, e: integer }[]
+local function tag_tokens(text, tag)
+    local found = {}
+    local function collect(pattern, kind, plain)
+        local pos = 1
+        while true do
+            local s, e = text:find(pattern, pos, plain)
+            if not s then return end
+            found[#found + 1] = { kind = kind, s = s, e = e }
+            pos = e + 1
+        end
+    end
+    for _, pattern in ipairs(openers(tag)) do collect(pattern, "open") end
+    collect("</" .. tag .. ">", "close", true)
+    table.sort(found, function(a, b) return a.s < b.s end)
+
+    local tokens, last_end = {}, 0
+    for _, token in ipairs(found) do
+        if token.s > last_end then
+            tokens[#tokens + 1] = token
+            last_end = token.e
+        end
+    end
+    return tokens
+end
+
+--- The replacement for one matched construct: `repl(inner)` for a function,
+--- or the string with its `%1` (the inner text) and `%%` expanded the way
+--- gsub reads them. A function must return a string.
+---@param repl string|fun(inner: string): string
+---@param inner string
+---@return string
+local function expand(repl, inner)
+    if type(repl) == "function" then return repl(inner) end
+    return (repl:gsub("%%([%%1])", function(c) return c == "1" and inner or "%" end))
+end
+
+--- Replace each paired `<tag>…</tag>` construct, both with and without
+--- attributes. Each closing tag pairs with the nearest unclosed opener of the
+--- same tag, so `<blockquote>a<blockquote>b</blockquote>c</blockquote>` is two
+--- constructs, not one cut at the first `</blockquote>`. The inner one is
+--- converted first, and its result is part of the outer one's `inner`.
+---
+--- Unbalanced markup never errors: a closing tag with no opener, and an opener
+--- with no closer, stay in the text exactly as written. One pass over the
+--- tags, no recursion, so neither a long run of unmatched tags nor deep
+--- nesting costs more than its length.
+---@param text string
+---@param tag string
+---@param repl string|fun(inner: string): string
 ---@return string
 local function paired(text, tag, repl)
-    for _, open in ipairs(openers(tag)) do
-        text = text:gsub(open .. "(.-)</" .. tag .. ">", repl)
+    -- `out` is the converted text so far, in pieces. An opener goes in as
+    -- literal text and its index in `out` onto `waiting`; if a closer claims
+    -- it, everything after it is the construct's inner text and is replaced,
+    -- and if none does, the opener is simply still there.
+    local out, waiting = {}, {}
+    local pos = 1
+    for _, token in ipairs(tag_tokens(text, tag)) do
+        out[#out + 1] = text:sub(pos, token.s - 1)
+        pos = token.e + 1
+        local literal = text:sub(token.s, token.e)
+        if token.kind == "open" then
+            out[#out + 1] = literal
+            waiting[#waiting + 1] = #out
+        elseif #waiting > 0 then
+            local opener = table.remove(waiting)
+            local inner = table.concat(out, "", opener + 1)
+            for i = #out, opener, -1 do out[i] = nil end
+            out[#out + 1] = expand(repl, inner)
+        else
+            out[#out + 1] = literal -- a closing tag with no opener
+        end
     end
-    return text
+    out[#out + 1] = text:sub(pos)
+    return table.concat(out)
 end
 
 --- A placeholder stash. Anything handed to `keep` is swapped for an opaque

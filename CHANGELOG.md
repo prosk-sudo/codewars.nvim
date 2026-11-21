@@ -68,6 +68,12 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- A kata description with one tag nested inside another of the same name,
+  such as a blockquote in a blockquote, no longer leaves broken markup behind.
+  The converter ended the outer tag at the first closing tag it met; it now
+  pairs each closing tag with its own opener, so nested quotes render as `>`
+  and `> >` and nested list items are all kept. A tag with no partner is left
+  as written (#30).
 - The solutions popup no longer runs off the screen on a very short editor.
   When there is no room for both panes it drops the info box (or the
   comments pane) and keeps the code, and it never starts above the top row
