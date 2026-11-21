@@ -704,6 +704,111 @@ describe("cache.problemlist daily check", function()
         assert.equals(0, #warnings())
     end)
 
+    -- "Nothing new on this page" only holds for a page that was read whole.
+    -- Blocks the parser dropped could be the new kata, and the page after
+    -- them may hold more that can be read.
+    describe("when a page left blocks out", function()
+        local CHECKED = 2 * DAY -- how long ago the list was last looked at
+
+        it("goes on to the next page even though every readable entry is unchanged", function()
+            stored[LIST] = list_of({ kata("a"), kata("b") }, 10 * DAY, CHECKED)
+            page_script = function(page)
+                if page == 0 then return { kata("a"), kata("b") }, true, nil, 1 end
+                if page == 1 then return { kata("c"), kata("d") }, true, nil, 0 end
+                return { kata("a") }, true, nil, 0
+            end
+
+            problemlist.refresh_if_stale()
+            settle()
+
+            assert.is_true(#requested >= 2, "stopped at the page that dropped a block")
+            assert.same({ "a", "b", "c", "d" }, ids(list_writes()[1].data.items))
+        end)
+
+        it("merges what it read but does not record the look as complete", function()
+            stored[LIST] = list_of({ kata("a") }, 10 * DAY, CHECKED)
+            local checked_before = stored[LIST].checked_at
+            page_script = function(page)
+                if page == 0 then return { kata("a") }, true, nil, 1 end
+                if page == 1 then return { kata("c") }, true, nil, 0 end
+                return { kata("a") }, true, nil, 0
+            end
+
+            problemlist.refresh_if_stale()
+            settle()
+
+            local w = list_writes()
+            assert.equals(1, #w)
+            assert.same({ "a", "c" }, ids(w[1].data.items))
+            assert.equals(checked_before, w[1].data.checked_at, "checked_at was advanced")
+        end)
+
+        it("looks again at the next open", function()
+            stored[LIST] = list_of({ kata("a") }, 10 * DAY, CHECKED)
+            page_script = function() return { kata("a") }, true, nil, 1 end
+
+            problemlist.refresh_if_stale()
+            settle()
+
+            assert.equals(0, #list_writes(), "nothing was merged, so nothing should be written")
+            assert.is_true(problemlist.check_for_new())
+            settle() -- let that look finish before the next test resets the stubs
+        end)
+
+        it("stops at the page limit when every page left some out, merging the readable ones", function()
+            stored[LIST] = list_of({ kata("a") }, 10 * DAY, CHECKED)
+            local checked_before = stored[LIST].checked_at
+            page_script = function(page) return { kata("new" .. page) }, true, nil, 1 end
+
+            problemlist.refresh_if_stale()
+            settle()
+
+            assert.equals(problemlist.CHECK_MAX_PAGES, #requested)
+            local w = list_writes()
+            assert.equals(1, #w)
+            assert.equals(1 + problemlist.CHECK_MAX_PAGES, #w[1].data.items)
+            assert.equals(checked_before, w[1].data.checked_at, "checked_at was advanced")
+        end)
+
+        it("warns once with the total however many pages left some out", function()
+            stored[LIST] = list_of({ kata("a") }, 10 * DAY, CHECKED)
+            page_script = function() return { kata("a") }, true, nil, 2 end
+
+            problemlist.refresh_if_stale()
+            settle()
+
+            assert.equals(problemlist.CHECK_MAX_PAGES, #requested)
+            local warns = warnings()
+            assert.equals(1, #warns, vim.inspect(said))
+            assert.truthy(warns[1].msg:find(tostring(2 * problemlist.CHECK_MAX_PAGES), 1, true), warns[1].msg)
+        end)
+
+        it("stops at the last page the listing has, without waiting for the limit", function()
+            stored[LIST] = list_of({ kata("a") }, 10 * DAY, CHECKED)
+            page_script = function() return { kata("a") }, false, nil, 1 end
+
+            problemlist.refresh_if_stale()
+            settle()
+
+            assert.equals(1, #requested)
+        end)
+    end)
+
+    -- The other side of it: a page read whole, with nothing new on it, is
+    -- still the end of the look, and the look is recorded.
+    it("still stops at a clean page with nothing new, and records the look", function()
+        stored[LIST] = list_of({ kata("a") }, 10 * DAY, 2 * DAY)
+        page_script = function() return { kata("a") }, true, nil, 0 end
+
+        problemlist.refresh_if_stale()
+        settle()
+
+        assert.equals(1, #requested)
+        local w = list_writes()
+        assert.equals(1, #w)
+        assert.is_true(os.time() - w[1].data.checked_at < 5, "checked_at was not advanced")
+    end)
+
     it("does not overwrite a list rebuilt while it was looking", function()
         stored[LIST] = list_of({ kata("a") }, 2 * DAY)
         page_script = function(page)

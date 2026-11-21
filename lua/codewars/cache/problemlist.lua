@@ -158,9 +158,9 @@ local checking = false
 ---
 --- A full build is ~290 pages under a rate limit -- minutes -- to pick up
 --- what is usually a handful of new kata. Codewars' "Newest" listing puts
---- them first, so this reads it until a page brings nothing the list does
---- not already have. Kept to CHECK_MAX_PAGES; the full rebuild every
---- `cache.update_interval` still catches anything this misses.
+--- them first, so this reads it until a page, read whole, brings nothing the
+--- list does not already have. Kept to CHECK_MAX_PAGES; the full rebuild
+--- every `cache.update_interval` still catches anything this misses.
 ---@return boolean started false when not due, already running, or there is no list
 function problemlist.check_for_new()
     if build or checking then return false end
@@ -181,7 +181,9 @@ function problemlist.check_for_new()
     local added, updated, dropped = 0, 0, 0
 
     --- Only a look that finished is recorded: a failed one leaves
-    --- checked_at alone, so the next open tries again.
+    --- checked_at alone, so the next open tries again. So does one that
+    --- left blocks out: it merges what it could read, but it has not seen
+    --- all of "Newest", and is not a look that found nothing more.
     local function finish(ok)
         checking = false
         warn_dropped(dropped)
@@ -192,7 +194,11 @@ function problemlist.check_for_new()
         if build or type(current) ~= "table" or current.timestamp ~= data.timestamp then
             return
         end
-        data.checked_at = os.time()
+        if dropped == 0 then
+            data.checked_at = os.time()
+        elseif added + updated == 0 then
+            return
+        end
         cache_utils.write_json(cache_file(), data)
         if added + updated > 0 then
             log.info(("Kata list: %d new, %d updated"):format(added, updated))
@@ -228,7 +234,11 @@ function problemlist.check_for_new()
                     updated, changes = updated + 1, changes + 1
                 end
             end
-            if changes == 0 or not has_more or page + 1 >= problemlist.CHECK_MAX_PAGES then
+            -- "Nothing new here" ends the look only for a page that was read
+            -- whole. One that left blocks out may have dropped the new kata,
+            -- and the next page may hold more that can be read.
+            local nothing_new = changes == 0 and (page_dropped or 0) == 0
+            if nothing_new or not has_more or page + 1 >= problemlist.CHECK_MAX_PAGES then
                 return finish(true)
             end
             vim.defer_fn(function() look(page + 1) end, problemlist.PACE_MS)

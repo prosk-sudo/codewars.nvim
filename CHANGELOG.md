@@ -197,7 +197,8 @@ All notable changes to codewars.nvim are documented here.
   read now stops the kata list build (the cache is left as it was) and the
   daily check with a warning that the markup may have changed, instead of
   passing for the end of a rank. When only some are dropped, the rest are
-  kept and one warning says how many (#27).
+  kept and one warning says how many; the daily check then reads on past
+  that page and looks again at the next open (#27).
 
 ## [0.3.4] - 2026-08-29
 
