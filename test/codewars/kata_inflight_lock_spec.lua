@@ -321,10 +321,9 @@ describe("KataEditor while an unpublish or delete is in flight", function()
             assert.is_true(other.model.published)
         end)
 
-        it("find the kata deleted, refuse every action and close", function()
+        it("find the kata deleted and refuse every action", function()
             local first = workspace(true)
             local reopened = workspace(true)
-            local closes = count_closes(reopened)
             open(reopened)
             first:delete()
             prompt(true)
@@ -332,7 +331,6 @@ describe("KataEditor while an unpublish or delete is in flight", function()
             replies.delete(nil)
 
             assert.are.equal("deleted", reopened.state)
-            assert.are.equal(1, closes.n)
             reopened:save()
             reopened:publish()
             assert.is_nil(calls.save, "a deleted kata must not be saved")
@@ -340,7 +338,7 @@ describe("KataEditor while an unpublish or delete is in flight", function()
             assert.truthy(warned[1]:find("deleted", 1, true), warned[1])
         end)
 
-        it("close once, not twice, when the sender is registered too", function()
+        it("close only the sender after a successful delete", function()
             local first = workspace(true)
             local beside = workspace(true)
             local first_closes, beside_closes = count_closes(first), count_closes(beside)
@@ -351,8 +349,88 @@ describe("KataEditor while an unpublish or delete is in flight", function()
             replies.delete(nil)
 
             assert.are.equal("deleted", beside.state)
-            assert.are.equal(1, first_closes.n)
-            assert.are.equal(1, beside_closes.n)
+            assert.are.equal(1, first_closes.n, "the sender asked for the delete, so it closes")
+            assert.are.equal(0, beside_closes.n, "another workspace may hold unsaved text")
+        end)
+
+        describe("keep an unsaved edit through a successful delete", function()
+            local cleanups
+
+            before_each(function() cleanups = {} end)
+
+            after_each(function()
+                for _, cleanup in ipairs(cleanups) do
+                    pcall(cleanup)
+                end
+            end)
+
+            --- Give a workspace what mount() gives it: a window in a tab of its
+            --- own and one acwrite buffer per pane, then type into the answer.
+            local function mount_with_unsaved_edit(ws)
+                vim.cmd("tabnew")
+                ws.winid = vim.api.nvim_get_current_win()
+                ws.bufs = {}
+                for _, pane in ipairs(KataEditor.PANES) do
+                    local bufnr = vim.api.nvim_create_buf(false, true)
+                    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(ws:loaded_value(pane.key), "\n"))
+                    vim.bo[bufnr].buftype = "acwrite"
+                    ws.bufs[pane.key] = bufnr
+                end
+                ws:snapshot()
+                vim.api.nvim_buf_set_lines(ws.bufs.answer, 0, -1, false, { "typed = 1" })
+                cleanups[#cleanups + 1] = function()
+                    for _, bufnr in pairs(ws.bufs) do
+                        vim.api.nvim_buf_delete(bufnr, { force = true })
+                    end
+                    vim.cmd("tabclose!")
+                end
+                cleanups[#cleanups + 1] = function()
+                    require("codewars.cache.kata_stash").delete(KATA_ID)
+                end
+            end
+
+            it("leaving that workspace open, locked, readable and still modified", function()
+                local sender = workspace(true)
+                local other = workspace(true)
+                mount_with_unsaved_edit(other)
+                local answer = other.bufs.answer
+                assert.is_true(vim.bo[answer].modified, "precondition: the edit is unsaved")
+                open(sender, other)
+                sender:delete()
+                prompt(true)
+
+                replies.delete(nil)
+
+                assert.is_true(vim.api.nvim_win_is_valid(other.winid), "the workspace must stay open")
+                assert.are.equal("deleted", other.state)
+                for _, action in ipairs({ "edit", "validate", "save", "publish", "unpublish", "delete" }) do
+                    local next_state, why = other:_step(action)
+                    assert.is_nil(next_state, action .. " must be refused")
+                    assert.is_string(why)
+                end
+                assert.are.same({ "typed = 1" }, vim.api.nvim_buf_get_lines(answer, 0, -1, false))
+                assert.is_true(vim.bo[answer].modified, "the unsaved flag must survive")
+                assert.is_true(other:is_dirty(), "the edit must still count as unsaved")
+                assert.is_false(vim.bo[answer].modifiable, "locked, but readable and copyable")
+            end)
+
+            it("so that closing it afterwards still stashes the text", function()
+                local sender = workspace(true)
+                local other = workspace(true)
+                mount_with_unsaved_edit(other)
+                open(sender, other)
+                sender:delete()
+                prompt(true)
+                replies.delete(nil)
+
+                other:_unmount()
+                -- _unmount hands the buffers over on the next loop turn
+                vim.wait(50, function() return false end)
+
+                local stashed = require("codewars.cache.kata_stash").get(KATA_ID)
+                assert.is_table(stashed, "closing a modified workspace must stash its text")
+                assert.are.equal("typed = 1", stashed.languages.python.answer)
+            end)
         end)
 
         it("are left alone when the delete fails or a different kata is deleted", function()

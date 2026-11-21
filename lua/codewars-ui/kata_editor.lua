@@ -582,12 +582,14 @@ function KataEditor:_apply_unpublished()
 end
 
 --- A finished delete, as one workspace sees it: the kata is gone, so lock for
---- good and close, as the workspace that sent the request does.
+--- good. This does not close the workspace or snapshot it: a workspace that did
+--- not ask for the delete may hold text its user has not saved, and marking
+--- that as saved would let a later close drop it unstashed. Locked, the panes
+--- stay readable and copyable and keep their modified flag, so closing it
+--- goes through _unmount's normal stash-or-rescue path.
 function KataEditor:_apply_deleted()
     self:set_state(kstate.step("deleting", "delete_done")) -- "deleted"
     self:refresh_title()
-    self:snapshot() -- the kata is gone; nothing to warn about on close
-    self:close()
 end
 
 --- Tell every open workspace of a kata that an unpublish or delete succeeded.
@@ -596,6 +598,13 @@ end
 --- that held it back is gone now, so it would keep that stale state. The
 --- sender is applied directly because it may already be closed, which leaves
 --- it out of the registry.
+---
+--- Known limitation: only workspaces registered when the reply arrives hear
+--- about it. One whose mount finishes after the reply (the kata reopened, its
+--- page fetched before the request took effect) never sees the outcome and
+--- shows the state it loaded with. Closing that gap would mean reconciling at
+--- mount time against this module's in-flight record, which was judged not
+--- worth it for a close-and-reopen inside a single request's round trip.
 ---@param sender cw.ui.KataEditor
 ---@param apply fun(ws: cw.ui.KataEditor)
 local function apply_outcome(sender, apply)
@@ -859,6 +868,10 @@ function KataEditor:delete()
             -- rename) must find the kata gone, not a draft it can publish.
             apply_outcome(self, function(ws) ws:_apply_deleted() end)
             log.info("Kata deleted.")
+            -- Only the sender closes: the user asked for this delete from it,
+            -- so there is nothing worth warning about on close.
+            self:snapshot()
+            self:close()
         end)
     end)
 end
