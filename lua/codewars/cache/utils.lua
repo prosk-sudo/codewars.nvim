@@ -36,14 +36,15 @@ local function warn_once(key, message)
     log.warn(message)
 end
 
---- `path` is not usable. A good copy at its backup's name is written back into
---- it and returned; the backup stays where it is (only a writer removes one).
----@param path Path
+--- `file` is absent, or was read in full and is damaged. A good copy at its
+--- backup's name is written back into it and returned; the backup stays where
+--- it is (only a writer removes one).
+---@param file string
+---@param main_stat table? the descriptor's stat when `file` was read
 ---@return table? data the backup's, when it was recovered
-local function recover(path)
-    local file = backup.file_name(path)
+local function recover(file, main_stat)
     if not backup.has_backup(file) then return nil end
-    local recovered, err = backup.settle(file, parse)
+    local recovered, err = backup.settle(file, parse, main_stat)
     if recovered == nil then return nil end
     if not err then
         reported[file] = nil
@@ -58,10 +59,14 @@ end
 ---@param path Path
 ---@return table?
 function M.read_json(path)
-    local text = backup.read(backup.file_name(path))
-    local data = text and parse(text) or nil
+    local file = backup.file_name(path)
+    local state, detail, stat = backup.read_main(file)
+    -- Could not be read: not known to be damaged, so not recovered over.
+    if state == "unreadable" then return nil end
+    local data = state == "read" and parse(detail) or nil
     if data ~= nil then return data end
-    return recover(path)
+    -- Absent, or read in full and empty or undecodable.
+    return recover(file, stat)
 end
 
 --- Write `data` as JSON. Returns whether it actually landed, so callers that

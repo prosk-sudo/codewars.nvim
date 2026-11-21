@@ -126,8 +126,9 @@ describe("cache backups", function()
                     if uv.fs_access(bak, "R") then return pending("running as a user that ignores file modes") end
                 else
                     uv.fs_open = function(path, flags, mode)
-                        if path == bak and (flags == "r" or type(flags) == "number") then
-                            return nil, "EACCES: permission denied: " .. bak
+                        local writing = type(flags) == "number" and bit.band(flags, uv.constants.O_WRONLY) ~= 0
+                        if path == bak and not writing then
+                            return nil, "EACCES: permission denied: " .. bak, "EACCES"
                         end
                         return real_open(path, flags, mode)
                     end

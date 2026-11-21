@@ -36,7 +36,7 @@ describe("cache.utils write_json, state by state", function()
     local log = require("codewars.logger")
     local cache_utils = require("codewars.cache.utils")
     local saved_storage, real_error, real_warn, real_write, real_open, errors, warnings
-    local real_read, real_fstat, real_lstat
+    local real_read, real_fstat, real_lstat, real_close
     local tmp, file, bak, original, good_bak, fresh, payload
 
     before_each(function()
@@ -44,7 +44,7 @@ describe("cache.utils write_json, state by state", function()
         vim.fn.mkdir(tmp, "p")
         saved_storage, real_error, real_warn = config.storage, log.error, log.warn
         real_write, real_open, errors, warnings = uv.fs_write, uv.fs_open, {}, {}
-        real_read, real_fstat, real_lstat = uv.fs_read, uv.fs_fstat, uv.fs_lstat
+        real_read, real_fstat, real_lstat, real_close = uv.fs_read, uv.fs_fstat, uv.fs_lstat, uv.fs_close
         config.storage = { home = P:new(tmp), cache = P:new(tmp) }
         log.error = function(msg) errors[#errors + 1] = tostring(msg) end
         log.warn = function(msg) warnings[#warnings + 1] = tostring(msg) end
@@ -57,7 +57,7 @@ describe("cache.utils write_json, state by state", function()
 
     after_each(function()
         uv.fs_write, uv.fs_open, uv.fs_read = real_write, real_open, real_read
-        uv.fs_fstat, uv.fs_lstat = real_fstat, real_lstat
+        uv.fs_fstat, uv.fs_lstat, uv.fs_close = real_fstat, real_lstat, real_close
         config.storage, log.error, log.warn = saved_storage, real_error, real_warn
         pcall(uv.fs_chmod, tmp, 493)
         pcall(uv.fs_chmod, file, 420)
@@ -244,7 +244,7 @@ describe("cache.utils write_json, state by state", function()
             assert.equals(good_bak, slurp(bak))
         end)
 
-        it("is used as it is when the directory cannot be written: nothing needs creating, the stale copy stays", function()
+        it("is used as it is when the directory cannot be written, and emptied since it cannot be removed", function()
             spit(file, "{ torn")
             spit(bak, good_bak)
             if not cannot_write_dir() then return pending("running as a user that ignores directory modes") end
@@ -253,8 +253,8 @@ describe("cache.utils write_json, state by state", function()
 
             assert.is_true(ok)
             assert.same(fresh, vim.json.decode(slurp(file)))
-            assert.equals(good_bak, slurp(bak), "a backup that cannot be removed was changed")
-            assert.same(fresh, cache_utils.read_json(P:new(file)), "a stale backup shadowed the cache that reads fine")
+            assert.equals(0, uv.fs_stat(bak).size, "a backup that cannot be removed was left to be recovered from")
+            assert.same(fresh, cache_utils.read_json(P:new(file)))
         end)
 
         it("is not touched by the retry that follows a recovery that could not be written back", function()
@@ -298,19 +298,28 @@ describe("cache.utils write_json, state by state", function()
         end)
     end)
 
-    --- Whether an open is for reading: by name before, by number now.
-    local function is_read_open(flags) return flags == "r" or type(flags) == "number" end
+    --- Whether an open is for writing (by name, or by the flag bits), or for reading.
+    local WRITE_BITS = bit.bor(uv.constants.O_WRONLY, uv.constants.O_RDWR, uv.constants.O_CREAT)
+    local function is_write_open(flags)
+        return flags == "w" or flags == "wx" or flags == "r+"
+            or (type(flags) == "number" and bit.band(flags, WRITE_BITS) ~= 0)
+    end
+    local function is_read_open(flags) return not is_write_open(flags) end
 
     --- Reads of the backup fail the way a permission or an I/O error would:
     --- the open itself ("open"), or a read after a good open ("read").
     local function bak_unreadable(how)
         local fds = {}
+        uv.fs_close = function(fd)
+            fds[fd] = nil -- descriptor numbers are reused
+            return real_close(fd)
+        end
         uv.fs_open = function(path, flags, mode)
             if path ~= bak or not is_read_open(flags) then return real_open(path, flags, mode) end
-            if how == "open" then return nil, "EACCES: permission denied: " .. bak end
-            local fd, err = real_open(path, flags, mode)
+            if how == "open" then return nil, "EACCES: permission denied: " .. bak, "EACCES" end
+            local fd, err, name = real_open(path, flags, mode)
             if fd then fds[fd] = true end
-            return fd, err
+            return fd, err, name
         end
         uv.fs_read = function(fd, size, offset)
             if fds[fd] then return nil, "EIO: i/o error" end
@@ -375,7 +384,7 @@ describe("cache.utils write_json, state by state", function()
             assert.is_nil(uv.fs_lstat(bak))
         end)
 
-        it("is left alone beside a new file, which touches no backup", function()
+        it("is removed once a new file has landed beside it: it is stale then, and may not stay unread", function()
             spit(bak, good_bak)
             bak_unreadable("open")
 
@@ -384,7 +393,7 @@ describe("cache.utils write_json, state by state", function()
             uv.fs_open = real_open
             assert.is_true(ok)
             assert.same(fresh, vim.json.decode(slurp(file)))
-            assert.equals(good_bak, slurp(bak))
+            assert.is_nil(uv.fs_lstat(bak))
         end)
     end)
 
@@ -489,6 +498,10 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
         --- Make the descriptor of the backup say something else than the lstat did.
         local function fstat_says(change)
             local fds = {}
+            uv.fs_close = function(fd)
+                fds[fd] = nil -- descriptor numbers are reused
+                return real_close(fd)
+            end
             uv.fs_open = function(path, flags, mode)
                 local fd, err = real_open(path, flags, mode)
                 if fd and path == bak and is_read_open(flags) then fds[fd] = true end
@@ -644,7 +657,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
         it("planted between the check and the create is not followed either", function()
             spit(file, original)
             uv.fs_open = function(path, flags, mode)
-                if path == bak and flags ~= "r" then uv.fs_symlink(target, bak) end
+                if path == bak and is_write_open(flags) then uv.fs_symlink(target, bak) end
                 return real_open(path, flags, mode)
             end
 
