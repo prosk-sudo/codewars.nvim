@@ -135,6 +135,156 @@ end
         end)
     end)
 
+    -- `default` and `force` say how a group is set, not what it looks like, so
+    -- a link that carries only those is still a link.
+    --
+    -- A group given `{ link = X, default = true }` keeps that link for the rest
+    -- of the process: `highlight clear` restores it and nothing removes it. So
+    -- each test below takes groups of its own that no other test uses.
+    describe("a link override with keys that only control how it is set", function()
+        local SPARE = {
+            "codewars_rate_white",
+            "codewars_rate_yellow",
+            "codewars_rate_orange",
+            "codewars_rate_green",
+            "codewars_rate_blue",
+            "codewars_rate_red",
+            "codewars_rate_pink",
+            "codewars_rate_purple",
+            "codewars_rate_gray",
+            "codewars_rate_brown",
+            "codewars_rate_black",
+            "codewars_lang_elixir",
+            "codewars_lang_swift",
+            "codewars_lang_kotlin",
+            "codewars_lang_scala",
+            "codewars_lang_php",
+        }
+        local taken = 0
+        local function spare_group()
+            taken = taken + 1
+            return assert(SPARE[taken], "out of spare groups")
+        end
+
+        it("default = true is a real link when the group has no definition", function()
+            local group = spare_group()
+            setup_cold({ [group] = { link = "Comment", default = true } })
+            local h = raw(group)
+            assert.are.equal("Comment", h.link)
+            assert.is_nil(h.fg)
+            assert.is_nil(h.bold)
+        end)
+
+        it("default = true follows a later change to the link target", function()
+            local group = spare_group()
+            setup_cold({ [group] = { link = "Comment", default = true } })
+            vim.api.nvim_set_hl(0, "Comment", { fg = 0xaabbcc, bg = 0x010203 })
+            assert.are.equal(0xaabbcc, resolved(group).fg)
+            assert.are.equal(0x010203, resolved(group).bg)
+        end)
+
+        it("default = true leaves an existing definition alone", function()
+            local group = spare_group()
+            setup_cold({ [group] = { link = "Comment", default = true } }, { [group] = { fg = 0x00ff00 } })
+            local h = raw(group)
+            assert.are.equal(0x00ff00, h.fg)
+            assert.is_nil(h.link)
+        end)
+
+        it("force = true is a real link", function()
+            local group = spare_group()
+            setup_cold({ [group] = { link = "Comment", force = true } })
+            local h = raw(group)
+            assert.are.equal("Comment", h.link)
+            assert.is_nil(h.fg)
+            assert.is_nil(h.bold)
+        end)
+
+        it("force = true replaces an existing definition with the link", function()
+            local group = spare_group()
+            setup_cold({ [group] = { link = "Comment", force = true } }, { [group] = { fg = 0x00ff00 } })
+            local h = raw(group)
+            assert.are.equal("Comment", h.link)
+            assert.is_nil(h.fg)
+        end)
+
+        it("passes default through when a style key makes it a copied color", function()
+            local group = spare_group()
+            setup_cold({ [group] = { link = "Comment", bold = true, default = true } })
+            local h = raw(group)
+            assert.are.equal(0x778899, h.fg)
+            assert.is_true(h.bold)
+            assert.is_true(h.default)
+            assert.is_nil(h.link)
+        end)
+
+        it("passes default through to leave an existing definition alone", function()
+            local group = spare_group()
+            setup_cold(
+                { [group] = { link = "Comment", bold = true, default = true } },
+                { [group] = { fg = 0x00ff00 } }
+            )
+            assert.are.equal(0x00ff00, raw(group).fg)
+            assert.is_nil(raw(group).bold)
+        end)
+
+        it("passes force through when a style key makes it a copied color", function()
+            local group = spare_group()
+            setup_cold(
+                { [group] = { link = "Comment", bold = true, force = true } },
+                { [group] = { fg = 0x00ff00 } }
+            )
+            local h = raw(group)
+            assert.are.equal(0x778899, h.fg)
+            assert.is_true(h.bold)
+        end)
+
+        describe("seen from a styled link to the group", function()
+            -- a head with the override and a follower that links to it
+            local function pair()
+                local head, follower = spare_group(), spare_group()
+                local overrides = {
+                    [head] = { link = "Comment", default = true },
+                    [follower] = { link = head, italic = true },
+                }
+                return head, follower, overrides
+            end
+
+            it("resolves to the link target's color when nothing was kept", function()
+                local _, follower, overrides = pair()
+                setup_cold(overrides)
+                local h = raw(follower)
+                assert.are.equal(0x778899, h.fg)
+                assert.are.equal(244, h.ctermfg)
+                assert.is_true(h.italic)
+            end)
+
+            it("follows the link target through a :colorscheme", function()
+                local head, follower, overrides = pair()
+                setup_cold(overrides)
+                use_colorscheme(0xaabbcc)
+                assert.are.equal("Comment", raw(head).link)
+                local h = raw(follower)
+                assert.are.equal(0xaabbcc, h.fg)
+                assert.are.equal(99, h.ctermfg)
+            end)
+
+            it("resolves through what Neovim kept when the group was already defined", function()
+                local head, follower, overrides = pair()
+                setup_cold(overrides, { [head] = { link = "Title" } })
+                assert.are.equal("Title", raw(head).link)
+                assert.are.equal(0x112233, raw(follower).fg)
+            end)
+
+            it("resolves through a definition the new colorscheme gave the group", function()
+                local head, follower, overrides = pair()
+                setup_cold(overrides)
+                use_colorscheme(0x445566, { [head] = { fg = 0x00ff00 } })
+                assert.are.equal(0x00ff00, raw(follower).fg)
+            end)
+        end)
+    end)
+
     describe("on :colorscheme", function()
         it("keeps every codewars group set", function()
             vim.cmd.colorscheme("default")

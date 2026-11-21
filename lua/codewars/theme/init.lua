@@ -103,6 +103,12 @@ local highlights = {
     codewars_lang_cfml = { fg = "#ED2CD6" },        -- CFML magenta
 }
 
+--- Keys of an `nvim_set_hl` definition that say how the group is set, not what
+--- it looks like: `default` keeps a definition the group already has, `force`
+--- replaces one. They are not style, so a link that carries only these is
+--- still a link.
+local SET_KEYS = { default = true, force = true }
+
 local colors
 
 --- The definition to set for one codewars group.
@@ -112,6 +118,8 @@ local colors
 --- A link cannot carry attributes, so `{ link = "X", bold = true }` becomes X's
 --- foreground with the style keys on top (an explicit fg wins). Only the
 --- foreground is taken, never the background, so a float keeps its own.
+--- SET_KEYS are not style keys: `{ link = "X", default = true }` stays a link,
+--- and in the copied form they are passed on to `nvim_set_hl` unchanged.
 ---@param name string a key of `highlights`
 ---@param ctx { overrides: table, kept: table<string, true> } see apply()
 ---@param seen table<string, true> the groups on the chain of links that led here
@@ -125,17 +133,19 @@ local function definition(name, ctx, seen)
         return vim.tbl_deep_extend("force", spec, override)
     end
 
-    local style = {}
+    local style, set_keys = {}, {}
     for key, value in pairs(override) do
-        if key ~= "link" then
+        if SET_KEYS[key] then
+            set_keys[key] = value
+        elseif key ~= "link" then
             style[key] = value
         end
     end
     if next(style) == nil then
-        return { link = override.link }
+        return vim.tbl_extend("force", { link = override.link }, set_keys)
     end
     local base = colors(override.link, ctx, seen)
-    return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
+    return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style, set_keys)
 end
 
 --- The foreground (fg, ctermfg) that `target` has once apply() has run.
