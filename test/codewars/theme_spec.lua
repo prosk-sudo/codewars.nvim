@@ -54,8 +54,9 @@ end
 
     -- A cold start, like the first setup() of a session or the apply right
     -- after a `:colorscheme`: none of our groups is defined when apply() runs.
-    -- `aliases`: groups that are not ours (name -> definition), defined before
-    -- setup() the way a colorscheme defines its own.
+    -- `aliases`: other groups (name -> definition) defined before setup() the
+    -- way a colorscheme defines its own: ones that are not ours, or one of
+    -- ours that the colorscheme has already defined.
     local function setup_cold(overrides, aliases)
         vim.cmd("highlight clear")
         define_colorscheme_groups()
@@ -387,6 +388,30 @@ end
                     assert_chain_follows(0xaabbcc, 99)
                 end)
             end)
+
+            -- A head that is `default = true` and already defined keeps its
+            -- definition; every link of the chain has to see that one, in
+            -- whatever order apply() reaches the groups.
+            describe("a chain whose head keeps its definition, " .. direction.name, function()
+                local head = { fg = "#ff0000", default = true }
+
+                it("follows the definition the head already has", function()
+                    setup_cold(chain_overrides(head), { [CHAIN[1]] = { fg = 0x00ff00 } })
+                    assert.are.equal(0x00ff00, raw(CHAIN[1]).fg)
+                    assert_chain_follows(0x00ff00, nil)
+                end)
+
+                it("follows the override when the head has no definition", function()
+                    setup_cold(chain_overrides(head))
+                    assert_chain_follows(0xff0000, nil)
+                end)
+
+                it("follows a definition the new colorscheme gave the head", function()
+                    setup_cold(chain_overrides(head))
+                    use_colorscheme(0x445566, { [CHAIN[1]] = { fg = 0x00ff00 } })
+                    assert_chain_follows(0x00ff00, nil)
+                end)
+            end)
         end
 
         describe("that form a cycle", function()
@@ -507,6 +532,65 @@ end
                 assert.is_true(raw("codewars_rank_white").bold)
                 assert.is_nil(raw("codewars_rank_white").fg)
                 assert.are.equal(0xb1361e, raw("codewars_header").fg)
+            end)
+        end)
+
+        -- `default = true` keeps a definition the group already has, so a link
+        -- to the group has to see that definition, not the override's.
+        describe("to a group whose override is default = true", function()
+            local GREEN, RED = 0x00ff00, 0xff0000
+            local overrides = {
+                codewars_lang_python = { fg = "#ff0000", default = true },
+                codewars_header = { link = "codewars_lang_python", italic = true },
+            }
+
+            it("takes the definition the group already has", function()
+                setup_cold(overrides, { codewars_lang_python = { fg = GREEN } })
+                assert.are.equal(GREEN, raw("codewars_lang_python").fg)
+                local h = raw("codewars_header")
+                assert.are.equal(GREEN, h.fg)
+                assert.is_true(h.italic)
+            end)
+
+            it("takes the override when the group has no definition yet", function()
+                setup_cold(overrides)
+                assert.are.equal(RED, raw("codewars_lang_python").fg)
+                assert.are.equal(RED, raw("codewars_header").fg)
+            end)
+
+            it("sees a definition that the new colorscheme gave the group", function()
+                setup_cold(overrides)
+                use_colorscheme(0x445566, { codewars_lang_python = { fg = GREEN } })
+                assert.are.equal(GREEN, raw("codewars_lang_python").fg)
+                assert.are.equal(GREEN, raw("codewars_header").fg)
+            end)
+
+            it("goes back to the override under a colorscheme that leaves the group undefined", function()
+                setup_cold(overrides, { codewars_lang_python = { fg = GREEN } })
+                use_colorscheme(0x445566)
+                assert.are.equal(RED, raw("codewars_lang_python").fg)
+                assert.are.equal(RED, raw("codewars_header").fg)
+            end)
+
+            it("follows a link the group already has to a group of the colorscheme", function()
+                setup_cold(overrides, { codewars_lang_python = { link = "Comment" } })
+                local h = raw("codewars_header")
+                assert.are.equal(0x778899, h.fg)
+                assert.are.equal(244, h.ctermfg)
+            end)
+
+            it("follows a link the group already has into another codewars group", function()
+                local with_go = vim.tbl_extend("force", overrides, { codewars_lang_go = { fg = "#00ff00" } })
+                setup_cold(with_go, { codewars_lang_python = { link = "codewars_lang_go" } })
+                assert.are.equal(GREEN, raw("codewars_header").fg)
+            end)
+
+            it("gives no color to a cycle through the group's existing link and does not error", function()
+                assert.has_no.errors(function()
+                    setup_cold(overrides, { codewars_lang_python = { link = "codewars_header" } })
+                end)
+                assert.is_true(raw("codewars_header").italic)
+                assert.is_nil(raw("codewars_header").fg)
             end)
         end)
 

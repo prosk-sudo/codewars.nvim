@@ -113,11 +113,11 @@ local colors
 --- foreground with the style keys on top (an explicit fg wins). Only the
 --- foreground is taken, never the background, so a float keeps its own.
 ---@param name string a key of `highlights`
----@param overrides table the user's `theme`
+---@param ctx { overrides: table, kept: table<string, true> } see apply()
 ---@param seen table<string, true> the groups on the chain of links that led here
 ---@return table
-local function definition(name, overrides, seen)
-    local spec, override = highlights[name], overrides[name]
+local function definition(name, ctx, seen)
+    local spec, override = highlights[name], ctx.overrides[name]
     if not override then
         return spec
     end
@@ -134,7 +134,7 @@ local function definition(name, overrides, seen)
     if next(style) == nil then
         return { link = override.link }
     end
-    local base = colors(override.link, overrides, seen)
+    local base = colors(override.link, ctx, seen)
     return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
 end
 
@@ -144,11 +144,12 @@ end
 --- straight after a `:colorscheme` ours hold nothing, so what Neovim would
 --- resolve through a codewars group is not what that group will hold. Every
 --- step lands on one of two things:
----   * a codewars group: worked out from its default and the user's override;
----   * any other group: read with `link = true`. A group that links gives
----     `{ link = "X" }` and the walk goes on with X (a group that has both a
----     link and an fg of its own follows the link, as Neovim does); a group
----     that does not link gives its own fg and ctermfg. These are the
+---   * a codewars group: worked out from its default and the user's override,
+---     unless Neovim will keep what it already has for it (`ctx.kept`, below);
+---   * any other group, or a kept one: read with `link = true`. A group that
+---     links gives `{ link = "X" }` and the walk goes on with X (a group that
+---     has both a link and an fg of its own follows the link, as Neovim does);
+---     a group that does not link gives its own fg and ctermfg. These are the
 ---     colorscheme as it is now; apply() runs again after every `:colorscheme`.
 --- A link that leads back to a group already on the chain (a -> b -> a, a -> a,
 --- or one that mixes codewars groups with others) has no color to give. Every
@@ -160,10 +161,10 @@ end
 --- cycle check, whichever group it names. (A link-only override still goes to
 --- Neovim as the user wrote it, and Neovim resolves it.)
 ---@param target string
----@param overrides table the user's `theme`
+---@param ctx { overrides: table, kept: table<string, true> } see apply()
 ---@param seen table<string, true> the groups on the chain of links that led here
 ---@return table
-colors = function(target, overrides, seen)
+colors = function(target, ctx, seen)
     -- tostring: a `link` that is not a string is Neovim's to reject, below
     local key = tostring(target):lower()
     if seen[key] then
@@ -171,27 +172,52 @@ colors = function(target, overrides, seen)
     end
     local chain = vim.tbl_extend("force", seen, { [key] = true })
 
-    if highlights[key] then
-        local def = definition(key, overrides, chain)
+    if highlights[key] and not ctx.kept[key] then
+        local def = definition(key, ctx, chain)
         if def.link then
-            return colors(def.link, overrides, chain)
+            return colors(def.link, ctx, chain)
         end
         return { fg = def.fg, ctermfg = def.ctermfg }
     end
 
     local group = vim.api.nvim_get_hl(0, { name = target, link = true })
     if group.link then
-        return colors(group.link, overrides, chain)
+        return colors(group.link, ctx, chain)
     end
     return { fg = group.fg, ctermfg = group.ctermfg }
+end
+
+--- The codewars groups that Neovim will leave as they are. An override with
+--- `default = true` is set with `nvim_set_hl`'s `default`, which keeps an
+--- existing definition and ignores ours, so a group that already has one (a
+--- colorscheme defined it, or an earlier setup()) keeps it and a link to the
+--- group must see that, not the override. The definition built from an
+--- override carries `default` exactly when the override has it.
+---@param overrides table the user's `theme`
+---@return table<string, true>
+local function kept_definitions(overrides)
+    local kept = {}
+    for name in pairs(highlights) do
+        local override = overrides[name]
+        if override and override.default then
+            local current = vim.api.nvim_get_hl(0, { name = name, link = true })
+            if next(current) ~= nil then
+                kept[name] = true
+            end
+        end
+    end
+    return kept
 end
 
 local function apply()
     local config = require("codewars.config")
     local overrides = config.user.theme or {}
+    -- Recorded before anything is set, so what apply() does to one group
+    -- cannot change what it finds for another, in whatever order it goes.
+    local ctx = { overrides = overrides, kept = kept_definitions(overrides) }
 
     for name in pairs(highlights) do
-        vim.api.nvim_set_hl(0, name, definition(name, overrides, { [name] = true }))
+        vim.api.nvim_set_hl(0, name, definition(name, ctx, { [name] = true }))
     end
 end
 
