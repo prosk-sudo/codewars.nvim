@@ -122,6 +122,20 @@ describe("api.attempt", function()
             assert.are.equal(5, err.retry_after)
         end)
 
+        it("reads a 429's Retry-After given as an HTTP-date, as seconds from now", function()
+            local days = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+            local months = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+            local t = os.date("!*t", os.time() + 30)
+            local date = ("%s, %02d %s %04d %02d:%02d:%02d GMT"):format(
+                days[t.wday], t.day, months[t.month], t.year, t.hour, t.min, t.sec)
+            script = function()
+                return { headers = "HTTP/2 429\r\nretry-after: " .. date .. "\r\n\r\n", body = '{"error":"too many requests"}' }
+            end
+            local _, err = run()
+            assert.is_true(err.rate_limited)
+            assert.is_true(err.retry_after >= 28 and err.retry_after <= 30, tostring(err.retry_after))
+        end)
+
         it("reports a 401 as an auth error", function()
             script = function() return { headers = "HTTP/2 401\r\n\r\n", body = '{"error":"unauthorized"}' } end
             local _, err = run()

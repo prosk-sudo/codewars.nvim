@@ -109,7 +109,9 @@ function page.status_err(status, retry_after)
     if status == 429 then
         return {
             status = 429, rate_limited = true,
-            retry_after = tonumber(retry_after), retry_after_raw = retry_after,
+            -- The same reader the JSON transport uses: seconds or an HTTP-date.
+            retry_after = require("codewars.api.utils").parse_retry_after(retry_after),
+            retry_after_raw = retry_after,
             msg = "Codewars is rate limiting requests. Wait a minute and try again.",
         }
     end
