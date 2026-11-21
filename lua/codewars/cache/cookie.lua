@@ -3,6 +3,10 @@ local cache_utils = require("codewars.cache.utils")
 
 local cached_cookie = nil
 
+-- Lua has no octal literals: 384 is 0600, read and write for the owner and
+-- nothing for anyone else.
+local OWNER_ONLY = 384
+
 ---@class cw.cache.Cookie
 ---@field csrf_token string
 ---@field session_id string
@@ -158,7 +162,16 @@ function Cookie.set(str)
         return cerr
     end
 
-    file():write(str, "w")
+    -- The file holds a live session, so any other local account that can
+    -- read it can act as this user. Path:write only applies a mode when it
+    -- creates the file, so a file left world-readable by an older version
+    -- keeps that mode unless it is tightened here. Do it BEFORE the new
+    -- cookie goes in, so the secret is never in a file others can read.
+    local f = file()
+    if f:exists() then
+        assert((vim.uv or vim.loop).fs_chmod(f:absolute(), OWNER_ONLY))
+    end
+    f:write(str, "w", OWNER_ONLY)
     cached_cookie = nil
     Cookie.identity_changed()
     tell_menu()
