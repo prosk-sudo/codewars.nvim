@@ -92,6 +92,17 @@ local function merge_local_marks(fetched, cached)
     return merged
 end
 
+--- Callers waiting on the refresh in flight, by the account it is for. A
+--- list that is replaced, never added to, as the cache's own tables are.
+---@type table<string, function[]>
+local waiting = {}
+
+--- Refresh the list from Codewars, and hand `cb` the kata and any error.
+---
+--- One refresh runs at a time per account: a call made while one is in flight
+--- sends no request and gets that refresh's result when it ends, an error
+--- included. Two replies merged one after the other race -- the newer one
+--- can clear a marker that the older, arriving later, still needed.
 ---@param cb? function
 function completed.update(cb)
     local api_utils = require("codewars.api.utils")
@@ -108,56 +119,92 @@ function completed.update(cb)
         return
     end
 
+    if waiting[username] then
+        waiting[username] = vim.list_extend(vim.list_slice(waiting[username]), { cb })
+        return
+    end
+    waiting[username] = { cb }
+
     local all = {}
     local page = 0
+    local settled = false
 
-    local function fetch_page()
+    --- End the refresh: free the slot first, so that whatever a callback does
+    --- starts a fresh one, then answer everyone who asked. Whichever way it
+    --- ends, this is the one exit.
+    local function settle(items, err)
+        if settled then return end
+        settled = true
+        local callers = waiting[username] or {}
+        waiting[username] = nil
+        for _, caller in ipairs(callers) do
+            local ok, failure = pcall(caller, items, err)
+            if not ok then log.error("A completed-kata refresh callback failed: " .. tostring(failure)) end
+        end
+    end
+
+    --- Nothing is saved on any of these: the cached list stays as it was and
+    --- the next open retries.
+    local function give_up(err)
+        settle((completed.get()), err)
+    end
+
+    local fetch_page
+
+    local function on_page(res, err)
+        if err then
+            -- Writing the pages fetched so far would stamp a partial list as
+            -- fresh and overwrite a valid older cache, so kata completed on
+            -- later pages would show as unsolved until the cache interval
+            -- expired. Hand back whatever is on disk.
+            log.err(err)
+            return give_up(err)
+        end
+
+        if not (type(res) == "table" and type(res.data) == "table") then
+            -- A 2xx without `data` is not "no completed kata": it is a reply
+            -- we do not understand (interstitial, drift). Saving `all` here
+            -- overwrote a valid cache with a fresh-stamped empty or partial
+            -- list.
+            local bad = { msg = "Unexpected reply from the completed-kata API; keeping the cached list." }
+            log.err(bad)
+            return give_up(bad)
+        end
+
+        vim.list_extend(all, res.data)
+        if res.totalPages and page < res.totalPages - 1 then
+            page = page + 1
+            return fetch_page()
+        end
+
+        -- A kata marked complete locally while this refresh was in flight is
+        -- not in the fetched pages yet; keep it rather than un-completing it
+        -- until the next refresh. Read now, not when the refresh began: a
+        -- kata marked since then is in the cache and not in this reply.
+        all = merge_local_marks(all, (completed.get()))
+        completed.save(all)
+        log.info(("Fetched %d completed kata"):format(#all))
+        settle(all)
+    end
+
+    --- A failure in here (a cache that cannot be written, a request that
+    --- cannot start) must still end the refresh, or no later one could run.
+    local function guarded(fn, ...)
+        local ok, failure = pcall(fn, ...)
+        if ok then return end
+        local msg = "Could not refresh your completed kata: " .. tostring(failure)
+        log.error(msg)
+        give_up({ msg = msg })
+    end
+
+    function fetch_page()
         local endpoint = urls.completed:format(username, page)
         api_utils.get(endpoint, {
-            callback = function(res, err)
-                if err then
-                    -- Not saved: writing the pages fetched so far would
-                    -- stamp a partial list as fresh and overwrite a valid
-                    -- older cache, so kata completed on later pages would
-                    -- show as unsolved until the cache interval expired.
-                    -- Hand back whatever is on disk and let the next open
-                    -- retry.
-                    log.err(err)
-                    if cb then cb((completed.get()), err) end
-                    return
-                end
-
-                if not (type(res) == "table" and type(res.data) == "table") then
-                    -- A 2xx without `data` is not "no completed kata": it is
-                    -- a reply we do not understand (interstitial, drift).
-                    -- Saving `all` here overwrote a valid cache with a
-                    -- fresh-stamped empty or partial list.
-                    local bad = { msg = "Unexpected reply from the completed-kata API; keeping the cached list." }
-                    log.err(bad)
-                    if cb then cb((completed.get()), bad) end
-                    return
-                end
-
-                vim.list_extend(all, res.data)
-                if res.totalPages and page < res.totalPages - 1 then
-                    page = page + 1
-                    fetch_page()
-                else
-                    -- A kata marked complete locally while this refresh was
-                    -- in flight is not in the fetched pages yet; keep it
-                    -- rather than un-completing it until the next refresh.
-                    -- Read now, not when the refresh began: a kata marked
-                    -- since then is in the cache and not in this reply.
-                    all = merge_local_marks(all, (completed.get()))
-                    completed.save(all)
-                    log.info(("Fetched %d completed kata"):format(#all))
-                    if cb then cb(all) end
-                end
-            end,
+            callback = function(res, err) guarded(on_page, res, err) end,
         })
     end
 
-    fetch_page()
+    guarded(fetch_page)
 end
 
 --- Locally mark a kata as completed (no API call).

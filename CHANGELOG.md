@@ -93,7 +93,9 @@ All notable changes to codewars.nvim are documented here.
   showing in `:CW unfinished` (and `:CW focus` could still treat the kata as
   unsolved in that language) until the next successful refresh. A refresh
   already under way when you submit no longer undoes it either: the language
-  stays until Codewars' own list includes it.
+  stays until Codewars' own list includes it, and the completed list now
+  refreshes one request at a time: asking for it again while a refresh is
+  running waits for that one instead of starting another.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it
