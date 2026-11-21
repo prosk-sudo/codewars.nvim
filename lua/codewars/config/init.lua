@@ -95,6 +95,11 @@ function config.validate()
     end
     local lang = config.user.lang or config.lang
 
+    local provider = (config.user.picker or {}).provider
+    if provider ~= nil and provider ~= "telescope" and provider ~= "select" then
+        error(("Unsupported picker provider: %s (use \"telescope\" or \"select\")"):format(tostring(provider)))
+    end
+
     local utils = require("codewars.utils")
     if not utils.get_lang(lang) then
         local lang_slugs = vim.tbl_map(function(l)

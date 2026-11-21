@@ -12,6 +12,8 @@ describe("picker.dropdown", function()
 
     local function install_telescope_stub()
         captured = { new_calls = {} }
+        -- provider() auto-detects telescope through this module
+        package.loaded["telescope"] = {}
         package.loaded["telescope.pickers"] = {
             new = function(topts, cfg)
                 table.insert(captured.new_calls, { topts = topts, cfg = cfg })
@@ -58,7 +60,7 @@ describe("picker.dropdown", function()
 
     local function clear_telescope_stub()
         for _, mod in ipairs({
-            "telescope.pickers", "telescope.finders", "telescope.config",
+            "telescope", "telescope.pickers", "telescope.finders", "telescope.config",
             "telescope.actions", "telescope.actions.state",
             "telescope.pickers.entry_display", "telescope.themes",
         }) do
@@ -209,11 +211,120 @@ describe("picker.dropdown", function()
         assert.is_nil(captured.closed)
     end)
 
-    it("logs an error and bails when telescope is missing", function()
+    -- config.user is the shared default table until apply(); swap in a fresh
+    -- one per case instead of mutating it.
+    local config = require("codewars.config")
+    local function with_provider(provider, fn)
+        local saved = config.user
+        config.user = { picker = { provider = provider } }
         dd._reset()
+        local ok, err = pcall(fn)
+        config.user = saved
+        dd._reset()
+        if not ok then error(err, 0) end
+    end
+
+    it("logs an error and bails when telescope is requested but missing", function()
         clear_telescope_stub()
-        dd.open({ prompt_title = "t", entries = {} })
+        with_provider("telescope", function()
+            dd.open({ prompt_title = "t", entries = {} })
+        end)
         assert.are.equal(1, #errors)
         assert.truthy(errors[1]:match("telescope"))
+    end)
+
+    describe("provider", function()
+        it("auto-detects telescope when it is installed", function()
+            with_provider(nil, function()
+                assert.are.equal("telescope", dd.provider())
+            end)
+        end)
+
+        it("falls back to vim.ui.select without telescope", function()
+            clear_telescope_stub()
+            with_provider(nil, function()
+                assert.are.equal("select", dd.provider())
+            end)
+        end)
+
+        it("honours an explicit provider over what is installed", function()
+            with_provider("select", function()
+                assert.are.equal("select", dd.provider())
+            end)
+            clear_telescope_stub()
+            with_provider("telescope", function()
+                assert.are.equal("telescope", dd.provider())
+            end)
+        end)
+    end)
+
+    describe("vim.ui.select backend", function()
+        local real_select = vim.ui.select
+        local sel
+
+        before_each(function()
+            sel = nil
+            vim.ui.select = function(items, opts, on_choice)
+                sel = { items = items, opts = opts, on_choice = on_choice }
+            end
+        end)
+
+        after_each(function()
+            vim.ui.select = real_select
+        end)
+
+        local function open_select(opts)
+            with_provider("select", function() dd.open(opts) end)
+            assert.is_not_nil(sel)
+            return sel
+        end
+
+        it("never touches telescope", function()
+            open_select({ prompt_title = "t", entries = { { label = "A", value = 1 } } })
+            assert.are.equal(0, #captured.new_calls)
+        end)
+
+        it("passes the title as the prompt", function()
+            local s = open_select({ prompt_title = "Sort by", entries = { { label = "A", value = 1 } } })
+            assert.are.equal("Sort by", s.opts.prompt)
+        end)
+
+        it("formats entries with and without an icon", function()
+            local s = open_select({
+                prompt_title = "t",
+                entries = {
+                    { label = "Python", value = 1, icon = "P" },
+                    { label = "  Shuffle", value = 2 },
+                },
+            })
+            assert.are.equal("P Python", s.opts.format_item(s.items[1]))
+            assert.are.equal("  Shuffle", s.opts.format_item(s.items[2]))
+        end)
+
+        it("on_select receives the entry value, wrapped nil included", function()
+            local got, called
+            local s = open_select({
+                prompt_title = "t",
+                entries = { { label = "All", value = { lang = nil } } },
+                on_select = function(v)
+                    called = true
+                    got = v
+                end,
+            })
+            s.on_choice(s.items[1], 1)
+            assert.is_true(called)
+            assert.is_nil(got.lang)
+        end)
+
+        it("cancel is a no-op", function()
+            local called = false
+            local s = open_select({
+                prompt_title = "t",
+                entries = { { label = "A", value = 1 } },
+                on_select = function() called = true end,
+            })
+            s.on_choice(nil, nil)
+            assert.is_false(called)
+        end)
     end)
 end)

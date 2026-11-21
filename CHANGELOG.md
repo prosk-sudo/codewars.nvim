@@ -30,6 +30,13 @@ All notable changes to codewars.nvim are documented here.
   shuffle it picks at random within the slice. `focus` remains Codewars' curated queue;
   this is your own slice of the catalogue. A successful submit now ends with
   `:CW next for another.`
+- telescope.nvim is now optional. Without it every picker goes through
+  `vim.ui.select`, so the kata list, kumite browser and language menus open in
+  whatever picker you registered globally (fzf-lua, snacks.picker, dressing,
+  telescope-ui-select). The kata list's sort / language / difficulty / reset
+  and the kumite browser's paging and language become rows of the list in
+  place of the telescope-only keys. Set `picker = { provider = "telescope" }`
+  or `"select"` to choose; unset, telescope is used when it is installed.
 
 ### Changed
 - `:CW submit` right after a passing `:CW attempt` now waits for Codewars to

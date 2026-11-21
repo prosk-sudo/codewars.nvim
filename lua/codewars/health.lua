@@ -35,10 +35,15 @@ function M.check()
     -- Dependencies
     start("Dependencies")
 
+    -- telescope is only needed when it is the picker backend; otherwise
+    -- pickers go through vim.ui.select.
+    local provider = require("codewars.picker.dropdown").provider()
+    ok("Picker: " .. (provider == "select" and "vim.ui.select" or "telescope"))
+
     local deps = {
         { mod = "plenary", name = "plenary.nvim", required = true },
         { mod = "nui.popup", name = "nui.nvim", required = true },
-        { mod = "telescope", name = "telescope.nvim", required = true },
+        { mod = "telescope", name = "telescope.nvim", required = provider == "telescope" },
         { mod = "markdown", name = "markdown.nvim", required = false },
     }
 

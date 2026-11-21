@@ -202,6 +202,27 @@ options are still set. Solution files already on disk are never rewritten;
 A mistake in this table is reported when `setup()` runs and names the key, for
 example `indent.pyton: unknown language`.
 
+## Picker
+
+Which picker backend shows the kata list, kumite browser and language menus.
+
+```lua
+picker = {
+    provider = nil,  -- "telescope" | "select"
+},
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `picker.provider` | `nil` | `"telescope"` for the full telescope UI, `"select"` for `vim.ui.select`, which uses the picker you registered globally (fzf-lua, snacks.picker, dressing, telescope-ui-select). Unset: telescope when it is installed, `vim.ui.select` otherwise. |
+
+With `"select"` there are no picker-specific keys: in `:CW list` /
+`:CW completed` the Sort, Language, Difficulty and Reset filters entries at the
+top of the list open their menus, and in `:CW kumite` the Next page, Prev page,
+Go to page and Language entries do the paging. Fork a kumite with
+`:CW kumite fork` after opening it. Rows are plain text: rank colors and other
+highlights are telescope-only.
+
 ## Cache
 
 ```lua

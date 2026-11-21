@@ -40,9 +40,51 @@ local function require_telescope()
     return _telescope
 end
 
---- Test seam: allows specs to reset the memoized telescope table.
+local _provider = nil
+
+--- Test seam: allows specs to reset the memoized telescope table and provider.
 function M._reset()
     _telescope = nil
+    _provider = nil
+end
+
+--- Resolved picker backend. `picker.provider` wins; unset means telescope
+--- when it is installed, else vim.ui.select, so the user's global picker
+--- (fzf-lua, snacks, dressing, telescope-ui-select) is used.
+---@return "telescope"|"select"
+function M.provider()
+    if _provider then return _provider end
+    local user = require("codewars.config").user or {}
+    local wanted = (user.picker or {}).provider
+    if wanted then
+        _provider = wanted
+    else
+        _provider = pcall(require, "telescope") and "telescope" or "select"
+    end
+    return _provider
+end
+
+---@param item cw.picker.DropdownEntry
+---@return string
+local function select_label(item)
+    if item.icon and item.icon ~= "" then
+        return item.icon .. " " .. item.label
+    end
+    return item.label
+end
+
+--- vim.ui.select has no preselection or sizing: default_idx, width and
+--- height are telescope-only. A cancelled select (nil choice) is a no-op.
+---@param opts cw.picker.DropdownOpts
+local function open_select(opts)
+    vim.ui.select(opts.entries or {}, {
+        prompt = opts.prompt_title,
+        format_item = select_label,
+    }, function(choice)
+        if choice and opts.on_select then
+            opts.on_select(choice.value)
+        end
+    end)
 end
 
 --- Shared accessor so other picker modules reuse the same memoized
@@ -52,11 +94,14 @@ function M.telescope()
     return require_telescope()
 end
 
---- Open a single-select telescope dropdown.
+--- Open a single-select dropdown (telescope or vim.ui.select).
 --- Selecting an entry closes the dropdown and calls on_select(entry.value).
 --- <CR> with no matching entry is a no-op (dropdown stays open).
 ---@param opts cw.picker.DropdownOpts
 function M.open(opts)
+    if M.provider() == "select" then
+        return open_select(opts)
+    end
     local t = require_telescope()
     if not t then return end
 
