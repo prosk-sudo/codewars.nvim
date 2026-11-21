@@ -312,6 +312,26 @@ function Kata:_abandon_mount()
     self._on_mounted = nil
 end
 
+--- This kata is already open in a tab: there is one per kata and language,
+--- and the runner and the rest of the plugin look the kata up by it, so a
+--- second mount goes to that tab instead of opening another. A file picked
+--- from a list is the one case where that can be a different file than the
+--- user asked for -- `<slug>.py` open, `<id>.py` picked -- and then the tab
+--- is not silently passed off as the pick.
+---@param tabp integer
+---@param open cw.ui.Kata? the instance open in that tab
+function Kata:_go_to_open_tab(tabp, open)
+    pcall(vim.api.nvim_set_current_tabpage, tabp)
+    local lang = utils.get_lang(self.lang)
+    local picked, open_file = self._picked_file, open and open._file_name
+    if picked and open_file and lang and picked ~= open_file
+        and vim.fn.fnamemodify(picked, ":e") == lang.ft then
+        log.warn(("%s is already open in this kata's tab, and you picked %s. "
+            .. "Close the open one to open the other."):format(open_file, picked))
+    end
+    self:_abandon_mount()
+end
+
 function Kata:mount()
     log.info(("Loading kata %s..."):format(self.slug))
 
@@ -331,10 +351,9 @@ function Kata:mount()
             self.slug = kata_data.slug
         end
 
-        local tabp = utils.detect_duplicate_kata(self.slug, self.lang)
+        local tabp, open = utils.detect_duplicate_kata(self.slug, self.lang)
         if tabp then
-            pcall(vim.api.nvim_set_current_tabpage, tabp)
-            self:_abandon_mount()
+            self:_go_to_open_tab(tabp, open)
             return
         end
 
@@ -370,10 +389,9 @@ function Kata:mount()
 
             -- The duplicate check above ran with the REQUESTED language; the
             -- kata may already be open in the one we just fell back to.
-            local dup = utils.detect_duplicate_kata(self.slug, self.lang)
+            local dup, dup_open = utils.detect_duplicate_kata(self.slug, self.lang)
             if dup then
-                pcall(vim.api.nvim_set_current_tabpage, dup)
-                self:_abandon_mount()
+                self:_go_to_open_tab(dup, dup_open)
                 return
             end
         end

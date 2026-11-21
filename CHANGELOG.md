@@ -14,22 +14,24 @@ All notable changes to codewars.nvim are documented here.
 - `:CW unfinished` lists the kata you started and never submitted, most
   recently changed first, and opens the one you pick in the language you were
   writing it in, in the very file you picked: a kata with an older `<id>.py`
-  and a `<slug>.py` is two rows, and each opens its own. A kata counts once
-  its solution file no longer holds the starter it was seeded with — one you
-  only opened is left out. Indentation, trailing spaces, blank lines and the
-  final newline do not count as work on it; anything else does, down to a
-  space inside a string. A kata completed in that language is left out too.
-  To know the starter, the plugin now records a fingerprint of it in
-  `.seeded.json` beside your solutions whenever it seeds one, resets one or
-  toggles a template on an untouched one. Files from before that cannot be
-  checked yet: they are listed, marked
-  `not checked`, until you next open the kata. Rows read like the kata list's:
-  rank in its colour, the kata's name, its language and how long ago you last
-  changed it. A kata the cached catalogue does not hold is named from when you
-  last opened it, then from `:CW recent`, or looked up as `:CW completed`
-  does, in the background so the picker opens at once and fills the rest in.
-  Kata details cached before names were kept have a rank and no name; those
-  are looked up again for this list too.
+  and a `<slug>.py` is two rows, and each opens its own. A kata is open in
+  one tab per language, so if the other file is already open there you land
+  on that tab and a warning names both files; close the open one to open the
+  other. A kata counts once its solution file no longer holds the starter it
+  was seeded with — one you only opened is left out. Indentation, trailing
+  spaces, blank lines and the final newline do not count as work on it;
+  anything else does, down to a space inside a string. A kata completed in
+  that language is left out too. To know the starter, the plugin now records
+  a fingerprint of it in `.seeded.json` beside your solutions whenever it
+  seeds one, resets one or toggles a template on an untouched one. Files
+  from before that cannot be checked yet: they are listed, marked
+  `not checked`, until you next open the kata. Rows read like the kata
+  list's: rank in its colour, the kata's name, its language and how long ago
+  you last changed it. A kata the cached catalogue does not hold is named
+  from when you last opened it, then from `:CW recent`, or looked up as
+  `:CW completed` does, in the background so the picker opens at once and
+  fills the rest in. Kata details cached before names were kept have a rank
+  and no name; those are looked up again for this list too.
 - `indent` option: one indentation style per language, set in `setup()` the
   way templates are — `indent = { python = 4, c = 4, go = "tabs" }`. Codewars'
   starter code is not consistently indented; the same language arrives with
