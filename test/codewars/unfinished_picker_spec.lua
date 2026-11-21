@@ -388,6 +388,27 @@ describe(":CW unfinished", function()
         assert.are.equal("fetched", listed_with[1].slug)
     end)
 
+    -- With no completed list to judge by, every file would look unfinished,
+    -- the kata you have solved among them. A fetch that failed, or whose
+    -- reply was dropped because the account changed under it, is not "you
+    -- have completed nothing".
+    it("does not open on an empty completed list that could not be fetched, and says why", function()
+        local saved_user = config.user.username
+        config.user.username = "me"
+        completed = {}
+        package.loaded["codewars.cache.completed"].update = function(cb)
+            cb({}, { msg = "The account changed while your completed kata were being fetched." })
+        end
+        picker.unfinished()
+        vim.wait(100, function() return opened ~= nil end)
+        config.user.username = saved_user
+        assert.is_nil(opened, "opened a list judged against nothing")
+        assert.is_nil(listed_with)
+        local warned = vim.tbl_filter(function(s) return s.level == "warn" end, said)
+        assert.are.equal(1, #warned, vim.inspect(said))
+        assert.truthy(warned[1].msg:find("account changed", 1, true), warned[1].msg)
+    end)
+
     it("says so when nothing is unfinished, and opens no picker", function()
         entries = {}
         picker.unfinished()

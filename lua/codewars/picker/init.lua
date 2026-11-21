@@ -24,8 +24,11 @@ end
 
 --- Run `cb` with the completed kata as cache.completed holds them: fetched
 --- first when there are none yet, otherwise served as cached at once while a
---- stale list refreshes in the background.
----@param cb fun(items: table[])
+--- stale list refreshes in the background. `err` is why the fetch that was
+--- needed did not bring a list (it failed, or was dropped because the account
+--- changed under it): `items` is then whatever is on disk, which says nothing
+--- about what this account has completed.
+---@param cb fun(items: table[], err: table?)
 local function ensure_completed_items(cb)
     local completed_cache = require("codewars.cache.completed")
     local items, is_stale = completed_cache.get()
@@ -33,9 +36,9 @@ local function ensure_completed_items(cb)
 
     if vim.tbl_isempty(items) and signed_in then
         log.info("Fetching completed kata...")
-        return completed_cache.update(function()
+        return completed_cache.update(function(_, err)
             picker.invalidate_completed_cache()
-            vim.schedule(function() cb((completed_cache.get())) end)
+            vim.schedule(function() cb((completed_cache.get()), err) end)
         end)
     end
     cb(items)
@@ -614,7 +617,10 @@ end
 --- Show enriched kata list (shared by both branches of picker.completed)
 local function show_enriched(data, initial)
     local completed_cache = require("codewars.cache.completed")
-    completed_cache.enrich(data, function(enriched)
+    completed_cache.enrich(data, function(enriched, err)
+        -- The account it was opened under is gone (cookie changed, cache
+        -- cleared): these are not that account's kata to show now.
+        if err then return log.warn(tostring(err.msg or "Could not fetch kata details")) end
         vim.schedule(function()
             ensure_completed_set(function(completed_set)
                 picker._show_kata_list(enriched, "Select a Question", completed_set, initial)
@@ -873,7 +879,13 @@ function picker.unfinished()
         t = dropdown.telescope()
         if not t then return end
     end
-    ensure_completed_items(function(completed)
+    ensure_completed_items(function(completed, err)
+        -- Judged against no completed list every file would look unfinished,
+        -- the kata you have solved among them: say what went wrong instead.
+        if err then
+            return log.warn(("Could not fetch your completed kata, so :CW unfinished cannot tell which you have "
+                .. "finished: %s. Try again."):format(tostring(err.msg or "request failed")))
+        end
         local found = require("codewars.unfinished").list(completed)
         if #found == 0 then
             return log.info("Nothing unfinished: every kata you have opened is completed or untouched.")

@@ -33,6 +33,8 @@ function completed.get_details()
     return cache_utils.read_json(details_file()) or {}
 end
 
+--- Write `details` as the whole details cache. A lookup does not save through
+--- this -- it would write back a snapshot -- but through `merge_details`.
 ---@param details table<string, table>
 function completed.save_details(details)
     cache_utils.write_json(details_file(), details)
@@ -47,6 +49,39 @@ local flights = {}
 --- Bumped by `clear()`. A refresh begun before it was fetching for a cache
 --- that no longer exists, and its reply must not bring that cache back.
 local generation = 0
+
+--- What a run that reads or writes the caches began for: the signed-in
+--- account and the cache's generation. The caches are that account's, so a
+--- run is only entitled to write them while both are still as they were.
+---@class cw.Account
+---@field username string
+---@field generation integer
+
+---@return cw.Account
+local function current_account()
+    return { username = config.user.username, generation = generation }
+end
+
+---@param account cw.Account
+---@return boolean
+local function is_current(account)
+    return config.user.username == account.username and generation == account.generation
+end
+
+--- Save kata details a run fetched (`found`, by slug) into the details cache.
+--- Every save of details goes through here: what is added is only what the
+--- run fetched, to the cache as it is NOW -- never the snapshot the run read
+--- when it began, which would erase what another lookup saved since -- and
+--- nothing is written for an account or cache that is gone.
+---@param found table<string, table>
+---@param account cw.Account what the run began for
+---@return boolean saved false when `account` is gone and nothing was written
+local function merge_details(found, account)
+    if not is_current(account) then return false end
+    if next(found) == nil then return true end
+    completed.save_details(vim.tbl_extend("force", completed.get_details(), found))
+    return true
+end
 
 --- Remove both caches. The completed list is the signed-in user's, so it
 --- must not outlive their cookie; the kata details are not per-user but
@@ -121,7 +156,8 @@ end
 function completed.update(cb)
     local api_utils = require("codewars.api.utils")
     local urls = require("codewars.api.urls")
-    local username = config.user.username
+    local account = current_account()
+    local username = account.username
 
     if username == "" then
         -- The username is never configured by hand: it is detected from the
@@ -141,7 +177,6 @@ function completed.update(cb)
     flight = { callers = { cb } }
     flights[username] = flight
 
-    local began = generation
     local all = {}
     local page = 0
     local settled = false
@@ -168,7 +203,7 @@ function completed.update(cb)
     local fetch_page
 
     local function on_page(res, err)
-        if config.user.username ~= username or generation ~= began then
+        if not is_current(account) then
             -- Checked before anything is read from the reply, and on every
             -- page, so a refresh for an account that is gone neither writes
             -- over the cache that is there now, nor merges that account's
@@ -292,17 +327,17 @@ local REST_SAVE_EVERY = 5
 ---
 --- Stops before the next request when its caller no longer wants the names
 --- (`keep_going` false), keeping what it has; and when the account changed or
---- the cache was cleared since it began, saving nothing more: what it holds
---- then belongs to a cache that is gone.
+--- the cache was cleared since `account` (what the whole `enrich` call began
+--- for, the first batch included), saving nothing more: what it holds then
+--- belongs to a cache that is gone.
 ---@param slugs string[]
 ---@param opts cw.EnrichOpts
-local function look_up_rest(slugs, opts)
-    local username, began = config.user.username, generation
-
+---@param account cw.Account
+local function look_up_rest(slugs, opts, account)
     --- Why the run should not go on, if so: "gone" for an account or cache
     --- that is not the one it began for, "closed" for a caller that is done.
     local function stop_reason()
-        if config.user.username ~= username or generation ~= began then return "gone" end
+        if not is_current(account) then return "gone" end
         local ok, wanted = pcall(opts.keep_going)
         if not (ok and wanted) then return "closed" end
     end
@@ -322,11 +357,10 @@ local function look_up_rest(slugs, opts)
 
     local function save_pending()
         if next(pending) == nil then return end
-        local drop = stop_reason() == "gone"
         local to_save = pending
         pending = {}
-        if drop then return end
-        completed.save_details(vim.tbl_extend("force", completed.get_details(), to_save))
+        -- Nothing is written, and nobody told, for an account that is gone.
+        if not merge_details(to_save, account) then return end
         if not opts.on_progress then return end
         local ok, failure = pcall(opts.on_progress)
         if not ok then log.error("Kata name lookup progress callback failed: " .. tostring(failure)) end
@@ -421,6 +455,12 @@ end
 ---@param cb function callback(enriched_items)
 ---@param opts cw.EnrichOpts?
 function completed.enrich(items, cb, opts)
+    -- What the whole call, the first batch and the rest after it, is for:
+    -- captured once, here, and checked wherever it reads a reply or writes.
+    local account = current_account()
+    -- What is cached now, to tell what is missing and to fill `items` in. It
+    -- is a snapshot: it is never written back, only what this run fetches is
+    -- added to the cache (merge_details).
     local details = completed.get_details()
     local need_names = opts and opts.names
     local missing = {}
@@ -450,17 +490,33 @@ function completed.enrich(items, cb, opts)
     local concurrent = 0
     local max_concurrent = 5
     local idx = 0
+    local found = {} ---@type table<string, table> what this run fetched, by slug
+    local done = false
 
     local Spinner = require("codewars.logger.spinner")
     local spinner = Spinner:start(("Fetching kata details (0/%d)"):format(total))
 
+    --- The account changed or the cache was cleared while the requests were
+    --- out: what they bring belongs to a cache that is gone. Nothing is saved,
+    --- no more are sent, the rest is not started, and the caller is told the
+    --- way update tells its callers -- with the items it was given and an
+    --- error -- so that it does not show a list for an account that is gone.
+    local function abandon()
+        done = true
+        spinner:success("Stopped fetching kata details: the account changed")
+        cb(items, { msg = "The account changed while kata details were being fetched; nothing was saved." })
+    end
+
     local function fetch_next()
-        while concurrent < max_concurrent and idx < total do
+        while not done and concurrent < max_concurrent and idx < total do
+            if not is_current(account) then return abandon() end
             idx = idx + 1
             concurrent = concurrent + 1
             local slug = missing[idx]
             local kata_api = require("codewars.api.kata")
             kata_api.get(slug, function(res, err)
+                if done then return end
+                if not is_current(account) then return abandon() end
                 concurrent = concurrent - 1
                 fetched = fetched + 1
 
@@ -469,13 +525,15 @@ function completed.enrich(items, cb, opts)
                 if not err and res then
                     -- The name too: :CW unfinished lists kata the catalogue
                     -- does not hold, and has nothing else to call them by.
-                    details[slug] = { rank = res.rank, tags = res.tags, name = res.name }
+                    found = vim.tbl_extend("force", found, { [slug] = { rank = res.rank, tags = res.tags, name = res.name } })
                 else
                     failed = failed + 1
                     rate_limited = rate_limited or (err and err.rate_limited) or false
                 end
 
                 if fetched >= total then
+                    if not merge_details(found, account) then return abandon() end
+                    done = true
                     if failed == 0 then
                         spinner:success(("Fetched %d kata details"):format(total))
                     else
@@ -484,18 +542,18 @@ function completed.enrich(items, cb, opts)
                         spinner:error(("Fetched %d of %d kata details%s"):format(
                             total - failed, total, rate_limited and " (rate limited — try again later)" or ""))
                     end
-                    completed.save_details(details)
+                    local known = vim.tbl_extend("force", details, found)
                     for _, item in ipairs(items) do
                         local s = item.slug or item.id
-                        if details[s] then
-                            item.rank = details[s].rank
-                            item.tags = details[s].tags
+                        if known[s] then
+                            item.rank = known[s].rank
+                            item.tags = known[s].tags
                         end
                     end
                     -- Before the callback, so that nothing it does can keep
                     -- the rest from starting; the first of them waits a pace.
                     if opts and type(opts.keep_going) == "function" and #missing > FIRST_BATCH then
-                        look_up_rest(vim.list_slice(missing, FIRST_BATCH + 1), opts)
+                        look_up_rest(vim.list_slice(missing, FIRST_BATCH + 1), opts, account)
                     end
                     cb(items)
                 else

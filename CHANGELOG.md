@@ -107,7 +107,12 @@ All notable changes to codewars.nvim are documented here.
   running waits for that one instead of starting another. A refresh that
   lands after you signed in as someone else, or after the cache was cleared
   by a cookie change, is dropped rather than written over the cache that is
-  there now.
+  there now. Looking up kata details (the names and ranks in `:CW completed`
+  and `:CW unfinished`) follows the same rule, and adds what it found to the
+  cache as it is when it finishes instead of writing back what it read when
+  it started, so two lookups running at once no longer erase each other's
+  names. `:CW unfinished` with no completed list to judge by, because
+  fetching it failed, says so instead of listing the kata you have solved.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

@@ -237,4 +237,84 @@ describe("completed.enrich past its first 50", function()
         assert.equals("Name of " .. slug_at(120), details()[slug_at(120)].name)
         assert.equals(119, vim.tbl_count(details()))
     end)
+
+    -- The first batch holds what the cache held when it began, for the whole
+    -- time its requests are out. What it saves has to be what it fetched,
+    -- added to the cache as it is at that moment.
+    describe("the first batch, while the cache changes under it", function()
+        local calls
+
+        local function deliver_all()
+            while #held > 0 do table.remove(held, 1)() end
+        end
+
+        --- Deliver the oldest `n` replies still held; each can bring on more requests.
+        local function deliver(n)
+            for _ = 1, n do table.remove(held, 1)() end
+        end
+
+        local function start_big_run()
+            calls = {}
+            hold = true
+            completed.enrich(items(120), function(enriched, err)
+                calls[#calls + 1] = { items = enriched, err = err }
+            end, {
+                names = true,
+                keep_going = function() return going end,
+                on_progress = function() end,
+            })
+        end
+
+        it("keeps what another lookup saved meanwhile, whichever of the two finishes last", function()
+            for _, order in ipairs({ "b first", "a first" }) do
+                completed.clear()
+                requests, held, hold = {}, {}, true
+                completed.enrich({ { slug = "a1" }, { slug = "a2" } }, function() end)
+                completed.enrich({ { slug = "b1" }, { slug = "b2" } }, function() end)
+                assert.equals(4, #held)
+                local a, b = { held[1], held[2] }, { held[3], held[4] }
+                local first, second = order == "b first" and b or a, order == "b first" and a or b
+                first[1](); first[2]()
+                second[1](); second[2]()
+                for _, slug in ipairs({ "a1", "a2", "b1", "b2" }) do
+                    assert.is_not_nil(details()[slug], ("%s lost when %s: %s"):format(slug, order, vim.inspect(details())))
+                end
+            end
+        end)
+
+        it("saves nothing, asks for nothing more and starts no continuation when the account changes", function()
+            start_big_run()
+            deliver(10)
+            config.user.username = "someone-else"
+            local asked = #requests
+            deliver_all()
+            assert.equals(asked, #requests, "asked for more after the account changed")
+            assert.same({}, details(), "saved for an account that was gone")
+            assert.equals(0, #timers, "started the rest under the new account")
+            assert.equals(1, #calls, "the caller was not answered exactly once")
+            assert.truthy(calls[1].err and calls[1].err.msg:find("account", 1, true), vim.inspect(calls[1].err))
+        end)
+
+        it("leaves the cache cleared, and starts nothing, when it is cleared", function()
+            start_big_run()
+            deliver(10)
+            completed.clear()
+            local asked = #requests
+            deliver_all()
+            assert.equals(asked, #requests, "asked for more after the cache was cleared")
+            assert.same({}, details(), "brought the cleared cache back")
+            assert.equals(0, #timers)
+            assert.equals(1, #calls)
+            assert.is_not_nil(calls[1].err)
+        end)
+
+        it("answers with no error, and goes on to the rest, when nothing changed", function()
+            start_big_run()
+            deliver_all()
+            assert.equals(1, #calls)
+            assert.is_nil(calls[1].err)
+            assert.equals(FIRST_BATCH, vim.tbl_count(details()))
+            assert.equals(1, #timers, "the rest was not started")
+        end)
+    end)
 end)
