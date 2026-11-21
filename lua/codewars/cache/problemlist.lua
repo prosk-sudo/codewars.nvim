@@ -1,4 +1,6 @@
 local config = require("codewars.config")
+-- vim.uv arrived in 0.10; the plugin still supports 0.9.
+local uv = vim.uv or vim.loop
 local cache_utils = require("codewars.cache.utils")
 
 ---@class cw.Cache.Problemlist
@@ -8,12 +10,39 @@ local function cache_file()
     return cache_utils.cache_file("problemlist.json")
 end
 
+--- Ranks an unfinished build has already fetched in full. Kept apart from
+--- problemlist.json on purpose: that file must only ever hold a complete
+--- list, because a short one stamped with `now` looks fresh for the whole
+--- cache interval and hides every kata it is missing.
+local function checkpoint_file()
+    return cache_utils.cache_file("problemlist.partial.json")
+end
+
 local DEFAULT_INTERVAL = 30 * 24 * 60 * 60
 
 ---@return integer seconds after which the list counts as stale
 local function interval()
     return (config.user.cache or {}).update_interval or DEFAULT_INTERVAL
 end
+
+-- Codewars publishes no rate limit. Measured (2026-11): the search endpoint
+-- answers 429 once ~60 requests land inside a rolling minute, sends no
+-- Retry-After, and lets requests through again a few seconds later. A full
+-- build is ~290 pages, so it cannot outrun that limit and has to stay under
+-- it instead. The old four-wide batches ran at ~3 requests a second, hit the
+-- wall ~60 pages in on every attempt, and threw the run away -- so nothing
+-- was ever cached and every :CW list started over. One request per PACE_MS
+-- is ~55 a minute: about five minutes for the whole catalogue, and it ends.
+problemlist.PACE_MS = 1100
+--- Ceiling for the pace once 429s have slowed it down.
+problemlist.MAX_PACE_MS = 2000
+--- After a 429 the build waits this long, doubling up to MAX_COOLDOWN_MS,
+--- then asks for the same page again rather than abandoning the run.
+problemlist.COOLDOWN_MS = 15000
+problemlist.MAX_COOLDOWN_MS = 60000
+--- Consecutive refusals before giving up: 15+30+60+60s is four minutes of a
+--- server that will not let a single page through.
+problemlist.MAX_COOLDOWNS = 4
 
 --- The cached list, and whether it is older than `cache.update_interval`.
 --- A stale list is still returned: the catalogue changes slowly and a full
@@ -30,7 +59,20 @@ function problemlist.get()
     return data.items, age > interval(), age
 end
 
-local refreshing = false
+---@class cw.Cache.ProblemlistBuild
+---@field waiters fun(items: table[], partial: boolean?)[]
+---@field found integer kata collected so far
+
+--- The build in flight, if any. There is only ever one: a second build
+--- would double the request rate and walk both straight into the limiter.
+---@type cw.Cache.ProblemlistBuild?
+local build = nil
+
+--- Kata collected so far when a build is running, nil otherwise.
+---@return integer?
+function problemlist.building()
+    return build and build.found or nil
+end
 
 --- Rebuild the list in the background when it is stale. Returns true when a
 --- refresh was started (or is already running). Silent otherwise.
@@ -38,22 +80,46 @@ local refreshing = false
 function problemlist.refresh_if_stale()
     local items, stale, age = problemlist.get()
     if not items or not stale then return false end
-    if refreshing then return true end
-    refreshing = true
+    if build then return true end
     local days = math.floor((age or 0) / 86400)
     require("codewars.logger").info(("Problem list is %d days old — refreshing in the background."):format(days))
-    problemlist.update({}, function()
-        refreshing = false
-    end)
+    problemlist.update({}, function() end)
     return true
+end
+
+--- A checkpoint left by an earlier, unfinished build, if it is still young
+--- enough to build on.
+---@return { timestamp: integer, ranks: table<string, table[]> }?
+local function load_checkpoint()
+    local data = cache_utils.read_json(checkpoint_file())
+    if type(data) ~= "table" or type(data.ranks) ~= "table" then return nil end
+    if os.time() - (tonumber(data.timestamp) or 0) > interval() then return nil end
+    return data
+end
+
+local function remove_checkpoint()
+    pcall(os.remove, tostring(checkpoint_file()))
 end
 
 --- Fetch fresh problem list by querying each rank separately (all languages).
 --- Codewars caps search results at ~48 pages per query, so we fetch per-rank
 --- to get full coverage, without a language filter so we get all kata.
+---
+--- Ranks finished by an earlier run that was cut short are taken from its
+--- checkpoint instead of being fetched again. A call made while a build is
+--- already running joins it: `cb` fires when that build ends.
 ---@param opts? table
----@param cb function callback(items[])
+---@param cb fun(items: table[], partial: boolean?)
+---@return boolean started false when the call joined a running build
 function problemlist.update(opts, cb)
+    cb = cb or function() end
+    if build then
+        table.insert(build.waiters, cb)
+        return false
+    end
+    local this = { waiters = { cb }, found = 0 }
+    build = this
+
     opts = opts or {}
     local max_pages_per_rank = opts.max_pages or 100
     local search = require("codewars.api.search")
@@ -61,17 +127,56 @@ function problemlist.update(opts, cb)
     local Spinner = require("codewars.logger.spinner")
     local spinner = Spinner:start("Updating problem list cache")
 
-    local all_results = {}
     local ranks = { -8, -7, -6, -5, -4, -3, -2, -1 }
     local rank_labels = { [-8]="8 kyu", [-7]="7 kyu", [-6]="6 kyu", [-5]="5 kyu", [-4]="4 kyu", [-3]="3 kyu", [-2]="2 kyu", [-1]="1 kyu" }
-    -- Codewars publishes no rate limit, and a full build is ~8 ranks x up to
-    -- 100 pages. Ten-wide with no pause between batches reliably earned a
-    -- 429 partway through. Fewer in flight, with a gap between batches, is
-    -- slower but actually finishes.
-    local max_concurrent = 4
-    local batch_gap_ms = 200
+
+    local checkpoint = load_checkpoint()
+    local resumed = checkpoint ~= nil
+    checkpoint = checkpoint or { timestamp = os.time(), ranks = {} }
+
+    ---@type table<integer, table[]>
+    local by_rank = {}
+    for _, rank in ipairs(ranks) do
+        local saved = checkpoint.ranks[tostring(rank)]
+        if type(saved) == "table" and #saved > 0 then
+            by_rank[rank] = saved
+            this.found = this.found + #saved
+        end
+    end
+
     local rank_idx = 0
     local aborted = false
+    local pace_ms = problemlist.PACE_MS
+    local last_start = nil ---@type integer?
+    local cooldowns = 0
+
+    -- The rank being fetched and what it has produced so far. Not in
+    -- by_rank until it finishes (by_rank is what resumes skip), but an
+    -- aborted run still hands these to the caller.
+    local current_rank, current_items = nil, nil ---@type integer?, table[]?
+
+    local function collected()
+        local all = {}
+        for _, rank in ipairs(ranks) do
+            local items = by_rank[rank] or (rank == current_rank and current_items)
+            if items then vim.list_extend(all, items) end
+        end
+        return all
+    end
+
+    ---@param items table[]
+    ---@param partial boolean?
+    local function deliver(items, partial)
+        local waiters = this.waiters
+        -- Cleared before any callback runs, so one that throws cannot leave
+        -- the module believing a build is still in flight.
+        build = nil
+        for i, waiter in ipairs(waiters) do
+            -- Each joined caller gets its own list: the picker sorts and
+            -- filters what it is handed.
+            waiter(i == 1 and items or vim.list_slice(items), partial)
+        end
+    end
 
     ---@param partial boolean? true when we stopped early and must not
     --- pretend the cache is complete
@@ -79,7 +184,7 @@ function problemlist.update(opts, cb)
         -- Deduplicate
         local seen = {}
         local unique = {}
-        for _, item in ipairs(all_results) do
+        for _, item in ipairs(collected()) do
             local slug = item.slug or item.id
             if not seen[slug] then
                 seen[slug] = true
@@ -99,129 +204,161 @@ function problemlist.update(opts, cb)
         if partial then
             -- Deliberately not written: a short list stamped with `now` would
             -- look fresh for the whole cache interval, quietly hiding the
-            -- kata we never fetched. Leaving it unwritten means the next run
-            -- retries instead. The flag tells the caller not to report
-            -- success on top of the failure the spinner already showed.
-            cb(unique, true)
+            -- kata we never fetched. The ranks that did finish are in the
+            -- checkpoint, so the next run picks up where this one stopped.
+            -- The flag tells the caller not to report success on top of the
+            -- failure the spinner already showed.
+            deliver(unique, true)
             return
         end
 
-        cache_utils.write_json(cache_file(), {
+        -- A resumed list is only as new as its oldest rank.
+        local ok = cache_utils.write_json(cache_file(), {
             items = unique,
-            timestamp = os.time(),
+            timestamp = resumed and checkpoint.timestamp or os.time(),
         })
+        if ok then remove_checkpoint() end
 
         spinner:success(("Cached %d kata"):format(#unique))
-        cb(unique)
+        deliver(unique)
     end
 
-    local function fetch_rank()
+    local function abort(msg)
+        aborted = true
+        spinner:error(msg)
+        return finish(true)
+    end
+
+    --- Run `fn` no sooner than the pace allows since the previous request.
+    --- Always deferred, even at zero delay, so a page whose callback fires
+    --- synchronously cannot recurse through a whole rank.
+    local function paced(fn)
+        local wait = 0
+        if last_start then
+            wait = math.max(0, last_start + pace_ms - uv.now())
+        end
+        vim.defer_fn(function()
+            if aborted then return end
+            last_start = uv.now()
+            fn()
+        end, wait)
+    end
+
+    local fetch_rank
+
+    ---@param rank integer
+    ---@param page integer
+    ---@param items table[] what this rank has produced so far
+    local function fetch_page(rank, page, items)
+        local label = rank_labels[rank] or tostring(rank)
+
+        local function rank_done()
+            -- An empty rank is never checkpointed: if the markup drifted, a
+            -- saved "nothing here" would be skipped by every later resume
+            -- and the all-empty guard above could never clear.
+            if #items > 0 then
+                by_rank[rank] = items
+                checkpoint.ranks[tostring(rank)] = items
+                cache_utils.write_json(checkpoint_file(), checkpoint)
+            end
+            return fetch_rank()
+        end
+
+        if page >= max_pages_per_rank then return rank_done() end
+
+        paced(function()
+            search.fetch_page({
+                language = "", -- no language filter, fetch all kata
+                rank = { rank },
+                order = "popularity+desc",
+                -- The build owns 429 timing (cooldown below). Letting the
+                -- request layer also retry would spend the next few slots
+                -- of the same window on half-second backoffs.
+                retry_rate_limited = false,
+                -- Once the run has given up, a 5xx retry still in flight
+                -- inside the request layer must not keep going.
+                cancelled = function() return aborted end,
+            }, page, function(results, has_more, err)
+                if aborted then return end
+
+                -- Every abort is partial: writing here would stamp a
+                -- truncated list as fresh and hide every kata the aborted
+                -- run never reached.
+                if err and err.auth then
+                    require("codewars.logger").error(err.msg)
+                    return abort("Fetch aborted: authentication error")
+                end
+
+                if err and err.rate_limited then
+                    cooldowns = cooldowns + 1
+                    if cooldowns > problemlist.MAX_COOLDOWNS then
+                        return abort(("Rate limited by Codewars after %d kata — wait a few minutes and run :CW cache update to continue"):format(this.found))
+                    end
+                    -- Wait the limiter out, then ask for the SAME page at a
+                    -- slower pace. Ending the rank here would truncate it.
+                    local wait = math.floor(math.min(problemlist.COOLDOWN_MS * 2 ^ (cooldowns - 1), problemlist.MAX_COOLDOWN_MS))
+                    pace_ms = math.min(math.floor(pace_ms * 1.25), problemlist.MAX_PACE_MS)
+                    spinner:update(("Rate limited by Codewars — resuming in %ds (%d found, %s)"):format(
+                        math.floor(wait / 1000), this.found, label))
+                    return vim.defer_fn(function()
+                        if aborted then return end
+                        fetch_page(rank, page, items)
+                    end, wait)
+                end
+
+                if err then
+                    -- Any other failure (5xx after retries, curl could
+                    -- not connect, unexpected status). Treating it as an
+                    -- empty page would end the rank early and write the
+                    -- truncated list as fresh — the same silent hole the
+                    -- 429 path above exists to prevent.
+                    return abort(("Fetch failed after %d kata: %s"):format(this.found, err.msg or "unknown error"))
+                end
+
+                cooldowns = 0
+
+                if results and #results > 0 then
+                    vim.list_extend(items, results)
+                    this.found = this.found + #results
+                end
+
+                spinner:update(("Fetching kata (%d found, %s)"):format(this.found, label))
+
+                if not has_more or not results or #results == 0 then
+                    return rank_done()
+                end
+                fetch_page(rank, page + 1, items)
+            end)
+        end)
+    end
+
+    fetch_rank = function()
         rank_idx = rank_idx + 1
-        if aborted or rank_idx > #ranks then
+        -- Skip what a cut-short earlier run already finished.
+        while rank_idx <= #ranks and by_rank[ranks[rank_idx]] do
+            rank_idx = rank_idx + 1
+        end
+        -- An abort has already delivered its partial result; finishing
+        -- again here would write the truncated list as complete.
+        if aborted then return end
+        if rank_idx > #ranks then
             return finish()
         end
-
-        local rank = ranks[rank_idx]
-        local label = rank_labels[rank] or tostring(rank)
-        local current_page = 0
-        local rank_done = false
-
-        local fetch_opts = {
-            language = "", -- no language filter, fetch all kata
-            rank = { rank },
-            order = "popularity+desc",
-            -- Once one page has given up, the rest of the batch must not
-            -- keep retrying into the same limiter.
-            cancelled = function() return aborted end,
-        }
-
-        local function fetch_batch()
-            if aborted or rank_done or current_page >= max_pages_per_rank then
-                return fetch_rank()
-            end
-
-            local batch_start = current_page
-            local batch_end = math.min(current_page + max_concurrent - 1, max_pages_per_rank - 1)
-            local batch_done = 0
-            local batch_size = batch_end - batch_start + 1
-            local batch_empty = 0
-            local batch_has_more = false
-
-            for page = batch_start, batch_end do
-                search.fetch_page(fetch_opts, page, function(results, has_more, err)
-                    if aborted then return end
-
-                    -- Every abort is partial: writing here would stamp a
-                    -- truncated list as fresh and hide every kata the
-                    -- aborted run never reached.
-                    local function abort(msg)
-                        aborted = true
-                        spinner:error(msg)
-                        return finish(true)
-                    end
-
-                    if err and err.auth then
-                        require("codewars.logger").error(err.msg)
-                        return abort("Fetch aborted: authentication error")
-                    end
-
-                    if err and err.rate_limited then
-                        -- fetch_page already backed off and retried; if it is
-                        -- still refusing, stop rather than grinding through
-                        -- the remaining ranks earning more 429s.
-                        return abort(("Rate limited by Codewars after %d kata — wait a minute and run :CW cache update again"):format(#all_results))
-                    end
-
-                    if err then
-                        -- Any other failure (5xx after retries, curl could
-                        -- not connect, unexpected status). Treating it as an
-                        -- empty page would end the rank early and write the
-                        -- truncated list as fresh — the same silent hole the
-                        -- 429 path above exists to prevent.
-                        aborted = true
-                        spinner:error(("Fetch failed after %d kata: %s"):format(#all_results, err.msg or "unknown error"))
-                        return finish(true)
-                    end
-
-                    batch_done = batch_done + 1
-
-                    if results and #results > 0 then
-                        vim.list_extend(all_results, results)
-                    else
-                        batch_empty = batch_empty + 1
-                    end
-
-                    if has_more then
-                        batch_has_more = true
-                    end
-
-                    spinner:update(("Fetching kata (%d found, %s)"):format(#all_results, label))
-
-                    if batch_done >= batch_size then
-                        current_page = batch_end + 1
-
-                        if batch_empty >= batch_size or not batch_has_more then
-                            rank_done = true
-                            fetch_rank()
-                        else
-                            -- Breathe between batches instead of firing the
-                            -- next four the instant these land.
-                            vim.defer_fn(fetch_batch, batch_gap_ms)
-                        end
-                    end
-                end)
-            end
-        end
-
-        fetch_batch()
+        current_rank, current_items = ranks[rank_idx], {}
+        fetch_page(current_rank, 0, current_items)
     end
 
+    if resumed then
+        spinner:update(("Resuming problem list (%d kata already fetched)"):format(this.found))
+    end
     fetch_rank()
+    return true
 end
 
 function problemlist.delete()
     local f = cache_file()
     if f:exists() then f:rm() end
+    remove_checkpoint()
 end
 
 return problemlist
