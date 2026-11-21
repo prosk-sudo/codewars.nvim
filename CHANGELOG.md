@@ -76,8 +76,9 @@ All notable changes to codewars.nvim are documented here.
   as written (#30).
 - The solutions popup no longer runs off the screen on a very short editor.
   When there is no room for both panes it drops the info box (or the
-  comments pane) and keeps the code, and it never starts above the top row
-  (#29).
+  comments pane) and keeps the code, and it never starts above the top row.
+  On an editor too short for even one pane it says so instead of opening,
+  and `c` says when the comments do not fit (#29).
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

@@ -23,9 +23,10 @@ local COMMENTS_SHARE = 0.4
 local INFO_HEIGHT = 1
 local BORDER = 2 -- rows a bordered popup costs beyond its content
 local MIN_CONTENT = 1 -- content rows a pane keeps at the least
--- Rows the stack needs for the code pane and a second pane, both at
--- MIN_CONTENT, each with its border.
-local MIN_STACK = 2 * (MIN_CONTENT + BORDER)
+-- Rows one bordered pane needs, and the stack of the code pane plus a
+-- second pane, both at MIN_CONTENT, each with its border.
+local MIN_PANE = MIN_CONTENT + BORDER
+local MIN_STACK = 2 * MIN_PANE
 
 -- Vote keys. Deliberately two-key: `b` and `v` are what a reader presses
 -- reflexively in a code buffer (back a word, visual select), and a vote
@@ -137,25 +138,26 @@ end
 ---
 --- Two bordered panes need MIN_STACK rows. On an editor too short for that
 --- the second pane (info box or comments) is dropped, returned as nil, and
---- the code pane takes what fits; if even one bordered pane does not fit,
---- it is clamped to a single content row.
+--- the code pane takes what fits. One bordered pane needs MIN_PANE rows; on
+--- an editor shorter than that nothing fits, so there is no geometry at all
+--- (all three nil) and the caller must not open a popup.
 ---@param sol cw.Solution? the solution whose info line sets the minimum width
----@return table code_geom, table? info_geom, table? comments_geom
+---@return table? code_geom, table? info_geom, table? comments_geom
 function Solutions:geometry(sol)
     local cols, rows = vim.o.columns, vim.o.lines - vim.o.cmdheight
+    if rows < MIN_PANE then return nil, nil, nil end
     local min_width = sol and (vim.fn.strdisplaywidth(self:info_line(sol)) + 2) or 20
     local width = math.max(20, math.floor(cols * WIDTH), math.min(min_width, cols - BORDER))
     width = math.min(width, math.max(1, cols - BORDER))
     local col = math.max(0, math.floor((cols - width) / 2))
 
-    local total = math.min(math.max(MIN_STACK, math.floor(rows * HEIGHT)), math.max(1, rows))
+    local total = math.min(math.max(MIN_STACK, math.floor(rows * HEIGHT)), rows)
     -- At least 1: the top border sits on `row - 1`, which must not be above
     -- the screen. Only a stack that fills (almost) the whole editor is moved.
     local row = math.max(1, math.floor((rows - total) / 2))
 
     if total < MIN_STACK then
-        local code_h = math.max(MIN_CONTENT, total - BORDER)
-        return { width = width, height = code_h, row = row, col = col }, nil, nil
+        return { width = width, height = total - BORDER, row = row, col = col }, nil, nil
     end
 
     if self.show_comments then
@@ -233,6 +235,12 @@ function Solutions:render()
 
     local sol = self.solutions[self.index]
     local code_geom, info_geom, comments_geom = self:geometry(sol)
+    if not code_geom then
+        -- Not even one bordered pane fits above the command line. Panes are
+        -- already unmounted above, so a popup that no longer fits (the editor
+        -- shrank before a page turn) closes rather than hanging off-screen.
+        return log.warn("Not enough room to show solutions; make the window taller")
+    end
 
     self.popup = make_popup(code_geom, (" Solution %d/%d "):format(self.index, #self.solutions))
     self.popup:mount()
@@ -360,6 +368,14 @@ function Solutions:toggle_comments()
     self.show_comments = not self.show_comments
     self.focus = self.show_comments and "comments" or "code"
     self:render()
+    -- The code pane is up but the comments did not fit under it: say so, and
+    -- go back to "comments closed" so the next press asks again instead of
+    -- toggling something that was never on screen.
+    if self.show_comments and self.popup and not self.comments_popup then
+        self.show_comments = false
+        self.focus = "code"
+        log.info("Not enough room to show comments; make the window taller")
+    end
 end
 
 function Solutions:switch_pane()

@@ -303,11 +303,19 @@ describe("Solutions popup", function()
     -- height to 1 anyway and drew the bottom pane past the last row.
     describe("geometry on short editors", function()
         local BORDER = 2
-        local saved
-        before_each(function() saved = { vim.o.columns, vim.o.lines, vim.o.cmdheight } end)
+        local log = require("codewars.logger")
+        local saved, real_log, said
+        before_each(function()
+            saved = { vim.o.columns, vim.o.lines, vim.o.cmdheight }
+            real_log = { info = log.info, warn = log.warn }
+            said = { info = {}, warn = {} }
+            log.info = function(m) said.info[#said.info + 1] = tostring(m) end
+            log.warn = function(m) said.warn[#said.warn + 1] = tostring(m) end
+        end)
         after_each(function()
             if ui then ui:close() end
             ui = nil
+            log.info, log.warn = real_log.info, real_log.warn
             vim.o.cmdheight, vim.o.columns, vim.o.lines = saved[3], saved[1], saved[2]
         end)
 
@@ -402,16 +410,66 @@ describe("Solutions popup", function()
             assert.are.equal(5 - BORDER, (geometry(true)).height)
         end)
 
-        it("clamps to the smallest valid pane, without erroring, when not even one fits", function()
+        -- A bordered pane is 1 content row + BORDER. On 2 usable rows (3 lines
+        -- with a 1-line command line) even one pane would reach into the
+        -- command line, so there is no geometry at all.
+        it("returns no pane when not even one bordered pane fits", function()
             resize(120, 2)
             for _, show_comments in ipairs({ false, true }) do
                 local ok, code, info, comments = pcall(geometry, show_comments)
                 assert.is_true(ok, tostring(code))
-                assert.are.equal(1, code.height)
-                assert.is_true(code.row >= 1, "the top border would start above row 0")
+                assert.is_nil(code, "a pane that cannot fit must not be returned")
                 assert.is_nil(info)
                 assert.is_nil(comments)
             end
+        end)
+
+        it("fits one pane exactly on the smallest editor that can hold it", function()
+            resize(120, 3)
+            for _, show_comments in ipairs({ false, true }) do
+                local code, info, comments = geometry(show_comments)
+                assert.are.equal(1, code.height)
+                assert.are.same({ top = 0, bottom = 3 }, covered(code), "bottom border must sit on the last usable row")
+                assert.is_nil(info)
+                assert.is_nil(comments)
+            end
+        end)
+
+        it("opens nothing on a 2-row editor, and says why once", function()
+            resize(120, 2)
+            local wins = #vim.api.nvim_list_wins()
+            ui = Solutions:new({ sol() }, "python")
+            ui:show()
+            assert.is_nil(ui.popup)
+            assert.is_nil(ui.info_popup)
+            assert.is_nil(ui.comments_popup)
+            assert.are.equal(wins, #vim.api.nvim_list_wins(), "a window was opened")
+            assert.are.equal(1, #said.warn)
+            assert.truthy(said.warn[1]:find("Not enough room to show solutions", 1, true))
+            assert.truthy(said.warn[1]:find("taller", 1, true))
+        end)
+
+        it("mounts one pane on a 3-row editor with its bottom border on the last usable row", function()
+            resize(120, 3)
+            ui = Solutions:new({ sol() }, "python")
+            ui:show()
+            assert.is_not_nil(ui.popup)
+            assert.is_nil(ui.info_popup)
+            local code = box(ui.popup)
+            assert.are.equal(0, code.row)
+            assert.are.equal(3, code.row + code.height, "bottom border is not on the last usable row")
+            assert.are.same({}, said.warn)
+        end)
+
+        it("closes a popup that no longer fits when the editor shrank before a page turn", function()
+            resize(120, 30)
+            ui = Solutions:new({ sol(), sol() }, "python")
+            ui:show()
+            assert.is_not_nil(ui.popup)
+            resize(120, 2)
+            ui:jump_to(2)
+            assert.is_nil(ui.popup)
+            assert.are.equal(1, #said.warn)
         end)
 
         it("mounts only the code pane on a 5-row editor and the toggle does not error", function()
@@ -431,6 +489,33 @@ describe("Solutions popup", function()
             assert.are.equal(ui.popup.winid, vim.api.nvim_get_current_win(), "focus must fall back to the code pane")
             ui:toggle_comments()
             assert.is_nil(ui.info_popup)
+        end)
+
+        it("'c' says there is no room when the comments pane cannot be shown", function()
+            resize(120, 5)
+            ui = Solutions:new({ sol() }, "python")
+            ui:show()
+            ui:toggle_comments()
+            assert.are.equal(1, #said.info)
+            assert.truthy(said.info[1]:find("Not enough room to show comments", 1, true))
+            assert.truthy(said.info[1]:find("taller", 1, true))
+            assert.is_nil(ui.comments_popup)
+            assert.is_not_nil(ui.popup, "the code pane stays open")
+            -- The comments were not shown, so the next press asks again
+            -- instead of silently toggling them off.
+            assert.is_false(ui.show_comments)
+            ui:toggle_comments()
+            assert.are.equal(2, #said.info)
+        end)
+
+        it("'c' stays quiet when the comments pane fits", function()
+            resize(120, 30)
+            ui = Solutions:new({ sol() }, "python")
+            ui:show()
+            ui:toggle_comments()
+            assert.is_not_nil(ui.comments_popup)
+            assert.are.same({}, said.info)
+            assert.are.same({}, said.warn)
         end)
     end)
 
