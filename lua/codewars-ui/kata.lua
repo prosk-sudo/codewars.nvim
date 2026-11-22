@@ -105,9 +105,8 @@ function Kata:retemplate(op)
     return true
 end
 
---- The file the user chose from a list of solution files, when there is one
---- to open in `lang`: it still exists, and is for this language -- a switch to
---- another language has its own file to open.
+--- The file the user chose from a list of solution files, if it still exists
+--- and is for `lang` (a switch to another language has its own file).
 ---@param lang table an entry from config.langs
 ---@return string?
 function Kata:_picked_file_name(lang)
@@ -123,9 +122,8 @@ end
 ---@return string
 function Kata:_default_file_name(lang)
     local by_slug = ("%s.%s"):format(self.slug, lang.ft)
-    -- Older versions named a kata opened by its id after the id. The kata has
-    -- its slug by now, so look for that file too, or the work in it never
-    -- shows and a fresh starter is seeded beside it.
+    -- Older versions named a file after the kata's id. Look for it too, or the
+    -- work in it never shows and a fresh starter is seeded beside it.
     local by_id = self.kata_id and self.kata_id ~= self.slug and ("%s.%s"):format(self.kata_id, lang.ft)
     if by_id and not config.storage.home:joinpath(by_slug):exists()
         and config.storage.home:joinpath(by_id):exists() then
@@ -312,18 +310,16 @@ function Kata:_abandon_mount()
     self._on_mounted = nil
 end
 
---- This kata is already open in a tab: there is one per kata and language
---- (detect_duplicate_kata, :CW recent and the focus layer are built on it),
---- so a second mount goes to that tab instead of opening another. A file
---- picked from a list is the one case where that can be a different file
---- than the user asked for -- `<slug>.py` open, `<id>.py` picked -- and then
---- the tab is not silently passed off as the pick.
+--- This kata is already open in a tab. There is one tab per kata and language
+--- (detect_duplicate_kata, :CW recent and the focus layer rely on it), so a
+--- second mount goes to that tab instead of opening another. A file picked
+--- from a list can differ from the open one (`<slug>.py` open, `<id>.py`
+--- picked); then the tab is not silently passed off as the pick.
 ---
---- Known limitation, accepted: the warning explains the outcome but the
---- picked file is not opened. It only arises when one kata has both an
---- id-named and a slug-named file for the same language, which only files
---- from old plugin versions can be. Closing the open tab and picking again
---- opens the picked file.
+--- Known limitation: the warning explains the outcome but the picked file is
+--- not opened. It only arises when one kata has both an id-named and a
+--- slug-named file for a language, which only files from old plugin versions
+--- can be. Closing the open tab and picking again opens the picked file.
 ---@param tabp integer
 ---@param open cw.ui.Kata? the instance open in that tab
 function Kata:_go_to_open_tab(tabp, open)
@@ -619,8 +615,8 @@ function Kata:reset_code()
         local starter = self:_starter_code()
         self:_set_code(starter)
         -- This starter counts as untouched now too. The earlier ones stay on
-        -- record: only the buffer changed, and the file on disk, which the
-        -- list reads, still holds what it did until the buffer is saved.
+        -- record: the file on disk, which the list reads, keeps its old
+        -- content until the buffer is saved.
         if self._file_name then
             require("codewars.unfinished").reseeded(self._file_name, starter, self:_info())
         end
@@ -720,9 +716,8 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 log.info(("Switched to %s"):format(new_lang))
             end)
 
-            -- Only a switch that went through is where the user now is: a
-            -- rolled-back one leaves them in the language they were in, and
-            -- :CW recent has to say the same.
+            -- Only a switch that went through is where the user now is; a
+            -- rolled-back one leaves them in their old language for :CW recent.
             if ok then
                 require("codewars.cache.recent").record(self)
             else

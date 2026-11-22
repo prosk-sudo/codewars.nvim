@@ -1,6 +1,5 @@
--- :CW unfinished: the kata you started and never submitted, newest first, so
--- you can pick one back up. What counts as unfinished is codewars.unfinished's
--- business; this is the picker over it, drawn the way the kata list is.
+-- :CW unfinished picker: newest first, drawn the way the kata list is. What
+-- counts as unfinished is codewars.unfinished's business.
 describe(":CW unfinished", function()
     local config = require("codewars.config")
     local picker, opened, mounted, said, entries, catalogue, completed, updates, listed_with
@@ -213,9 +212,8 @@ describe(":CW unfinished", function()
         assert.are.equal("Looked Up multiply", text(row[4]))
     end)
 
-    -- :CW recent keeps the name and rank of every kata opened lately, and a
-    -- solution file is a kata opened at some point: a good deal of what the
-    -- catalogue lacks is there, with no call to Codewars.
+    -- :CW recent keeps the name and rank of kata opened lately, so much of
+    -- what the catalogue lacks is there, with no call to Codewars.
     it("names a kata from the recent history when nothing else does", function()
         catalogue = {}
         recent_items = { { slug = "multiply", lang = "python", name = "Multiply Lately", rank = -7, opened_at = NOW } }
@@ -478,10 +476,9 @@ describe(":CW unfinished", function()
         end)
     end)
 
-    -- Whether to trust the list on disk is whether a full fetch ever
-    -- completed it -- not whether it has anything in it. A kata marked solved
-    -- before the list was ever fetched leaves a cache of one kata; a user
-    -- with nothing completed has a fetched list of none.
+    -- The list on disk is trusted only if a full fetch ever completed it, not
+    -- if it merely has items. A kata marked solved before any fetch leaves a
+    -- cache of one kata; a user with nothing completed has a fetched list of none.
     describe("which completed list on disk it trusts", function()
         local saved_user
 
@@ -508,9 +505,9 @@ describe(":CW unfinished", function()
             assert.are.equal("fetched", listed_with[1].slug, "judged by the one kata that was marked")
         end)
 
-        -- The list the fetch produced is what the picker judges by. Reading
-        -- the disk afterwards finds the old partial cache, or worse, whenever
-        -- the new list could not be saved (a read-only or full cache directory).
+        -- The picker judges by the list the fetch produced. The disk may hold
+        -- the old partial cache, or worse, when the new list could not be
+        -- saved (read-only or full cache dir).
         it("judges by the list the fetch produced, not by what is on disk afterwards", function()
             config.user.username = "me"
             completed, fetched, stale = MARKED, false, true
@@ -611,10 +608,9 @@ describe(":CW unfinished", function()
         end)
     end)
 
-    -- With no completed list to judge by, every file would look unfinished,
-    -- the kata you have solved among them. A fetch that failed, or whose
-    -- reply was dropped because the account changed under it, is not "you
-    -- have completed nothing".
+    -- With no completed list every file would look unfinished, solved kata
+    -- included. A failed fetch, or one dropped because the account changed, is
+    -- not "you have completed nothing".
     it("does not open on an empty completed list that could not be fetched, and says why", function()
         local saved_user = config.user.username
         config.user.username = "me"

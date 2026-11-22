@@ -1,15 +1,13 @@
 --- Kata you started and never submitted.
 ---
---- Every kata you open leaves a solution file in storage.home. One is
---- unfinished when its kata is not completed in that language and the file no
---- longer holds the starter it was seeded with: a kata you only looked at is
---- not one you are in the middle of.
+--- A solution file in storage.home is unfinished when its kata is not completed
+--- in that language and the file no longer holds the starter it was seeded
+--- with, so a kata you only looked at is not listed.
 ---
---- The starter itself is not kept -- Codewars sends it with each training
---- session, and the cached copy of that expires -- so a fingerprint of it is
---- recorded next to the solutions, in .seeded.json, whenever one is written.
---- A file seeded before that record existed cannot be checked. It is listed,
---- marked as such, until the kata is opened again.
+--- The starter is not kept (Codewars sends it with each session and the cached
+--- copy expires), so a fingerprint of it is recorded in .seeded.json whenever a
+--- solution is seeded. A file seeded before that record existed cannot be
+--- checked: it is listed, marked as such, until the kata is opened again.
 local config = require("codewars.config")
 local cache_utils = require("codewars.cache.utils")
 
@@ -17,27 +15,24 @@ local M = {}
 
 local RECORD = ".seeded.json"
 
---- A fingerprint made by the current algorithm starts with this. Records
---- written before it existed hold bare digests, made the old way.
+--- A fingerprint from the current algorithm starts with this; bare digests are
+--- the old kind.
 local PRINT_V2 = "v2:"
 
---- The old fingerprint: every whitespace character removed. It cannot tell
---- `"hello world"` from `"helloworld"`, so nothing writes it any more; it
---- stays so that a record already on disk is still compared the way it was
---- made.
+--- The old fingerprint (all whitespace removed). It confuses `"hello world"`
+--- with `"helloworld"`, so nothing writes it; it stays to compare records
+--- already on disk.
 ---@param text string
 ---@return string
 local function legacy_fingerprint(text)
     return vim.fn.sha256((text:gsub("%s+", "")))
 end
 
---- Indentation, trailing spaces, blank lines and the final newline are not
---- work on the kata, so re-indenting an untouched starter, or an editor adding
---- a newline, does not make it look started. Anything else is: each line is
---- kept exactly between its first and last non-blank character, so a space
---- inside a string or between two tokens counts. (That includes a change to
---- the indentation of a line inside a multi-line string, which is
---- deliberately not told apart from re-indenting.)
+--- Ignores indentation, trailing spaces, blank lines and the final newline, so
+--- re-indenting an untouched starter does not make it look started. Each line
+--- is kept exactly between its first and last non-blank character, so a space
+--- inside a string or between tokens counts. (Re-indenting inside a multi-line
+--- string is deliberately not told apart from re-indenting.)
 ---@param text string
 ---@return string
 function M.fingerprint(text)
@@ -87,7 +82,7 @@ local function load()
     local data = cache_utils.read_json(record_path())
     if type(data) ~= "table" then return {} end
     for file_name, rec in pairs(data) do
-        -- The first records held only the fingerprints, as a bare list.
+        -- Early records were a bare list of fingerprints.
         if type(rec) == "table" and rec.prints == nil then
             data[file_name] = { prints = rec }
         end
@@ -125,11 +120,9 @@ function M.seeded(file_name, text, info)
 end
 
 --- :CW reset put a fresh starter in the buffer. ADDS it to the starters on
---- record, where `seeded` replaces them: the file is not rewritten until the
---- buffer is saved, and the list reads the file, so until then it still holds
---- whatever it held -- an untouched old starter, say -- and that must not
---- start to look like work. With nothing on record the record starts with
---- this one; one already there is not added twice.
+--- record (`seeded` replaces them): the file keeps its old content until the
+--- buffer is saved, and an untouched old starter must not look like work.
+--- A starter already on record is not added twice.
 ---@param file_name string
 ---@param text string
 ---@param info cw.KataInfo?
@@ -145,12 +138,11 @@ function M.reseeded(file_name, text, info)
     save(data)
 end
 
---- A kata opened its existing file. With nothing on record, the starter it
---- would be seeded with today is the best record there is: a file that still
---- matches it is untouched, and one that does not is listed -- the safe way to
---- be wrong.
+--- A kata opened its existing file. With nothing on record, today's starter is
+--- the best guess: a file that matches it is untouched, and one that does not
+--- is listed, which is the safe way to be wrong.
 ---@param file_name string
----@param starter string|fun(): string the starter, or how to make it -- only made when nothing is on record
+---@param starter string|fun(): string the starter, or how to make it; only made when nothing is on record
 ---@param info cw.KataInfo?
 function M.opened(file_name, starter, info)
     local data = load()
@@ -197,11 +189,10 @@ local function completed_index(completed)
     return done
 end
 
---- Whether a directory entry is a solution file, and its stat: a regular
---- file, or a symlink to one -- a kata opens a solution through a link as
---- readily as through a file, and what is done in it is as real. A link to
---- nothing, or to a directory, is not. The stat follows the link, so it is the
---- target's: its time is when the solution was last changed.
+--- Whether a directory entry is a solution file, and its stat: a regular file
+--- or a symlink to one (a kata opens a solution through a link too). A broken
+--- link or a link to a directory is not. The stat follows the link, so its
+--- time is when the target was last changed.
 ---@param path string
 ---@param kind string as vim.fs.dir reports it ("file", "link", "directory"...)
 ---@return boolean is_solution

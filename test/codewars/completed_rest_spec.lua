@@ -239,9 +239,8 @@ describe("completed.enrich past its first 50", function()
         assert.equals(119, vim.tbl_count(details()))
     end)
 
-    -- A cache directory that is read-only or full: the names are looked up
-    -- all the same, the user is told once, and the open picker still gets
-    -- them -- from memory, until a write lands.
+    -- A read-only or full cache directory: names are still looked up, the user
+    -- is told once, and the open picker gets them from memory until a write lands.
     describe("when the details cannot be saved", function()
         local cache_utils = require("codewars.cache.utils")
         local log = require("codewars.logger")
@@ -298,9 +297,8 @@ describe("completed.enrich past its first 50", function()
         end)
     end)
 
-    -- The first batch holds what the cache held when it began, for the whole
-    -- time its requests are out. What it saves has to be what it fetched,
-    -- added to the cache as it is at that moment.
+    -- The first batch holds what the cache held when it began while its requests
+    -- are out. It must save what it fetched, added to the cache as it is then.
     describe("the first batch, while the cache changes under it", function()
         local calls
 

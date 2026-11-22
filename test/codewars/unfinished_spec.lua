@@ -1,6 +1,5 @@
--- Kata you started and never submitted. A local solution file is a kata you
--- opened; it is unfinished when its kata is not completed in that language and
--- the file no longer holds the starter it was seeded with. A file seeded
+-- A solution file is unfinished when its kata is not completed in that language
+-- and the file no longer holds the starter it was seeded with. A file seeded
 -- before starters were recorded cannot be checked, so it is listed and says so.
 local P = require("plenary.path")
 
@@ -219,9 +218,8 @@ describe("unfinished", function()
         assert.are.same({ "multiply.py" }, listed())
     end)
 
-    -- :CW reset puts a new starter in the buffer, but the file on disk only
-    -- changes when it is saved: until then the old starter is what the list
-    -- reads, so it has to stay on record beside the new one.
+    -- :CW reset puts a new starter in the buffer but the file only changes on
+    -- save, so until then the old starter must stay on record beside the new.
     describe("reseeded", function()
         it("adds the new starter to the ones on record", function()
             unfinished.seeded("multiply.py", "first starter")

@@ -140,9 +140,8 @@ describe("Kata and :CW unfinished", function()
         end)
     end)
 
-    -- Older versions named a kata opened by its id after the id. The kata now
-    -- resolves to its slug before the file is opened, so without this the
-    -- work in that file never showed: a fresh starter was seeded beside it.
+    -- Older versions named a file after the kata's id; without this its work
+    -- never shows and a fresh starter is seeded beside it.
     it("opens a file named after the kata's id when there is none by its slug", function()
         n = n + 1
         local slug, id = "unfinished-kata-" .. n, ("%024x"):format(n)

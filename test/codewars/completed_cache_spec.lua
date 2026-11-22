@@ -48,9 +48,9 @@ describe("cache.completed", function()
         assert.is_true(stale)
     end)
 
-    -- Whether what is on disk is the account's list, or only the kata marked
-    -- on this machine before any list was ever fetched: judged by the stamp
-    -- a fetch gives it and a mark does not.
+    -- Whether the disk holds the account's list or only kata marked on this
+    -- machine before any fetch: judged by the stamp a fetch gives and a mark
+    -- does not.
     describe("whether the list on disk was ever fetched", function()
         local function fetched() return (select(3, completed.get())) end
 
@@ -107,8 +107,7 @@ describe("cache.completed", function()
     end)
 
     -- A write that did not land is not a save. Reporting it lets the caller
-    -- that fetched the list go on with the list it has in memory instead of
-    -- reading back whatever happens to be on disk.
+    -- that fetched the list keep the one in memory instead of reading the disk.
     describe("a cache that cannot be written", function()
         local warns
 
@@ -156,9 +155,8 @@ describe("cache.completed", function()
         end)
     end)
 
-    -- A kata solved in one language is already in the cache; solving it again
-    -- in a second one must still be recorded, or :CW unfinished keeps listing
-    -- that second solution until the next successful refresh.
+    -- Solving a cached kata in a second language must still be recorded, or
+    -- :CW unfinished lists that solution until the next successful refresh.
     describe("mark on a kata already in the cache", function()
         local function cached(item, timestamp)
             store["mem:completed.json"] = { timestamp = timestamp, items = { item } }
@@ -405,9 +403,8 @@ describe("cache.completed", function()
         end)
     end)
 
-    -- The cache on disk is the signed-in account's. A reply made for an
-    -- account that has since signed out, or for a cache that has since been
-    -- cleared, is not that account's list and must not be written as one.
+    -- The cache is the signed-in account's: a reply for an account that has
+    -- since signed out, or a cache since cleared, must not be written as its list.
     describe("update whose account changes or whose cache is cleared during the request", function()
         local requests, results
         local FILE = "mem:completed.json"
