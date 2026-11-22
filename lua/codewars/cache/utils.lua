@@ -24,8 +24,7 @@ local function parse(text)
     return ok and data or nil
 end
 
--- What has been reported, so that each is said once: a file whose backup could
--- not be written back (each read of it would say it again), and a note from a write.
+-- What was already reported, so each warning is said once (a failed write-back would repeat on every read).
 local reported = {}
 
 ---@param key string
@@ -36,9 +35,8 @@ local function warn_once(key, message)
     log.warn(message)
 end
 
---- `file` exists and was read in full, and is empty or undecodable. A good copy
---- at its backup's name is written back into it and returned; the backup stays
---- where it is (only a writer removes one).
+--- `file` was read in full and is empty or undecodable: write a good backup back into it and return its data.
+--- The backup stays (only a writer removes one).
 ---@param file string
 ---@param main_stat table the descriptor's stat when `file` was read
 ---@return table? data the backup's, when it was recovered
@@ -61,13 +59,11 @@ end
 function M.read_json(path)
     local file = backup.file_name(path)
     local state, detail, stat = backup.read_main(file)
-    -- Could not be read: not known to be damaged, so not recovered over. Absent:
-    -- deleted, by the plugin or by hand, and a leftover backup does not bring it back.
+    -- Unreadable is not known to be damaged, and absent was deleted: neither is recovered.
     if state ~= "read" then return nil end
     local data = parse(detail)
     if data ~= nil then return data end
-    -- Present, read in full, and empty or undecodable: damaged, as an interrupted
-    -- write over it leaves it.
+    -- Present and undecodable: damaged, as an interrupted write leaves it.
     return recover(file, stat)
 end
 
@@ -76,10 +72,8 @@ end
 --- the difference between "saved" and "lost". Swallowing this made a failed
 --- write look identical to a successful one.
 ---
---- A write that fails partway keeps the previous cache (see cache.backup): the
---- file is rewritten in place, never replaced, so it keeps its owner, mode and
---- read-only state, and what was there is put back on a failure. A cache that
---- cannot be backed up first is not written at all, and that is reported.
+--- A failed write keeps the previous cache (see cache.backup): it is rewritten in place and put back on failure.
+--- A cache that cannot be backed up first is not written, and that is reported.
 ---@param path Path
 ---@param data table
 ---@param opts { quiet: boolean? }? `quiet`: log nothing on failure, for a caller that reports it itself

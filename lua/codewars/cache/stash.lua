@@ -35,7 +35,7 @@ function M.for_kind(prefix)
     ---@param id string
     ---@return table?
     function kind.get(id)
-        -- No exists() check first: a stash with only its backup left is read too.
+        -- No exists() check: read_json returns nil for an absent stash.
         return cache_utils.read_json(file(id))
     end
 
@@ -43,8 +43,7 @@ function M.for_kind(prefix)
     ---@return boolean removed
     function kind.delete(id)
         local path = file(id)
-        -- A backup that cannot be removed is warned about and does not matter to the
-        -- deletion: a stash that is absent is never recovered from it.
+        -- A backup that cannot be removed is warned about; it cannot bring back an absent stash.
         backup.drop_or_warn(path)
         if not path:exists() then
             return false

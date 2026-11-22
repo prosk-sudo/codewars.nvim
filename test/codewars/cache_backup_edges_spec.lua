@@ -1,18 +1,8 @@
--- The edges of the in-place cache writer that are plain bugs, not attacks:
---   * a cache that is absent is created exclusively (O_CREAT|O_EXCL), never
---     through whatever appears at its path after it was read; a dangling
---     symlink that is the configured cache is resolved one level and its
---     target is created, and a failed write removes that target, never the link
---   * only ENOENT means a backup is absent; any other error looking at it is
---     "unknown" and refuses a write, and a read recovers nothing
---   * deleting a cache gets rid of its backup (unlink, else empty it), and says so
---     when it can do neither; and since an absent cache is never recovered, a
---     backup that could not be removed brings nothing back
---   * a symlink's target is resolved without vim.fn.isabsolutepath, which Neovim 0.9
---     and 0.10 do not have
+-- Plain-bug edges of the in-place writer: an absent cache is created exclusively (a dangling link's target, never
+-- the link); only ENOENT means a backup is absent; deleting a cache drops its backup; no vim.fn.isabsolutepath.
 local P = require("plenary.path")
 
--- A Codewars kata id: 24 hex digits, which is what the stash accepts as an id.
+-- A kata id: 24 hex digits, which the stash accepts.
 local STASH_ID = "0123456789abcdef01234567"
 
 local uv = vim.uv or vim.loop
@@ -30,12 +20,12 @@ local function spit(path, text)
     f:close()
 end
 
---- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+--- A backup file holding `payload`, as the plugin writes one ...
 local function put(path, payload)
     spit(path, require("codewars.cache.backup").frame_backup(payload))
 end
 
---- ... and the bytes a backup file holds, nil if it is not a complete backup.
+--- ... and the payload of a backup file, nil if it is incomplete.
 local function payload_of(path)
     return require("codewars.cache.backup").parse_backup(slurp(path))
 end
@@ -245,9 +235,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
     end)
 
     describe("a new cache beside a stale backup", function()
-        -- The backup goes first. A crash partway through creating the cache then leaves a
-        -- damaged cache next to no backup (or an empty one): nothing to recover the
-        -- deleted data from.
+        -- The backup goes first, so a crash while creating the cache leaves nothing to recover the deleted data from.
         local function unlink_fails()
             uv.fs_unlink = function(path)
                 if path == bak then return nil, "EPERM: operation not permitted: " .. path, "EPERM" end
@@ -464,8 +452,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
     end)
 
     describe("an absent cache with a good backup beside it", function()
-        -- Every write over an existing cache is in place, so an interrupted one leaves the
-        -- cache present and damaged. An absent cache was deleted, and stays so.
+        -- An interrupted in-place write leaves the cache present and damaged; an absent one was deleted, and stays so.
         it("returns nil on a read and touches nothing", function()
             put(bak, older)
             local before = uv.fs_stat(bak)

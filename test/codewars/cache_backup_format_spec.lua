@@ -1,10 +1,5 @@
--- A backup is only trusted if it proves it is complete. It is written as one header
--- line, `CWBAK1 <byte-length> <sha256-hex>`, then the original bytes. A backup that
--- a crash cut short (the failure clean-up does not run when the process dies) can
--- hold a prefix that is itself valid JSON, so recovery accepts a backup only when
--- the header parses, the payload has exactly that many bytes, the checksum
--- matches, and the payload then decodes. Anything else is undecodable, and never
--- used for recovery.
+-- A backup is trusted only if its `CWBAK1 <byte-length> <sha256-hex>` header, length and checksum match and the
+-- payload decodes: a crash can leave a prefix that is itself valid JSON.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop

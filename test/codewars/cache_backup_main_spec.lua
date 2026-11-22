@@ -1,13 +1,5 @@
--- The cache file itself, as the backup logic meets it:
---   * recovery from <path>.bak runs only when the cache exists and was read in
---     full from a regular file and is empty or undecodable. A cache that is absent
---     was deleted, and is not brought back; one that merely could not be read is
---     unknown, not damaged: nothing is written over it
---   * every file is opened for writing without blocking and without truncating,
---     checked on its descriptor (a regular file, the very one that was read),
---     and only then truncated
---   * removing the .bak after a write that landed is part of that success; if it
---     cannot be removed it is emptied, so it can never be recovered from
+-- The cache file as the backup logic meets it: recovery only over a present cache that is empty or undecodable;
+-- every open for writing is non-blocking and fstat-checked; a backup that cannot be removed is emptied.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop
@@ -25,12 +17,12 @@ local function spit(path, text)
     f:close()
 end
 
---- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+--- A backup file holding `payload`, as the plugin writes one ...
 local function put(path, payload)
     spit(path, require("codewars.cache.backup").frame_backup(payload))
 end
 
---- ... and the bytes a backup file holds, nil if it is not a complete backup.
+--- ... and the payload of a backup file, nil if it is incomplete.
 local function payload_of(path)
     return require("codewars.cache.backup").parse_backup(slurp(path))
 end
@@ -79,9 +71,8 @@ describe("cache.utils, the cache file", function()
     local function write(opts) return cache_utils.write_json(P:new(file), fresh, opts) end
     local function read() return cache_utils.read_json(P:new(file)) end
 
-    --- The cache cannot be read, the way a permission or I/O error, or a descriptor that is
-    --- not what it should be, would make it: the open ("open"), a read ("read"), or
-    --- the descriptor check ("descriptor"). Opens for writing are not touched.
+    --- The cache cannot be read: the open ("open"), a read ("read") or the descriptor check ("descriptor") fails.
+    --- Opens for writing are not touched.
     local function main_unreadable(how)
         local fds = {}
         uv.fs_close = function(fd)
@@ -229,8 +220,7 @@ describe("cache.utils, the cache file", function()
             assert.same({}, opens)
         end)
 
-        --- Make the descriptor the cache is opened for writing on say something else than
-        --- what was read, and count what is done to it from then on.
+        --- Make the descriptor the cache is opened on differ from what was read, and count what is done to it.
         local function descriptor_says(change)
             local fds, done = {}, { truncated = false, written = false }
             uv.fs_close = function(fd)
@@ -294,8 +284,7 @@ describe("cache.utils, the cache file", function()
             end)
         end
 
-        --- Run Lua in a fresh Neovim that must finish before `ms` is up: a blocking open
-        --- would hang it for good, and the test has to say so instead of hanging.
+        --- Run Lua in a fresh Neovim that must finish before `ms`: a blocking open would hang it, so fail instead.
         local function in_child(body, ms)
             local script = tmp .. "/child.lua"
             spit(script, ("vim.opt.rtp:prepend(%s)\n%s"):format(vim.inspect(vim.fn.getcwd()), body))
@@ -447,8 +436,7 @@ print("RESULT", tostring(ok), tostring(err), uv.fs_lstat(BAK) and "bak" or "noba
             assert.equals(1, #errors, vim.inspect(errors))
         end)
 
-        -- Only ENOENT means it is gone. Any other failure to look is "unknown", and a
-        -- write that left an unexaminable backup behind must not report a clean success.
+        -- Only ENOENT means gone; an unexaminable backup is "unknown" and must not make a write report a clean success.
         for _, code in ipairs({ "EIO", "EACCES" }) do
             it(("is not reported gone when it cannot be examined afterwards (%s)"):format(code), function()
                 spit(file, original)

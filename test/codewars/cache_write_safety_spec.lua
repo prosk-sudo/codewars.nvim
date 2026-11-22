@@ -1,7 +1,5 @@
--- A cache write that fails partway must leave the previous cache as it was.
--- The file is never replaced by a new one (that would lose its owner, exact
--- mode, ACLs and read-only state): the old bytes are copied to <path>.bak, the
--- file is rewritten in place, and the copy is put back if the rewrite fails.
+-- A cache write that fails partway must leave the previous cache as it was: the old bytes go to <path>.bak,
+-- the file is rewritten in place (keeping its owner, mode and ACLs), and the copy is put back on failure.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop
@@ -19,12 +17,12 @@ local function spit(path, text)
     f:close()
 end
 
---- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+--- A backup file holding `payload`, as the plugin writes one ...
 local function put(path, payload)
     spit(path, require("codewars.cache.backup").frame_backup(payload))
 end
 
---- ... and the bytes a backup file holds, nil if it is not a complete backup.
+--- ... and the payload of a backup file, nil if it is incomplete.
 local function payload_of(path)
     return require("codewars.cache.backup").parse_backup(slurp(path))
 end

@@ -1,8 +1,5 @@
--- A file that an open with O_CREAT|O_EXCL created is ours. Whatever fails after
--- that (the descriptor check, ftruncate, fchmod, a write, fsync, close) takes it
--- away again, so no empty cache, resolved link target or empty .bak is left
--- behind and the failure is reported. A file that was already there (an open
--- without O_CREAT) is never unlinked because a write to it failed.
+-- A file that an open with O_CREAT|O_EXCL created is ours: if anything fails after that it is removed, so no empty
+-- cache, link target or .bak is left. A file that was already there is never unlinked because a write to it failed.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop
@@ -20,12 +17,12 @@ local function spit(path, text)
     f:close()
 end
 
---- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+--- A backup file holding `payload`, as the plugin writes one ...
 local function put(path, payload)
     spit(path, require("codewars.cache.backup").frame_backup(payload))
 end
 
---- ... and the bytes a backup file holds, nil if it is not a complete backup.
+--- ... and the payload of a backup file, nil if it is incomplete.
 local function payload_of(path)
     return require("codewars.cache.backup").parse_backup(slurp(path))
 end
@@ -71,9 +68,8 @@ describe("cache.backup, a file that was created and then failed", function()
 
     local function write() return cache_utils.write_json(P:new(file), fresh) end
 
-    --- Make `step` fail on the descriptor that was just opened for writing `path`:
-    --- the stat of it ("fstat"), the truncation, the mode, the flush or the close.
-    --- Only descriptors opened on `path` for writing are touched.
+    --- Make `step` ("fstat", the truncation, the mode, the flush or the close) fail on the descriptor just
+    --- opened for writing `path`. Other descriptors are not touched.
     local function fail_on(path, step)
         local fds = {}
         local function ours(fd) return fds[fd] end
@@ -154,9 +150,8 @@ describe("cache.backup, a file that was created and then failed", function()
         end)
     end)
 
-    -- The clean-up can fail too (an I/O error on the unlink). The file is ours and, once
-    -- its descriptor passed the check, it is emptied first, while that is still open: an
-    -- empty file never decodes, so a partial one cannot be recovered from as the cache.
+    -- The clean-up can fail too (an I/O error on the unlink): the file is emptied first, while still open,
+    -- and an empty file never decodes, so a partial one cannot be recovered from.
     describe("when the clean-up of a file that was created fails as well", function()
         -- A prefix that is itself valid JSON, which is what makes a partial file dangerous.
         local number = "1234567890123456"
@@ -260,9 +255,8 @@ describe("cache.backup, a file that was created and then failed", function()
         end)
     end)
 
-    -- The close can fail too, and then the descriptor is gone: what was written cannot be
-    -- emptied through it. The path is unlinked; if that fails, it is reopened (no create, no
-    -- truncate), checked to be the very file that was created, and emptied.
+    -- A failed close leaves no descriptor to empty through: the path is unlinked, else reopened (no create, no
+    -- truncate), checked to be the file that was created, and emptied.
     describe("when the close of a created file fails", function()
         local stash_id = "0123456789abcdef01234567"
 

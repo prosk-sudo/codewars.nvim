@@ -1,12 +1,8 @@
--- The other half of the in-place write: <path>.bak is the previous cache while
--- a write is under way. If a restore failed or the editor died mid-write, the
--- next read finds it and recovers from it when the cache itself is no good. A
--- reader never removes one (only a writer does), never reads one through a
--- symlink, and the scans never mistake one for a cache entry; it goes with its
--- cache when the cache is deleted.
+-- <path>.bak is the previous cache while a write is under way. If a restore failed or the editor died, the next
+-- read recovers from it when the cache is no good. Readers never remove one or follow a symlink to it.
 local P = require("plenary.path")
 
--- A Codewars kata id: 24 hex digits, which is what the stash accepts as an id.
+-- A kata id: 24 hex digits, which the stash accepts.
 local STASH_ID = "0123456789abcdef01234567"
 
 local uv = vim.uv or vim.loop
@@ -24,12 +20,12 @@ local function spit(path, text)
     f:close()
 end
 
---- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+--- A backup file holding `payload`, as the plugin writes one ...
 local function put(path, payload)
     spit(path, require("codewars.cache.backup").frame_backup(payload))
 end
 
---- ... and the bytes a backup file holds, nil if it is not a complete backup.
+--- ... and the payload of a backup file, nil if it is incomplete.
 local function payload_of(path)
     return require("codewars.cache.backup").parse_backup(slurp(path))
 end
@@ -83,9 +79,8 @@ describe("cache backups", function()
             assert.equals(good, payload_of(bak), "a reader removed the backup; only a writer does")
         end)
 
-        -- A cache that is absent was deleted (by the plugin, or by hand): every write
-        -- over an existing cache is in place, so an interrupted one leaves it present
-        -- and damaged, never absent. A leftover backup must not bring it back.
+        -- An absent cache was deleted: an interrupted in-place write leaves it present and damaged,
+        -- so a leftover backup must not bring it back.
         it("does nothing when the file is missing: a leftover backup does not bring a deleted cache back", function()
             put(bak, good)
             local before = uv.fs_stat(bak)
@@ -108,8 +103,8 @@ describe("cache backups", function()
             assert.equals(1, #warnings, vim.inspect(warnings))
         end)
 
-        -- Another editor may be between making the backup and truncating the file:
-        -- a file that reads fine is no proof that the backup is stale.
+        -- Another editor may be between backing up and truncating: a cache that reads fine does not make
+        -- the backup stale.
         it("leaves the backup alone when the file decodes fine", function()
             spit(file, vim.json.encode({ kept = "newer" }))
             put(bak, good)
@@ -307,8 +302,7 @@ describe("cache backups", function()
         it("unfinished.list does not list a solution's backup or the record's", function()
             local unfinished = require("codewars.unfinished")
             local saved_langs = config.langs
-            -- A language whose files end in .bak: the only way a backup could be
-            -- mistaken for a solution by the extension alone.
+            -- A language whose files end in .bak: the only way the extension alone could mistake a backup for one.
             config.langs = vim.list_extend(vim.deepcopy(saved_langs), { { ft = "bak", slug = "bakish" } })
             local ok, listed = pcall(function()
                 unfinished.seeded("multiply.py", "def f(x):\n    pass")

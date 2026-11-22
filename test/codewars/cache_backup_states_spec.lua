@@ -1,14 +1,5 @@
--- What one write_json does for each state its surroundings can be in: the cache
--- (absent, good, undecodable, empty), its <path>.bak (absent, good,
--- undecodable, symlink, not a regular file) and whether the directory can be
--- written. The rules:
---   * a cache that cannot be backed up first is not touched: the write is
---     refused and reported, never done without a backup
---   * a .bak that holds a good copy is never overwritten by a cache that does
---     not decode
---   * an existing .bak is never opened for writing: a symlink or other
---     non-regular file is unlinked and a fresh backup is created exclusively
---   * a write that is quiet logs nothing, including the check it does first
+-- What one write_json does for each state of the cache, its <path>.bak and the directory: no backup, no write; a good
+-- .bak is never overwritten by a cache that does not decode; an existing .bak is never opened for writing.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop
@@ -26,12 +17,12 @@ local function spit(path, text)
     f:close()
 end
 
---- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+--- A backup file holding `payload`, as the plugin writes one ...
 local function put(path, payload)
     spit(path, require("codewars.cache.backup").frame_backup(payload))
 end
 
---- ... and the bytes a backup file holds, nil if it is not a complete backup.
+--- ... and the payload of a backup file, nil if it is incomplete.
 local function payload_of(path)
     return require("codewars.cache.backup").parse_backup(slurp(path))
 end
@@ -232,9 +223,8 @@ describe("cache.utils write_json, state by state", function()
             assert.equals(good_bak, payload_of(bak), "the good copy was removed though the cache was never written")
         end)
 
-        -- A cache that is absent was deleted: its backup is stale, and goes BEFORE the new
-        -- cache is created, so that a crash partway through creating it leaves nothing to
-        -- recover the deleted data from.
+        -- An absent cache was deleted: its stale backup goes BEFORE the new cache is created, so a crash
+        -- partway through leaves nothing to recover.
         it("is gone before a cache that is not there is created", function()
             put(bak, good_bak)
             local seen = look_during_write(function() return uv.fs_lstat(bak) == nil and "gone" or "still there" end)
@@ -342,9 +332,8 @@ describe("cache.utils write_json, state by state", function()
     end
 
     describe("a .bak that cannot be read", function()
-        -- Unknown, not junk: it may be the one good copy. Only a .bak that was read in
-        -- full and does not decode, one beside a cache that decodes, or a non-regular
-        -- file may be removed or replaced.
+        -- Unknown, not junk: it may be the one good copy. Only a .bak read in full that does not decode,
+        -- one beside a cache that decodes, or a non-regular file may be removed or replaced.
         for _, how in ipairs({ "open", "read", "mode" }) do
             it(("refuses the write over a damaged cache, touching neither file (%s error)"):format(how), function()
                 spit(file, "{ torn")
@@ -412,8 +401,7 @@ describe("cache.utils write_json, state by state", function()
     end)
 
     describe("a .bak swapped under the open", function()
-        --- Run Lua in a fresh Neovim that must finish before `ms` is up: a blocking
-        --- open would hang it for good, and the test must say so instead of hanging.
+        --- Run Lua in a fresh Neovim that must finish before `ms`: a blocking open would hang it, so fail instead.
         local function in_child(body, ms)
             local script = tmp .. "/child.lua"
             spit(script, ("vim.opt.rtp:prepend(%s)\n%s"):format(vim.inspect(vim.fn.getcwd()), body))
