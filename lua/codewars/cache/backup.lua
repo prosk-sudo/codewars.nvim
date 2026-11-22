@@ -185,9 +185,14 @@ end
 ---
 --- A file that the open created (`create`) is ours from the moment it succeeds:
 --- whatever fails after that (the descriptor check, ftruncate, fchmod, a write,
---- fsync, close) closes the descriptor and unlinks that path, so no empty or
---- partial file is left behind. A file that was already there is never unlinked
---- because a write to it failed.
+--- fsync, close) takes it away again, so no empty or partial file is left behind.
+--- Once the descriptor has passed the check that proves it is the file we created,
+--- what was written is emptied first (ftruncate and fsync, while it is still open),
+--- and then the descriptor is closed and the path unlinked. If the unlink fails the
+--- file is already empty, which never decodes, so a partial cache or backup cannot
+--- be recovered from; the failure of the clean-up is added to the error, naming the
+--- path. A file that was already there is never unlinked because a write to it
+--- failed.
 ---@param path string
 ---@param data string
 ---@param opts cw.cache.WriteOpts?
@@ -212,9 +217,25 @@ local function write_file(path, data, opts)
         if ok then ok, err = write_all(fd, data) end
         if ok then ok, err = uv.fs_fsync(fd) end
     end
+
+    -- Ours, failed, and proved to be the file we created: empty it while it is open.
+    local emptied
+    if not ok and opts.create and touched then
+        emptied = uv.fs_ftruncate(fd, 0) and uv.fs_fsync(fd) or false
+    end
     local closed, close_err = uv.fs_close(fd)
     if ok and not closed then ok, err = false, close_err end
-    if not ok and opts.create then uv.fs_unlink(path) end
+    if not ok and opts.create then
+        local removed, unlink_err, name = uv.fs_unlink(path)
+        if not removed and name ~= "ENOENT" then
+            local state = "it is empty"
+            if touched then
+                state = emptied and "was emptied" or "could not be emptied; delete it by hand"
+            end
+            err = ("%s; the partial file at %s could not be removed (%s) and %s"):format(
+                tostring(err), path, tostring(unlink_err), state)
+        end
+    end
     return ok == true, err, touched
 end
 

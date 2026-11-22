@@ -26,7 +26,7 @@ describe("cache.backup, a file that was created and then failed", function()
     local cache_utils = require("codewars.cache.utils")
     local backup = require("codewars.cache.backup")
     local saved_storage, real_error, real_warn, errors
-    local real_open, real_fstat, real_ftruncate, real_fchmod, real_fsync, real_close, real_unlink
+    local real_open, real_fstat, real_ftruncate, real_fchmod, real_fsync, real_close, real_unlink, real_write
     local tmp, file, bak, original, fresh
 
     local C = uv.constants or {}
@@ -42,6 +42,7 @@ describe("cache.backup, a file that was created and then failed", function()
         saved_storage, real_error, real_warn, errors = config.storage, log.error, log.warn, {}
         real_open, real_fstat, real_ftruncate = uv.fs_open, uv.fs_fstat, uv.fs_ftruncate
         real_fchmod, real_fsync, real_close, real_unlink = uv.fs_fchmod, uv.fs_fsync, uv.fs_close, uv.fs_unlink
+        real_write = uv.fs_write
         config.storage = { home = P:new(tmp), cache = P:new(tmp) }
         log.error = function(msg) errors[#errors + 1] = tostring(msg) end
         log.warn = function() end
@@ -53,6 +54,7 @@ describe("cache.backup, a file that was created and then failed", function()
     after_each(function()
         uv.fs_open, uv.fs_fstat, uv.fs_ftruncate = real_open, real_fstat, real_ftruncate
         uv.fs_fchmod, uv.fs_fsync, uv.fs_close, uv.fs_unlink = real_fchmod, real_fsync, real_close, real_unlink
+        uv.fs_write = real_write
         config.storage, log.error, log.warn = saved_storage, real_error, real_warn
         vim.fn.delete(tmp, "rf")
     end)
@@ -139,6 +141,112 @@ describe("cache.backup, a file that was created and then failed", function()
             assert.is_nil(uv.fs_lstat(target), "an empty target was left behind")
             assert.equals("link", uv.fs_lstat(file).type)
             assert.equals(target, uv.fs_readlink(file))
+        end)
+    end)
+
+    -- The clean-up can fail too (an I/O error on the unlink). The file is ours and, once
+    -- its descriptor passed the check, it is emptied first, while that is still open: an
+    -- empty file never decodes, so a partial one cannot be recovered from as the cache.
+    describe("when the clean-up of a file that was created fails as well", function()
+        -- A prefix that is itself valid JSON, which is what makes a partial file dangerous.
+        local number = "1234567890123456"
+
+        --- The write of `bytes` lands a valid-JSON prefix and then fails; unlinking `path` fails too.
+        local function fails_after_a_valid_prefix_and_cannot_unlink(bytes, path)
+            uv.fs_write = function(fd, data, offset)
+                if data == bytes then
+                    real_write(fd, data:sub(1, 8), offset)
+                    return nil, "ENOSPC: no space left on device"
+                end
+                return real_write(fd, data, offset)
+            end
+            uv.fs_unlink = function(p)
+                if p == path then return nil, "EIO: i/o error: " .. p, "EIO" end
+                return real_unlink(p)
+            end
+        end
+
+        it("empties a fresh backup first, so the prefix of the copy is never recovered", function()
+            spit(file, number) -- a good cache, and one whose copy has a valid prefix
+            fails_after_a_valid_prefix_and_cannot_unlink(number, bak)
+
+            local ok, err = cache_utils.write_json(P:new(file), 1, { quiet = true })
+
+            uv.fs_write, uv.fs_unlink = real_write, real_unlink
+            assert.is_false(ok)
+            assert.matches("ENOSPC", err)
+            assert.matches(vim.pesc(bak), err)
+            assert.matches("could not be removed", err)
+            assert.matches("emptied", err)
+            assert.equals(number, slurp(file))
+            assert.equals(0, uv.fs_stat(bak).size, "a partial backup was left holding a valid prefix")
+            spit(file, "{ torn") -- the cache is damaged later
+            assert.is_nil(cache_utils.read_json(P:new(file)), "the prefix of a failed backup was recovered as the cache")
+        end)
+
+        it("empties a new cache first, and says so", function()
+            fails_after_a_valid_prefix_and_cannot_unlink(number, file)
+
+            local ok, err = cache_utils.write_json(P:new(file), tonumber(number), { quiet = true })
+
+            uv.fs_write, uv.fs_unlink = real_write, real_unlink
+            assert.is_false(ok)
+            assert.matches("ENOSPC", err)
+            assert.matches(vim.pesc(file), err)
+            assert.matches("could not be removed", err)
+            assert.matches("emptied", err)
+            assert.equals(0, uv.fs_stat(file).size, "a partial cache was left holding a valid prefix")
+        end)
+
+        it("reports it through the log unless the write is quiet", function()
+            fails_after_a_valid_prefix_and_cannot_unlink(number, file)
+
+            cache_utils.write_json(P:new(file), tonumber(number))
+
+            uv.fs_write, uv.fs_unlink = real_write, real_unlink
+            assert.equals(1, #errors, vim.inspect(errors))
+            assert.matches("could not be removed", errors[1])
+        end)
+
+        it("names the file to delete by hand when it can be neither removed nor emptied", function()
+            fails_after_a_valid_prefix_and_cannot_unlink(number, file)
+            local fds = {}
+            local open = uv.fs_open
+            uv.fs_open = function(p, flags, mode)
+                local fd, err, name = open(p, flags, mode)
+                if fd and p == file then fds[fd] = true end
+                return fd, err, name
+            end
+            uv.fs_ftruncate = function(fd, ...)
+                if fds[fd] then return nil, "EIO: i/o error" end
+                return real_ftruncate(fd, ...)
+            end
+
+            local ok, err = cache_utils.write_json(P:new(file), tonumber(number), { quiet = true })
+
+            uv.fs_write, uv.fs_unlink = real_write, real_unlink
+            assert.is_false(ok)
+            assert.matches(vim.pesc(file), err)
+            assert.matches("could not be emptied", err)
+            assert.matches("by hand", err)
+        end)
+
+        it("does not mention a clean-up when the unlink works: the file is simply gone", function()
+            uv.fs_write = function(fd, data, offset)
+                if data == number then
+                    real_write(fd, data:sub(1, 8), offset)
+                    return nil, "ENOSPC: no space left on device"
+                end
+                return real_write(fd, data, offset)
+            end
+
+            local ok, err = cache_utils.write_json(P:new(file), tonumber(number), { quiet = true })
+
+            uv.fs_write = real_write
+            assert.is_false(ok)
+            assert.matches("ENOSPC", err)
+            assert.is_nil(err:match("could not be removed"))
+            assert.is_nil(uv.fs_lstat(file))
         end)
     end)
 
