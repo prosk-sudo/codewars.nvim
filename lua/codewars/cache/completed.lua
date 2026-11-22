@@ -38,7 +38,8 @@ function completed.save(data, timestamp)
     }, { quiet = true })
 end
 
---- Details looked up but not saved, so the open picker still sees them; flushed by the next write.
+--- Details looked up but not saved, so the open picker still sees them; the next
+--- write that lands flushes them.
 ---@type table<string, table>
 local unsaved_details = {}
 
@@ -66,7 +67,8 @@ local flights = {}
 --- Bumped by `clear()`: a reply from a refresh begun earlier must not revive that cache.
 local generation = 0
 
---- What a run began for; it may write the caches only while both are unchanged.
+--- What a run began for (account and cache generation); it may write the caches
+--- only while both are unchanged.
 ---@class cw.Account
 ---@field username string
 ---@field generation integer
