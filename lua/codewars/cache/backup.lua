@@ -31,6 +31,16 @@
 ---    so one swapped for a pipe cannot hang the editor; the descriptor is then
 ---    checked (a regular file, the very one that was read or lstat-ed) before a
 ---    byte is read, and only then is it truncated and written.
+---  * A cache that is absent is created exclusively (O_CREAT|O_EXCL), never
+---    through whatever appears at its path after it was read. A dangling symlink
+---    that is the configured cache is resolved one level and its target is
+---    created (a link to a link is refused), and a failed write removes the file
+---    that was created, never the link.
+---  * Only ENOENT means something is absent. Any other error looking at a .bak (an
+---    I/O error, a permission) leaves it unknown: a write is refused before it
+---    writes anything, a read recovers nothing, and a removal is not reported done.
+---  * Deleting a cache removes its backup (drop): unlink, else empty it, and only
+---    if neither works is that reported, with the deletion going on.
 ---  * An existing .bak is never opened for writing to make a new copy, as that
 ---    would follow a symlink planted at the predictable name. A stale one, or
 ---    one that is a symlink or other non-regular file, is unlinked (which removes
@@ -114,19 +124,13 @@ function M.file_name(path)
     return ok and absolute or tostring(path)
 end
 
---- Whether anything is at the backup's name, a dangling symlink included.
+--- Whether anything is at the backup's name, a dangling symlink included. An
+--- error other than ENOENT reads as "no": it is only used to decide whether a read
+--- may try to recover, and that recovers nothing from a backup it cannot examine.
 ---@param file string
 ---@return boolean
 function M.has_backup(file)
     return uv.fs_lstat(M.backup_path(file)) ~= nil
-end
-
---- Remove the backup of a cache that is being deleted, so that the next read
---- does not "recover" what was deleted on purpose. Unlinks: a symlink goes,
---- its target does not.
----@param path Path|string
-function M.drop(path)
-    uv.fs_unlink(M.backup_path(M.file_name(path)))
 end
 
 --- Write all of `data` at the start of the open `fd`. A short count is
@@ -240,24 +244,30 @@ function M.read_main(file)
 end
 
 --- What is at the backup's name, from lstat first (never through a symlink):
----  * "absent": nothing
+---  * "absent": nothing: lstat says ENOENT, and only that does
+---  * "unknown": lstat failed some other way (an I/O error, a permission); `detail`
+---    is why. There may be a good copy there, so a write is refused and a read
+---    recovers nothing
 ---  * "foreign": not a regular file; `detail` is what it is
 ---  * "unreadable": a regular file that could not be opened or read in full;
 ---    `detail` is why. Unknown, not junk: it may be the one good copy.
 ---  * "read": a regular file read in full; `detail` is its bytes
 ---@param bak string
----@return "absent"|"foreign"|"unreadable"|"read" state
+---@return "absent"|"unknown"|"foreign"|"unreadable"|"read" state
 ---@return string? detail
 local function read_backup(bak)
-    local stat = uv.fs_lstat(bak)
-    if not stat then return "absent" end
+    local stat, stat_err, stat_name = uv.fs_lstat(bak)
+    if not stat then
+        if stat_name == "ENOENT" then return "absent" end
+        return "unknown", tostring(stat_err)
+    end
     if stat.type ~= "file" then return "foreign", stat.type end
     local bytes, err = read_file(bak, stat)
     if not bytes then return "unreadable", tostring(err) end
     return "read", bytes
 end
 
----@alias cw.cache.BackupState "absent"|"foreign"|"unreadable"|"good"|"unusable"
+---@alias cw.cache.BackupState "absent"|"unknown"|"foreign"|"unreadable"|"good"|"unusable"
 
 --- `read_backup`, with a regular file that was read in full sorted into one
 --- that decodes (a good copy; `detail` is its bytes) and one that does not.
@@ -299,22 +309,21 @@ local function make_backup(bak, original, mode, state, kind)
     return ok, err, note
 end
 
---- The write has landed: the backup is stale now, and must not outlive it, or a
---- later damaged or unreadable cache would be "recovered" to what was there
---- before. Unlink it; if that fails, empty it (an empty file does not decode, so
---- it can never be recovered from); if that fails too, say where it is.
+--- Get rid of a backup that must not be recovered from again. Unlink it; if that
+--- fails with anything but ENOENT, empty it (an empty file does not decode, so
+--- it can never be recovered from). Only ENOENT, from the unlink or from a look
+--- afterwards, means it is gone: any other failure to look is "unknown", which
+--- cannot be emptied safely (there is no identity to check the open against)
+--- and is not reported as removed.
 ---@param bak string
----@return boolean ok
----@return string? message a note when it had to be emptied, why it could not be when not ok
-local function discard_backup(bak)
+---@return "gone"|"emptied"|"failed" outcome
+---@return string? detail why the unlink failed when emptied; why it could neither be removed nor emptied when failed
+local function remove_backup(bak)
     local unlinked, unlink_err, name = uv.fs_unlink(bak)
-    if unlinked or name == "ENOENT" then return true end
+    if unlinked or name == "ENOENT" then return "gone" end
 
-    -- Only ENOENT means it is gone. Any other failure to look is "unknown": it
-    -- cannot be emptied safely (there is no identity to check the open against)
-    -- and must not be reported as removed.
     local stat, stat_err, stat_name = uv.fs_lstat(bak)
-    if not stat and stat_name == "ENOENT" then return true end
+    if not stat and stat_name == "ENOENT" then return "gone" end
     local emptied = false
     local empty_err
     if not stat then
@@ -324,12 +333,52 @@ local function discard_backup(bak)
     else
         emptied, empty_err = write_file(bak, "", { identity = stat })
     end
-    if emptied then
+    if emptied then return "emptied", tostring(unlink_err) end
+    return "failed", ("could not be removed (%s) or emptied (%s)"):format(tostring(unlink_err), tostring(empty_err))
+end
+
+--- The write has landed: the backup is stale now, and must not outlive it, or a
+--- later damaged or unreadable cache would be "recovered" to what was there
+--- before. See remove_backup.
+---@param bak string
+---@return boolean ok
+---@return string? message a note when it had to be emptied, why it could not be when not ok
+local function discard_backup(bak)
+    local outcome, detail = remove_backup(bak)
+    if outcome == "gone" then return true end
+    if outcome == "emptied" then
         return true, ("Could not remove %s (%s); emptied it instead, so it cannot be recovered from."):format(
-            bak, tostring(unlink_err))
+            bak, detail)
     end
-    return false, ("the new data was written, but a stale backup at %s could not be removed (%s) or emptied (%s); "
-        .. "delete it by hand"):format(bak, tostring(unlink_err), tostring(empty_err))
+    return false, ("the new data was written, but a stale backup at %s %s; delete it by hand"):format(bak, detail)
+end
+
+--- Remove the backup of a cache that is being deleted, so that the next read
+--- does not "recover" what was deleted on purpose. ENOENT is success; a backup
+--- that cannot be unlinked is emptied instead; only if that fails too is it
+--- `false`, with why. Unlinks, so a symlink goes and its target does not.
+---@param path Path|string
+---@return boolean ok
+---@return string? why when not ok, a sentence naming the backup
+function M.drop(path)
+    local bak = M.backup_path(M.file_name(path))
+    local outcome, detail = remove_backup(bak)
+    if outcome == "failed" then return false, ("the backup at %s %s"):format(bak, detail) end
+    return true
+end
+
+--- `drop` for a deletion the user asked for (a sign-out, a cache clear): the
+--- deletion goes on whatever happens, and a backup that could be neither
+--- removed nor emptied is reported.
+---@param path Path|string
+---@return boolean ok
+function M.drop_or_warn(path)
+    local ok, why = M.drop(path)
+    if ok then return true end
+    require("codewars.logger").warn(
+        ("Clearing %s: %s; delete it by hand, or the cache that was cleared can come back."):format(
+            M.file_name(path), why))
+    return false
 end
 
 ---@param first string?
@@ -340,16 +389,57 @@ local function join(first, second)
     return first or second
 end
 
---- Nothing is at `file`: write it directly, and take what was written away
---- again if it did not all land. A backup left at the name (a good copy, or one
+--- Where a cache that is absent is to be created, so that it is created
+--- exclusively: nothing at the path, and then the path itself; or a dangling
+--- symlink (a configured cache link whose target does not exist yet), and then
+--- the path the link names, one level, resolved against the link's directory,
+--- never created through the link. A link to a link, anything that has appeared
+--- at the path or the target since it was read as absent, or anything that
+--- cannot be examined, is refused.
+---@param file string
+---@return string? path
+---@return string? why when no path
+local function creation_target(file)
+    local stat, err, name = uv.fs_lstat(file)
+    if not stat then
+        if name == "ENOENT" then return file end
+        return nil, ("%s could not be examined (%s)"):format(file, tostring(err))
+    end
+    if stat.type ~= "link" then return nil, ("something appeared at %s after it was read as absent"):format(file) end
+
+    local named, link_err = uv.fs_readlink(file)
+    if not named then return nil, ("the link %s could not be read (%s)"):format(file, tostring(link_err)) end
+    local target = vim.fn.isabsolutepath(named) == 1 and named or (vim.fs.dirname(file) .. "/" .. named)
+    local target_stat, target_err, target_name = uv.fs_lstat(target)
+    if target_stat then
+        if target_stat.type == "link" then return nil, ("%s is a link to a link (%s)"):format(file, target) end
+        return nil, ("something appeared at %s, which %s names, after it was read as absent"):format(target, file)
+    end
+    if target_name ~= "ENOENT" then
+        return nil, ("%s, which %s names, could not be examined (%s)"):format(target, file, tostring(target_err))
+    end
+    return target
+end
+
+--- Nothing is at `file`: create it exclusively and write it, and take what was
+--- written away again if it did not all land (the file that was created, never
+--- the symlink that names it). A backup left at the name (a good copy, or one
 --- that cannot be read and so may be one) stays until the new file has landed,
---- and is stale, so gone, once it has.
+--- and is stale, so gone, once it has. A backup that cannot even be examined
+--- may be a good copy that a new cache would make stale: nothing is written.
 local function write_new(file, bytes, parse)
     local bak = M.backup_path(file)
-    local state = inspect_backup(bak, parse)
-    local ok, err, touched = write_file(file, bytes, { create = "create" })
+    local state, detail = inspect_backup(bak, parse)
+    if state == "unknown" then
+        return false, ("could not write %s: %s could not be examined (%s); nothing was written"):format(
+            file, bak, tostring(detail))
+    end
+    local path, why = creation_target(file)
+    if not path then return false, ("could not create %s: %s; nothing was written"):format(file, why) end
+
+    local ok, err, touched = write_file(path, bytes, { create = "exclusive" })
     if not ok then
-        if touched then uv.fs_unlink(file) end
+        if touched then uv.fs_unlink(path) end
         return false, err
     end
     if state ~= "good" and state ~= "unreadable" then return true end
@@ -374,6 +464,10 @@ local function write_over(file, bytes, original, identity, parse)
     -- A copy that could not be read is unknown, not junk: beside a cache that is
     -- no good it may be the one good copy, so nothing is touched.
     local state, kept = inspect_backup(bak, parse)
+    if state == "unknown" then
+        return false, not_backed_up(file, ("%s could not be examined (%s), and may be the only good copy"):format(
+            bak, tostring(kept)))
+    end
     if state == "unreadable" and not decodes() then
         return false, not_backed_up(file, ("%s could not be read (%s), and may be the only good copy"):format(
             bak, tostring(kept)))
@@ -448,14 +542,19 @@ function M.settle(file, parse, main_stat)
     local data = parse(text)
     if data == nil then return nil end
 
-    local opts = { identity = main_stat }
+    local path, opts = file, { identity = main_stat }
     if not main_stat then
+        local why
+        path, why = creation_target(file)
+        if not path then return data, why end
+        -- Only the permission bits of the new file: failing to look is no reason not to recover.
         local stat = uv.fs_stat(bak)
         local mode = stat and bit.band(stat.mode, PERMISSION_BITS)
-        opts = { create = "create", mode = mode, exact = mode ~= nil }
+        opts = { create = "exclusive", mode = mode, exact = mode ~= nil }
     end
-    local restored, err = write_file(file, text, opts)
+    local restored, err, touched = write_file(path, text, opts)
     if restored then return data end
+    if not main_stat and touched then uv.fs_unlink(path) end -- a partial file we created
     return data, tostring(err)
 end
 

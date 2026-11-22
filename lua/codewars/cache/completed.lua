@@ -130,7 +130,7 @@ function completed.clear()
     flights = {}
     unsaved_details = {}
     for _, f in ipairs({ list_file(), details_file() }) do
-        backup.drop(f)
+        backup.drop_or_warn(f)
         if f:exists() then pcall(f.rm, f) end
     end
 end

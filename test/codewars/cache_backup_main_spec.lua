@@ -199,8 +199,7 @@ describe("cache.utils, the cache file", function()
             opens = record_write_opens()
             assert.is_true((cache_utils.write_json(P:new(other), fresh))) -- a new file
             assert_never_blocking_or_truncating(opens)
-            assert.is_true(has(opens[1].flags, C.O_CREAT))
-            assert.is_false(has(opens[1].flags, C.O_EXCL), "a new cache cannot be created through a dangling link")
+            assert.is_true(has(opens[1].flags, bit.bor(C.O_CREAT, C.O_EXCL)), "a new cache is created exclusively")
 
             spit(file, "{ torn")
             spit(bak, older)
@@ -214,7 +213,7 @@ describe("cache.utils, the cache file", function()
             opens = record_write_opens()
             read() -- recovery of a cache that is not there
             assert_never_blocking_or_truncating(opens)
-            assert.is_true(has(opens[1].flags, C.O_CREAT))
+            assert.is_true(has(opens[1].flags, bit.bor(C.O_CREAT, C.O_EXCL)), "an absent cache is recovered exclusively")
         end)
 
         --- Make the descriptor the cache is opened for writing on say something else than

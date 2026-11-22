@@ -1,5 +1,6 @@
 local cache_utils = require("codewars.cache.utils")
 local backup = require("codewars.cache.backup")
+local log = require("codewars.logger")
 
 --- On-disk stash for unsaved workspace edits. Kumite and kata both need one; only the filename prefix and the entry
 --- shape differ, so the mechanism lives here once.
@@ -43,7 +44,14 @@ function M.for_kind(prefix)
     ---@return boolean removed
     function kind.delete(id)
         local path = file(id)
-        backup.drop(path)
+        -- A stash is deleted only once its backup is gone (or emptied): otherwise the
+        -- next read would bring it back from the backup. If it cannot be, the stash
+        -- stays, and the user is told.
+        local dropped, why = backup.drop(path)
+        if not dropped then
+            log.error(("Could not delete the stash %s: %s; it was left in place."):format(id, why))
+            return false
+        end
         if not path:exists() then
             return false
         end

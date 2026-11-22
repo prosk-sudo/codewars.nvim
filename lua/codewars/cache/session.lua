@@ -46,7 +46,7 @@ end
 ---@param lang string
 function session.delete(slug, lang)
     local f = session_file(slug, lang)
-    backup.drop(f)
+    backup.drop_or_warn(f)
     if f:exists() then
         f:rm()
     end
@@ -92,7 +92,8 @@ function session.clear_all()
         if name:match("%.json$") then
             if pcall(f.rm, f) then count = count + 1 end
         elseif backup.is_backup(name) then
-            uv.fs_unlink(f:absolute()) -- unlinks: a symlink goes, not its target
+            -- The backup of a session that is gone: its main file's path names it.
+            backup.drop_or_warn(dir:joinpath(name:sub(1, #name - #backup.backup_path(""))))
         end
     end
     return count

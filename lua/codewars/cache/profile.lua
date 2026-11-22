@@ -133,7 +133,7 @@ end
 ---@return boolean removed
 function M.clear()
     local f = file()
-    backup.drop(f)
+    backup.drop_or_warn(f)
     local ok, exists = pcall(function() return f:exists() end)
     if not ok or not exists then
         return false

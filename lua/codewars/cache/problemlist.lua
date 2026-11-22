@@ -251,7 +251,7 @@ local function load_checkpoint()
 end
 
 local function remove_checkpoint()
-    backup.drop(checkpoint_file())
+    backup.drop_or_warn(checkpoint_file())
     pcall(os.remove, tostring(checkpoint_file()))
 end
 
@@ -500,7 +500,7 @@ end
 
 function problemlist.delete()
     local f = cache_file()
-    backup.drop(f)
+    backup.drop_or_warn(f)
     if f:exists() then f:rm() end
     remove_checkpoint()
 end
