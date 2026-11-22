@@ -1,9 +1,9 @@
 --- A small HTML tag tokenizer for Codewars' kata-search markup, not a general HTML5 parser.
---- It builds no tree and repairs nothing. Whatever it cannot read is for the caller to count as
---- a dropped block or as drift, so a markup change never gives a silently wrong list.
+--- It builds no tree and repairs nothing. What it cannot read is for the caller to count as a
+--- dropped block or as drift, so unreadable markup is reported instead of silently dropped.
 ---
---- Text that only looks like a tag is skipped: comments, raw-text elements, `<plaintext>` and
---- `<template>`. One never closed runs to the end of the page. Attribute values are decoded.
+--- Not returned as tags: comments (and `<!DOCTYPE`, `<?` runs), raw-text elements, `<plaintext>`
+--- and `<template>`. One never closed runs to the end of the page. Attribute values are decoded.
 ---@class cw.Api.HtmlTags
 local htmltags = {}
 
@@ -24,7 +24,8 @@ local function any_case(name)
     return (name:gsub("%a", function(c) return "[" .. c:lower() .. c:upper() .. "]" end))
 end
 
---- Raw-text elements and the pattern ending each (`noscript` as read when scripts run).
+--- Raw-text and escapable raw-text elements and the pattern ending each (`noscript` as read when
+--- scripts run).
 local RAW_TEXT_END = {}
 for _, name in ipairs({
     "script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title",
@@ -40,7 +41,7 @@ local function decode(value)
 end
 
 --- Read the attributes from `i` (just after the tag name) to the closing `>`. A quote opens a
---- value only right after `=`; the first of a repeated name wins, as in a browser.
+--- value only after `=`; the first of a repeated name wins, as in a browser.
 ---@param html string
 ---@param i integer
 ---@return integer? gt position of the closing `>`; nil when the page ends first
@@ -129,8 +130,8 @@ local function mask(html, ranges)
     return table.concat(parts)
 end
 
---- Read a page's tags in order, and the page with everything that is not markup blanked out.
---- The text is the same length, so a tag's positions are positions in it too.
+--- Read a page's tags in order, and the page with comments, raw-text elements, templates and
+--- other skipped runs blanked to spaces. Same length, so a tag's positions index into it too.
 ---@param html string
 ---@return cw.HtmlTag[] tags
 ---@return string text

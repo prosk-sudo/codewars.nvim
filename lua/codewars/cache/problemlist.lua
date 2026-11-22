@@ -375,7 +375,7 @@ function problemlist.update(opts, cb)
         end
 
         -- Every page empty is not "Codewars has no kata": it is an interstitial 200, or markup
-        -- that left no result blocks. Blocks that fail to parse abort earlier as drift.
+        -- that left no result blocks. A page whose blocks all fail to parse aborts earlier as drift.
         if not partial and #unique == 0 then
             spinner:error("No kata found on any search page — the site markup may have changed; cache left as is.")
             partial = true

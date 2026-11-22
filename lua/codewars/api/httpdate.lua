@@ -1,6 +1,6 @@
 --- HTTP-date parsing (RFC 9110 section 5.6.7), for `Retry-After`.
 ---
---- Pure Lua on purpose: `vim.fn.strptime` follows the locale and is missing on Windows, and
+--- Pure Lua on purpose: `vim.fn.strptime` follows the locale and may be missing on Windows, and
 --- `os.time` on a table reads LOCAL time. The epoch is counted from the calendar date.
 ---@class cw.Api.HttpDate
 local httpdate = {}
@@ -16,7 +16,7 @@ local LONG_DAYS = {
 }
 local MONTH_LENGTHS = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 local SECONDS_PER_DAY = 86400
---- RFC 9110: a two-digit year more than this many years after now is the previous century.
+--- RFC 9110: a two-digit year landing more than this many years after now is read a century earlier.
 local MAX_YEARS_AHEAD = 50
 
 ---@param year integer
@@ -56,7 +56,7 @@ local function moment_key(year, month, day, hour, min, sec)
 end
 
 --- The year a two-digit RFC 850 year means, per MAX_YEARS_AHEAD. The whole date and time is
---- held against the limit, not the year alone; exactly that far ahead still counts as ahead.
+--- held against the limit, not the year alone; exactly that far ahead is allowed.
 ---@param yy integer 0-99
 ---@param now integer epoch seconds
 ---@return integer
@@ -105,7 +105,8 @@ local function is_valid(year, month, day, hour, min, sec)
 end
 
 --- Read an HTTP-date as a UTC epoch: IMF-fixdate (`Wed, 21 Oct 2026 07:28:00 GMT`) or the
---- obsolete RFC 850 and asctime forms. Names are case-insensitive; the weekday is not checked.
+--- obsolete RFC 850 and asctime forms. Names are case-insensitive; the weekday must be real but
+--- is not checked against the date.
 ---@param text any
 ---@param now? integer epoch seconds, to place a two-digit year; default os.time()
 ---@return integer? epoch nil when `text` is not a valid HTTP-date

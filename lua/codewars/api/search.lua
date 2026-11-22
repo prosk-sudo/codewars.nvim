@@ -128,7 +128,8 @@ function search.kata(opts, cb)
 end
 
 --- A result block: tags `first` to `last` of a page's tag list, and the page text they index
---- into (see api.htmltags). Read from parsed tags and attributes, never by pattern over a tag.
+--- into (see api.htmltags). Fields come from parsed tags and attributes; only the satisfaction
+--- phrase is matched by pattern, over the block's text.
 ---@class cw.SearchBlock
 ---@field tags cw.HtmlTag[]
 ---@field text string
@@ -173,7 +174,8 @@ local function visible_text(block, from, to)
     return table.concat(parts)
 end
 
---- The text of the element opened by `tags[i]`, decoded and trimmed; nil when never closed.
+--- The text of the element opened by `tags[i]`, decoded and trimmed. nil unless the next tag of
+--- its name in the block is its closing tag.
 ---@param block cw.SearchBlock
 ---@param i integer
 ---@return string?
@@ -185,7 +187,7 @@ local function element_text(block, i)
 end
 
 --- The id and name of a block's title link: the first `<a>` with a plain `/kata/<id>` href and
---- some text (language icons have none). nil when there is none; the block is then dropped.
+--- some text; links without text, such as language icons, are skipped. nil when none: block dropped.
 ---@param block cw.SearchBlock
 ---@return string? id
 ---@return string? name
@@ -200,7 +202,7 @@ local function read_title_link(block)
     end
 end
 
---- A result's rank, `8 kyu`: the text of the first span that holds nothing else.
+--- A result's rank, `8 kyu`: the text of the first span that is exactly a number and a word.
 ---@param block cw.SearchBlock
 ---@return string?
 local function read_rank(block)
@@ -226,7 +228,7 @@ end
 
 local BLOCK_CLASS = "list-item-kata"
 
---- Whether `tag` opens a result: `list-item-kata` as a whole class name, not `not-list-item-kata`.
+--- Whether `tag` is an opening tag with `list-item-kata` as a whole class (not `not-list-item-kata`).
 ---@param tag cw.HtmlTag
 ---@return boolean
 local function opens_block(tag)
@@ -252,7 +254,7 @@ end
 
 --- Cut a results page into result blocks: each runs from its `list-item-kata` tag to its own
 --- closing tag, never to the next result or a fixed length, which could swallow a footer's links.
---- A block with no closing tag is left out, and so is each one after it.
+--- A block with no closing tag is counted as left out, and so is each later block with contents.
 ---@param html string
 ---@return cw.SearchBlock[] blocks
 ---@return integer unclosed blocks left out
@@ -286,8 +288,8 @@ end
 --- Parse the search results HTML to extract kata entries.
 ---
 --- Scope: reads Codewars' kata-search markup (see api.htmltags), not general HTML5. A result it
---- cannot read counts as dropped, and a page where none can be read is drift, so a markup
---- change is a warning or an error, never a silently wrong list.
+--- cannot read counts as dropped, and a page where none can be read is drift, so unreadable
+--- markup is reported instead of silently shortening the list.
 ---@param html string
 ---@return table[] results
 ---@return cw.err? err `err.drift` when result blocks exist but none could be read
@@ -323,7 +325,8 @@ function search.parse_html(html)
         end
 
         -- Satisfaction from tooltip: 'Satisfaction Rating: 89% of users...'
-        -- Read from the block's own text, markup blanked.
+        -- Matched on the block's text, which keeps ordinary tags and attributes (the tooltip is an
+        -- attribute). Only the runs htmltags.scan skips are blanked: comments, raw-text elements, templates.
         local first, last = block.tags[block.first], block.tags[block.last]
         local sat_pct = block.text:sub(first.start, last.finish):match("Satisfaction Rating: (%d+)%%")
         if sat_pct then
