@@ -132,8 +132,8 @@ describe("Kumite read-only guard follows the state", function()
     end)
 
     it("leaves the user's own global mappings alone on an unmounted workspace", function()
-        -- With no buffer, keymap.del would fall back to GLOBAL mappings --
-        -- `s` and `S` are what leap and flash bind.
+        -- With no buffer, keymap.del would fall back to GLOBAL mappings (leap
+        -- and flash bind `s` and `S`).
         vim.keymap.set("n", "s", "<Nop>")
         local ws = Kumite:new({
             id = "6a63e7e085269ff93dc63399", title = "t", description = "", language = "python",

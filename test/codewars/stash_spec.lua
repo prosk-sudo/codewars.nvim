@@ -75,9 +75,8 @@ describe("cache.stash", function()
     end)
 end)
 
---- A stash id becomes part of a file name, and it comes from server replies
---- nobody validated. A traversal id used to land the user's buffer contents
---- outside the cache dir.
+--- A stash id becomes part of a file name and comes from unvalidated server
+--- replies, so a traversal id must not write outside the cache dir.
 local MARKER = "stash-escape-probe"
 
 --- The stash on top of the REAL cache utils. minimal_init points the cache dir
@@ -88,9 +87,8 @@ local function load_real_stash()
     return require("codewars.cache.stash")
 end
 
---- Files named after the marker anywhere under the throwaway root. A stash
---- that escaped the cache dir lands in a sibling directory, so looking only
---- inside the cache dir would miss exactly the bug.
+--- Files named after the marker anywhere under the throwaway root: a stash that
+--- escaped lands outside the cache dir, so searching only inside would miss it.
 local function files_marked(marker)
     return vim.fn.glob(vim.env.CW_TEST_ROOT .. "/**/*" .. marker .. "*", true, true)
 end
@@ -101,11 +99,10 @@ describe("cache.stash id validation", function()
     it("writes nothing and returns nil for a path-traversal id", function()
         local kumite = load_real_stash().for_kind("kumite-stash-")
         local paths = {}
-        -- The prefix glued onto the id ("kumite-stash-..") swallows one "..", so
-        -- three reach one level above the cache dir. That dir sits three levels
-        -- under CW_TEST_ROOT (cache/nvim/codewars), so even the unfixed code
-        -- stays inside the root that files_marked searches. With fewer ".." it
-        -- would not escape at all (the write fails on the missing directory).
+        -- The prefix ("kumite-stash-..") swallows one "..", so three reach one
+        -- level above the cache dir, still inside CW_TEST_ROOT (the cache dir is
+        -- three levels under it) where files_marked looks. Fewer ".." would not
+        -- escape at all: the write fails on the missing directory.
         for _, id in ipairs({ "../../../" .. MARKER, "x/../../" .. MARKER, "/../" .. MARKER }) do
             paths[#paths + 1] = kumite.save({ id = id, code = "SECRET" })
         end

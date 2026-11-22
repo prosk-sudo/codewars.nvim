@@ -594,16 +594,14 @@ describe("api.trainer", function()
         end)
     end)
 
-    -- cmd.forget_focus runs when the signed-in account changes. A request
-    -- already sent was answered under the old cookie, but every follow-up
-    -- request is sent under the NEW one, and the self-heal's dequeue is an
-    -- irreversible pop. The caller's `cancelled` predicate must stop the
-    -- workflow between requests, not only after the last reply.
+    -- cmd.forget_focus runs when the signed-in account changes. Follow-up
+    -- requests go out under the NEW account and the self-heal's dequeue is an
+    -- irreversible pop, so the `cancelled` predicate must stop the workflow
+    -- between requests, not only after the last reply.
     describe("cancellation between requests", function()
-        -- Answer one parked request. Consumed entries are blanked so the
-        -- drain below only frees what a failing test left in flight: the
-        -- module's in-flight lock would otherwise stay set and take every
-        -- later test down with it.
+        -- Answer one parked request. Consumed entries are blanked so the drain
+        -- below frees only what a failing test left in flight; otherwise the
+        -- module's in-flight lock would stay set and fail every later test.
         local function reply(i, res)
             local cb = held[i]
             held[i] = false

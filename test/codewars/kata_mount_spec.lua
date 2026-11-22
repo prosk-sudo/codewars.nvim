@@ -134,8 +134,8 @@ describe("closing with unsaved work", function()
     end)
 
     it("keeps a rescued pane modified even after the workspace's :w cleared it", function()
-        -- The pane's :w writes no file, it only clears 'modified'. The rescued
-        -- copy has still never reached one, so it must not read as saved.
+        -- The pane's :w only clears 'modified'. The rescued copy never reached a
+        -- file, so it must not read as saved.
         local m = model()
         m.id = "../../not-an-id" -- refused by the stash
         ws = KataEditor:new(m):mount()
@@ -153,9 +153,8 @@ describe("closing with unsaved work", function()
     end)
 
     it("lets the user :write a pane that was rescued because the stash failed", function()
-        -- The pane's BufWriteCmd only prints a hint and clears 'modified'. Left
-        -- on a rescued pane it swallowed the first :write of the one remaining
-        -- copy and the text was closed away unwritten.
+        -- The pane's BufWriteCmd only prints a hint and clears 'modified', which
+        -- would swallow :write on the only remaining copy.
         local m = model()
         m.id = "../../not-an-id" -- refused by the stash, so nothing is stashed
         ws = KataEditor:new(m):mount()

@@ -800,17 +800,15 @@ end
 -- focus pointer itself.
 local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
 
--- Generation guard, the same idea as the picker's _kumite_gen: a focus fetch
--- already in flight when the account changes is answered from the previous
--- account's queue. Each fetch captures the value when it starts and drops its
--- reply if forget_focus has bumped it since.
+-- Generation guard (like the picker's _kumite_gen): a focus fetch in flight
+-- when the account changes is answered from the previous account's queue. Each
+-- fetch captures this and drops its reply if forget_focus has bumped it.
 local _focus_gen = 0
 
 --- A predicate for the trainer: true once forget_focus has run since `gen`.
---- Dropping the final reply is not enough, because the trainer chains
---- requests and every one after the first is sent under whichever account is
---- signed in by then. That includes the completed self-heal's pop, which
---- cannot be undone, so the trainer polls this before each request.
+--- Dropping the final reply is not enough: the trainer chains requests, each
+--- sent under whichever account is signed in by then, and the self-heal's pop
+--- cannot be undone. So the trainer polls this before each request.
 ---@param gen integer
 ---@return fun(): boolean
 local function focus_cancelled(gen)
@@ -820,7 +818,7 @@ end
 --- Forget the remembered focus kata. Called on an identity change: the
 --- queue it came from belongs to the previous account, so a `:CW focus
 --- skip` after signing in as someone else must not act on it. A fetch still
---- in flight is invalidated too, or its reply would remember it again.
+--- in flight is dropped too.
 function cmd.forget_focus()
     _focus_gen = _focus_gen + 1
     _last_focus = nil
@@ -892,9 +890,8 @@ end
 local function focus_run(lang, category, on_mounted)
     if LOCAL_CATEGORIES[category] then
         -- No server queue behind this one, so a stale record here can never
-        -- cause a dequeue; resolve it directly. Nothing is in flight either
-        -- (the pick and the record happen in the same tick), so there is no
-        -- reply for forget_focus to race with.
+        -- cause a dequeue; resolve it directly. Nothing is in flight, so there
+        -- is no reply for forget_focus to race with.
         local kata = open_random_kata(lang, on_mounted)
         if kata then
             _last_focus = { lang = lang, category = category, slug = kata.slug, kata = kata }
@@ -1182,12 +1179,11 @@ function cmd.template_status()
     log.info(table.concat(parts, " "))
 end
 
--- Letters, digits, hyphen and underscore: every Codewars slug and the 24-hex
--- id are made of these. The slug comes from the server and ends up in a URL
--- that an OS opener receives, and the Windows opener, cmd.exe, acts on & | ^ %
--- and quotes even inside a single argv element (vim.ui.open uses it too). A
--- slug outside this set is refused rather than escaped, since each shell
--- escapes differently.
+-- Letters, digits, hyphen and underscore: every Codewars slug is made of these.
+-- The slug comes from the server and reaches an OS opener, and cmd.exe acts on
+-- & | ^ % and quotes even inside one argv element (vim.ui.open uses it too). A
+-- slug outside this set is refused, not escaped, since each shell escapes
+-- differently.
 local OPEN_SLUG_PATTERN = "^[A-Za-z0-9_%-]+$"
 
 function cmd.open()
@@ -1208,8 +1204,7 @@ function cmd.open()
     if vim.ui.open then
         vim.ui.open(url)
     else
-        -- The URL must never be spliced into a string for the shell: an argv
-        -- table hands it to the opener as one argument.
+        -- An argv table, never a shell string: the URL is passed as one argument.
         local os_name = vim.loop.os_uname().sysname
         local open_cmd
         if os_name == "Darwin" then
@@ -1217,12 +1212,10 @@ function cmd.open()
         elseif os_name == "Linux" then
             open_cmd = { "xdg-open", url }
         else
-            -- `start` is a cmd.exe builtin, so there is no way around cmd.exe,
-            -- and it reads & and | inside its arguments as command separators
-            -- even from an argv table. What keeps that harmless is the slug
-            -- check above: the URL holds nothing cmd.exe acts on. The empty
-            -- string is the window title that start would otherwise take
-            -- from the URL.
+            -- `start` is a cmd.exe builtin, and cmd.exe reads & and | in its
+            -- arguments as separators even from an argv table. The slug check
+            -- above keeps them out of the URL. The empty string is the window
+            -- title that start would otherwise take from the URL.
             open_cmd = { "cmd.exe", "/c", "start", "", url }
         end
         vim.fn.jobstart(open_cmd, { detach = true })

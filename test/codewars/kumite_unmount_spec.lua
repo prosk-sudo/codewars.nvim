@@ -1,7 +1,7 @@
 --- The close path of a REAL kumite workspace. A dirty close stashes the code
 --- and the fixture, then destroys the buffers. When the stash does not land
---- (a refused id, a failed write) the buffers are the only copy left, so BOTH
---- of them must survive, not just the code one.
+--- (a refused id, a failed write) the buffers are the only copy, so BOTH must
+--- survive.
 local Kumite = require("codewars-ui.kumite")
 local kumite_stash = require("codewars.cache.kumite_stash")
 
@@ -21,11 +21,10 @@ local function open(id)
     return ws
 end
 
---- Close the workspace the way a dirty `:q!` does, by closing its window (the
---- WinClosed autocmd runs the unmount), and let the scheduled half of the close
---- run, where the buffers are deleted or kept. Calling _unmount() directly would
---- leave the window open, so deleting its buffer would close it and unmount a
---- second time, which a real close never does.
+--- Close the workspace the way a dirty `:q!` does: close its window (WinClosed
+--- runs the unmount) and let the scheduled half run, where the buffers are
+--- deleted or kept. Calling _unmount() directly would leave the window open, so
+--- deleting the buffer would close it and unmount a second time.
 local function close(ws)
     vim.api.nvim_win_close(ws.winid, true)
     vim.wait(1000, function()
@@ -58,9 +57,8 @@ describe("closing a dirty kumite", function()
     after_each(cleanup)
 
     it("keeps the fixture as well as the code when the stash is refused", function()
-        -- A server reply can carry any id; the stash refuses one that is not
-        -- a Codewars id, so nothing is written and the buffers are all that
-        -- is left.
+        -- A server reply can carry any id and the stash refuses a non-Codewars
+        -- one, so nothing is written and the buffers are all that is left.
         local ws = open("../../not-an-id")
         close(ws)
         assert.is_not_nil(buffer_holding(EDITED_CODE), "the code buffer was destroyed")
@@ -70,9 +68,8 @@ describe("closing a dirty kumite", function()
     end)
 
     it("lets the user :write the rescued code and fixture to a real file", function()
-        -- The workspace's BufWriteCmd only prints a hint and clears 'modified'.
-        -- Kept on a rescued buffer it swallowed the first :write of the one
-        -- remaining copy, reported nothing, and the text was closed away.
+        -- The workspace's BufWriteCmd only prints a hint and clears 'modified',
+        -- which would swallow :write on the only remaining copy.
         local ws = open("../../not-an-id")
         close(ws)
         for _, text in ipairs({ EDITED_CODE, EDITED_FIXTURE }) do
@@ -89,9 +86,9 @@ describe("closing a dirty kumite", function()
     end)
 
     it("keeps a rescued buffer modified even after the workspace's :w cleared it", function()
-        -- The workspace's :w writes no file; it only clears 'modified' and
-        -- prints a hint. A rescued buffer has still never reached a file, so it
-        -- must read as modified: that is what makes :bdelete refuse (E89).
+        -- The workspace's :w only clears 'modified' and prints a hint. A rescued
+        -- buffer never reached a file, so it must read as modified: that makes
+        -- :bdelete refuse (E89).
         local ws = open("../../not-an-id")
         for _, bufnr in ipairs({ ws.bufnr, ws.fixture_split.bufnr }) do
             vim.api.nvim_buf_call(bufnr, function()

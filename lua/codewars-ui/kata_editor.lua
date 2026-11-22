@@ -538,10 +538,8 @@ function KataEditor:adopt(model)
         model.code_challenge.description, self.versions)
 end
 
---- Lock or unlock every pane. Panes are locked while a save/publish/
---- unpublish/delete is in flight (the states codewars.kata.state marks
---- `locked`), so the buffers cannot drift from the payload already on its way
---- to the server.
+--- Lock or unlock every pane. Panes lock while a save, publish, unpublish or
+--- delete is in flight, so the buffers cannot drift from the payload sent.
 ---@param locked boolean
 function KataEditor:set_panes_locked(locked)
     ui_utils.set_bufs_modifiable(vim.tbl_values(self.bufs or {}), locked)
@@ -556,17 +554,14 @@ function KataEditor:set_state(next_state)
     self:set_panes_locked(kstate.is_locked(next_state))
 end
 
---- Kata id -> the locked state of an unpublish or delete still in flight. The
---- state machine only locks the workspace that sent the request, but closing
---- the editor and reopening the kata gives a fresh workspace that loaded the
---- page before the reply landed. Without this record it could start a save
---- that the reply then crosses, the same race the locked state exists to stop.
+--- Kata id -> the locked state of an unpublish or delete still in flight. Only
+--- the sending workspace is locked, so a workspace reopened for the same kata
+--- needs this to refuse a save that the reply would cross.
 ---@type table<string, string>
 local requests_in_flight = {}
 
---- `kstate.step` for this workspace, honouring a request another workspace of
---- the same kata still has in flight. Every locked state refuses these
---- actions, so asking it gives the same lock message the sender would see.
+--- `kstate.step` for this workspace, also honouring a request another
+--- workspace of the same kata still has in flight.
 ---@param action string
 ---@return string? next_state
 ---@return string? err
@@ -582,29 +577,20 @@ function KataEditor:_apply_unpublished()
 end
 
 --- A finished delete, as one workspace sees it: the kata is gone, so lock for
---- good. This does not close the workspace or snapshot it: a workspace that did
---- not ask for the delete may hold text its user has not saved, and marking
---- that as saved would let a later close drop it unstashed. Locked, the panes
---- stay readable and copyable and keep their modified flag, so closing it
---- goes through _unmount's normal stash-or-rescue path.
+--- good. No close and no snapshot: this workspace may hold unsaved text, and
+--- its modified flag sends a later close through _unmount's stash-or-rescue.
 function KataEditor:_apply_deleted()
     self:set_state(kstate.step("deleting", "delete_done")) -- "deleted"
     self:refresh_title()
 end
 
 --- Tell every open workspace of a kata that an unpublish or delete succeeded.
---- The sender's own reply is not enough: a workspace opened for the same kata
---- while the request was out loaded the page as it was before it, and the lock
---- that held it back is gone now, so it would keep that stale state. The
---- sender is applied directly because it may already be closed, which leaves
---- it out of the registry.
+--- A workspace opened while the request was out loaded the old page. The
+--- sender is applied directly because it may already be closed and so missing
+--- from the registry.
 ---
---- Known limitation: only workspaces registered when the reply arrives hear
---- about it. One whose mount finishes after the reply (the kata reopened, its
---- page fetched before the request took effect) never sees the outcome and
---- shows the state it loaded with. Closing that gap would mean reconciling at
---- mount time against this module's in-flight record, which was judged not
---- worth it for a close-and-reopen inside a single request's round trip.
+--- Known limitation: a workspace whose mount finishes after the reply never
+--- sees the outcome and keeps the state it loaded with.
 ---@param sender cw.ui.KataEditor
 ---@param apply fun(ws: cw.ui.KataEditor)
 local function apply_outcome(sender, apply)
@@ -755,11 +741,9 @@ function KataEditor:publish()
     end)
 end
 
---- Both callers reach this after waiting on the user (the confirmation, then
---- the rename prompt of a name-taken retry), so the state they checked in
---- publish() may be stale: a save, unpublish or delete can have started
---- meanwhile. Ask again, or the publish would go out under that request and
---- its reply would put back a state that is no longer true.
+--- Both callers wait on the user first (the confirmation, then the rename
+--- prompt of a retry), so a save, unpublish or delete may have started since
+--- publish() checked. Ask again, or the reply would restore a stale state.
 function KataEditor:_do_publish()
     local in_flight, blocked = self:_step("publish")
     if blocked then
@@ -803,8 +787,7 @@ function KataEditor:unpublish()
         return log.warn(err)
     end
     -- Locked until the reply lands: a save started now would remember
-    -- `published` and put it back after this reply, leaving the editor
-    -- claiming Published while the server holds a draft.
+    -- `published` and put it back after this reply.
     local prev = self.state
     local id = self.model.id
     self:set_state(in_flight) -- "unpublishing"
@@ -841,9 +824,8 @@ function KataEditor:delete()
         if not confirmed then
             return log.info("Delete cancelled.")
         end
-        -- Locked only now, not when the prompt opened: the user may have
-        -- walked away from it, and the editor must stay usable meanwhile.
-        -- It also may have started a save in that time, so ask again.
+        -- Locked only now, so the editor stays usable while the prompt is
+        -- open. A save may have started since, so ask again.
         local in_flight, blocked = self:_step("delete")
         if blocked then
             return log.warn(blocked)
@@ -864,12 +846,11 @@ function KataEditor:delete()
                 self:refresh_title()
                 return log.error("Delete failed — " .. (derr.msg or "unknown error"))
             end
-            -- Terminal: a prompt still waiting on the user (a publish retry's
-            -- rename) must find the kata gone, not a draft it can publish.
+            -- Terminal: a pending rename prompt must find the kata gone, not a
+            -- draft it can publish.
             apply_outcome(self, function(ws) ws:_apply_deleted() end)
             log.info("Kata deleted.")
-            -- Only the sender closes: the user asked for this delete from it,
-            -- so there is nothing worth warning about on close.
+            -- Only the sender closes; snapshot so the close does not warn.
             self:snapshot()
             self:close()
         end)

@@ -20,15 +20,14 @@ local state_machine = require("codewars.state_machine")
 --- Saving never changes publication, so `saving` reverts to whichever state
 --- entered it — that is why save_done is REVERT and not a fixed state.
 ---
---- Unpublishing and deleting are in-flight states for the same reason as
---- saving and publishing: while the request is out every other action is
---- refused, so a second request cannot be answered after it and put back the
---- state it remembered. A failed request reverts.
+--- Unpublishing and deleting are in-flight states like saving and publishing:
+--- while the request is out every other action is refused, so a second request
+--- cannot be answered after it and restore a stale state. A failed request
+--- reverts.
 ---
---- A delete that succeeds ends in `deleted`, which refuses everything. The
---- workspace closes right after, but a prompt still waiting on the user (the
---- rename of a publish retry) can be answered later and must not act on a
---- kata that no longer exists, which reverting to draft would have allowed.
+--- A successful delete ends in `deleted`, which refuses everything: a prompt
+--- still waiting on the user (a publish retry's rename) can be answered after
+--- the workspace closes and must not act on a kata that no longer exists.
 local REVERT = state_machine.REVERT
 
 local SAVING_LOCKED = "Saving in progress — wait for it to finish."
