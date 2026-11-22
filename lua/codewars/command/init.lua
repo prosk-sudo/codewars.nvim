@@ -1186,19 +1186,14 @@ end
 -- differently.
 local OPEN_SLUG_PATTERN = "^[A-Za-z0-9_%-]+$"
 
---- The argv that opens `url` on this system, for a Neovim without vim.ui.open.
---- Windows is whatever has("win32") says; macOS has `open`; every other
---- system, Linux and the BSDs included, is taken to have xdg-open.
+--- The opener argv for a Neovim without vim.ui.open: cmd.exe on Windows
+--- (has("win32")), `open` on macOS, xdg-open everywhere else.
 ---@param url string
 ---@return string[]
 local function opener_argv(url)
     if vim.fn.has("win32") == 1 then
-        -- `start` is a cmd.exe builtin, so there is no way around cmd.exe,
-        -- and it reads & and | inside its arguments as command separators
-        -- even from an argv table. What keeps that harmless is the slug
-        -- check in cmd.open: the URL holds nothing cmd.exe acts on. The empty
-        -- string is the window title that start would otherwise take from
-        -- the URL.
+        -- cmd.exe acts on & and | even in an argv table; the slug check in
+        -- cmd.open keeps them out of the URL. The "" is start's window title.
         return { "cmd.exe", "/c", "start", "", url }
     end
     if vim.loop.os_uname().sysname == "Darwin" then

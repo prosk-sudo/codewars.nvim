@@ -2,10 +2,7 @@
 -- server, so it must only ever be a plain name (cmd.exe acts on & | ^ % even
 -- inside one argv element, and vim.ui.open uses it too), and without
 -- vim.ui.open (before 0.10) the URL must reach jobstart as one argv element,
--- never as text for a shell. That fallback
--- picks the opener from the system: cmd.exe on Windows (has("win32")), open on
--- macOS, xdg-open everywhere else, the BSDs included, and it starts nothing
--- when the opener is not installed.
+-- never as text for a shell. It starts nothing if the opener is missing.
 describe(":CW open", function()
     local BASE = "https://www.codewars.com/kata/"
     local PLATFORMS = { "Darwin", "Linux", "Windows_NT" }
@@ -15,9 +12,8 @@ describe(":CW open", function()
     local utils, cmd, slug, started, opened, said, installed, probed
 
     -- Runs :CW open as `os_name`, with or without vim.ui.open, and records
-    -- what reached the opener and what the user was told. Windows is what
-    -- has("win32") says it is, so `win32` defaults to what a real Windows
-    -- reports (sysname "Windows_NT") and can be set to split the two apart.
+    -- what reached the opener and what the user was told.
+    -- `win32` is the has("win32") answer; default: os_name is Windows_NT.
     local function open_on(os_name, has_ui_open, win32)
         if win32 == nil then
             win32 = os_name == "Windows_NT"
@@ -109,8 +105,7 @@ describe(":CW open", function()
             assert.is_true(started[1].opts.detach)
         end)
 
-        -- Everything that is neither Windows nor macOS is a Unix with
-        -- xdg-open, not a Windows. These used to fall into the cmd.exe branch.
+        -- Anything that is neither Windows nor macOS gets xdg-open, not cmd.exe.
         for _, unix in ipairs({ "FreeBSD", "OpenBSD", "NetBSD", "DragonFly", "SunOS" }) do
             it("starts xdg-open on " .. unix .. ", not cmd.exe", function()
                 open_on(unix, false)
@@ -137,8 +132,7 @@ describe(":CW open", function()
     end)
 
     describe("when the opener is not installed", function()
-        -- No job is started, and the user is told which opener is missing and
-        -- given the URL, so they can open the kata by hand.
+        -- No job starts; the error names the missing opener and the URL.
         local cases = {
             { label = "macOS", os_name = "Darwin", opener = "open" },
             { label = "Linux", os_name = "Linux", opener = "xdg-open" },
