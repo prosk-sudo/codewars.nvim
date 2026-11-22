@@ -105,15 +105,11 @@ local highlights = {
 
 local colors
 
---- The definition to set for one codewars group.
---- A `link` override replaces the default spec: merged, it would be both a
---- link and a color. Other overrides merge over the default.
---- A link cannot carry attributes, so `{ link = "X", bold = true }` becomes
---- X's foreground plus the style keys (an explicit fg wins). The background is
---- never taken, so a float keeps its own.
+--- A `link` override replaces the default spec (merged, it would be both link
+--- and color). With style keys it takes the target's fg only, never its bg.
 ---@param name string a key of `highlights`
----@param overrides table the user's `theme`, cleaned (see clean_overrides)
----@param seen table<string, true> the groups already on the chain of links
+---@param overrides table the cleaned `theme`
+---@param seen table<string, true> groups already on the link chain
 ---@return table
 local function definition(name, overrides, seen)
     local spec, override = highlights[name], overrides[name]
@@ -137,27 +133,16 @@ local function definition(name, overrides, seen)
     return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
 end
 
---- The foreground (fg, ctermfg) that `target` has once apply() has run.
---- Links are followed one step at a time, never collapsed by Neovim: apply()
---- visits groups in no fixed order, and right after `:colorscheme` ours hold
---- nothing, so Neovim's answer through a codewars group would not match what
---- that group ends up holding. Each step is one of:
----   * a codewars group: worked out from its default and the user's override;
----   * any other group: read with `link = true`. A link continues the walk
----     (it wins over the group's own fg, as in Neovim); otherwise the group's
----     own fg and ctermfg are used. apply() reruns after every `:colorscheme`.
---- A link back to a group already on the chain (a -> b -> a, a -> a, or a mix
---- of codewars and other groups) has no color. Every codewars group in such a
---- cycle keeps only its own style keys.
---- Group names are case-insensitive and every key of `highlights` is lowercase,
---- so the lowered target is the key for the lookup and the cycle check. A
---- link-only override still goes to Neovim as written.
+--- The (fg, ctermfg) `target` has once apply() has run. Links are walked by hand:
+--- apply() sets groups in no fixed order, so Neovim's resolution can be stale.
+--- A link cycle has no color; its codewars groups keep only their own style keys.
 ---@param target string
----@param overrides table the user's `theme`, cleaned (see clean_overrides)
----@param seen table<string, true> the groups already on the chain of links
+---@param overrides table the cleaned `theme`
+---@param seen table<string, true> groups already on the link chain
 ---@return table
 colors = function(target, overrides, seen)
-    -- tostring: a `link` that is not a string is Neovim's to reject, below
+    -- Lowered: names are case-insensitive and `highlights` keys are lowercase.
+    -- tostring: a non-string `link` is Neovim's to reject.
     local key = tostring(target):lower()
     if seen[key] then
         return {}
@@ -172,6 +157,8 @@ colors = function(target, overrides, seen)
         return { fg = def.fg, ctermfg = def.ctermfg }
     end
 
+    -- Not ours: read as it is now (apply() reruns after `:colorscheme`). A link
+    -- wins over the group's own fg, as in Neovim.
     local group = vim.api.nvim_get_hl(0, { name = target, link = true })
     if group.link then
         return colors(group.link, overrides, chain)
@@ -179,13 +166,11 @@ colors = function(target, overrides, seen)
     return { fg = group.fg, ctermfg = group.ctermfg }
 end
 
---- `nvim_set_hl` keys that only change how a group is set (`default` keeps an
---- existing definition, `force` replaces it). `theme` does not support them:
---- an override always applies.
+--- Keys that only control how `nvim_set_hl` sets a group, not what it looks like.
+--- `theme` ignores them: an override always applies.
 local IGNORED_KEYS = { "default", "force" }
 
---- A copy of the user's `theme` without the IGNORED_KEYS; the user's table is
---- left untouched. Warns once per group that had any.
+--- A copy of `theme` without the IGNORED_KEYS; warns once per group that had any.
 ---@param overrides table the user's `theme`
 ---@return table
 local function clean_overrides(overrides)
@@ -221,7 +206,7 @@ local function clean_overrides(overrides)
     return cleaned
 end
 
----@param overrides table the user's `theme`, cleaned (see clean_overrides)
+---@param overrides table the cleaned `theme`
 local function apply(overrides)
     for name in pairs(highlights) do
         vim.api.nvim_set_hl(0, name, definition(name, overrides, { [name] = true }))
@@ -230,13 +215,12 @@ end
 
 function theme.setup()
     local config = require("codewars.config")
-    -- Cleaned once: the ColorScheme callback reuses the copy, so re-applying
-    -- never warns again.
+    -- Cleaned once so the ColorScheme re-apply never warns again.
     local overrides = clean_overrides(config.user.theme or {})
     apply(overrides)
 
-    -- `:colorscheme` clears every highlight group, ours included. clear = true
-    -- makes a second setup() replace this autocmd instead of stacking another.
+    -- `:colorscheme` clears our groups too, hence the autocmd; clear = true keeps
+    -- a second setup() from stacking another.
     local group = vim.api.nvim_create_augroup("codewars_theme", { clear = true })
     vim.api.nvim_create_autocmd("ColorScheme", {
         group = group,

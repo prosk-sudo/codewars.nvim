@@ -3,7 +3,7 @@ describe("theme highlights", function()
     package.loaded["codewars.config"] = config_stub
     package.loaded["codewars.theme"] = nil
 
-    -- Messages passed to the logger's warn(), reset for every test.
+    -- Logger warn() messages, reset per test.
     local warnings = {}
     package.loaded["codewars.logger"] = {
         info = function() end,
@@ -15,9 +15,8 @@ describe("theme highlights", function()
     }
     local theme = require("codewars.theme")
 
-    -- ColorScheme autocmds that exist before the plugin sets up (the test
-    -- runner's own). Filtering by id keeps the stacking check independent of
-    -- the augroup's name.
+    -- ColorScheme autocmds that exist before setup (the runner's own); filtering
+    -- by id keeps the stacking check independent of the augroup's name.
     local before_setup = {}
     for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "ColorScheme" })) do
         before_setup[au.id] = true
@@ -28,8 +27,7 @@ describe("theme highlights", function()
         end, vim.api.nvim_get_autocmds({ event = "ColorScheme" }))
     end
 
-    -- link = true reads the group as written (a link stays a link);
-    -- link = false follows the link to the effective definition.
+    -- link = true reads a group as written; link = false follows its links.
     local function raw(name)
         return vim.api.nvim_get_hl(0, { name = name, link = true })
     end
@@ -37,14 +35,12 @@ describe("theme highlights", function()
         return vim.api.nvim_get_hl(0, { name = name, link = false })
     end
 
-    -- A real `:colorscheme`: a file on the runtimepath that clears every
-    -- group, then defines Comment.
+    -- A real `:colorscheme`: a runtimepath file that clears every group, then sets Comment.
     local scheme_dir = vim.fn.tempname()
     vim.fn.mkdir(scheme_dir .. "/colors", "p")
     vim.opt.runtimepath:append(scheme_dir)
 
-    -- `aliases` (name -> definition): the colorscheme's own groups, defined
-    -- after clearing.
+    -- `aliases` (name -> definition): the colorscheme's own groups.
     local function use_colorscheme(comment_fg, aliases)
         local source = ([[
 vim.cmd("highlight clear")
@@ -63,10 +59,8 @@ end
         vim.api.nvim_set_hl(0, "Comment", { fg = 0x778899, ctermfg = 244 })
     end
 
-    -- A cold start, like the first setup() or the apply right after a
-    -- `:colorscheme`: none of our groups is defined when apply() runs.
-    -- `aliases` (name -> definition): groups defined before setup(), either
-    -- not ours or ours that the colorscheme already defined.
+    -- A cold start (first setup() or right after `:colorscheme`): none of our
+    -- groups exists yet. `aliases` (name -> definition) are defined before setup().
     local function setup_cold(overrides, aliases)
         vim.cmd("highlight clear")
         define_colorscheme_groups()
@@ -117,7 +111,7 @@ end
             theme.setup()
             local h = raw("codewars_header")
             assert.are.equal("Comment", h.link)
-            -- replaced, not merged: nothing of the default spec is left
+            -- replaced, not merged
             assert.is_nil(h.fg)
             assert.is_nil(h.bold)
             assert.are.equal(0x778899, resolved("codewars_header").fg)
@@ -146,8 +140,7 @@ end
         end)
     end)
 
-    -- `default` and `force` are not supported in `theme`: they are dropped
-    -- from a copy of the user's table, with one warning per group.
+    -- `default` and `force` are dropped from a copy of `theme`, warning once per group.
     describe("overrides that carry `default` or `force`", function()
         local GREEN = 0x00ff00
 
@@ -285,12 +278,8 @@ end
         end)
     end)
 
-    -- A styled link to another codewars group must not depend on which of the
-    -- two apply() reaches first. apply() walks `pairs` order, which roughly
-    -- follows declaration order, so chains are built both ways (each group
-    -- linked to the one declared before it, and to the one after it). In
-    -- either order one of the two chains has every target still unset when
-    -- its source is applied, and a dozen links will not line up by luck.
+    -- The result must not depend on which group apply() reaches first. `pairs`
+    -- order roughly follows declaration order, so chains are built both ways.
     describe("styled links to other codewars groups", function()
         local DECLARED = {
             "codewars_lang_python",
@@ -336,9 +325,8 @@ end
         for _, direction in ipairs(DIRECTIONS) do
             local CHAIN = direction.chain
 
-            -- CHAIN[1] gets `head` (nil: its default); every later group is a
-            -- styled link to the previous one, spelled by `spell` (default:
-            -- as declared).
+            -- CHAIN[1] gets `head` (nil: its default); each later group is a styled
+            -- link to the previous one, spelled by `spell`.
             local function chain_overrides(head, spell)
                 spell = spell or function(name)
                     return name
@@ -401,9 +389,7 @@ end
                 end)
             end)
 
-            -- Group names are case-insensitive, so a link spelled
-            -- "CODEWARS_LANG_PYTHON" is a codewars group too and must be
-            -- worked out the same way, not read back from Neovim.
+            -- Names are case-insensitive: "CODEWARS_LANG_PYTHON" is a codewars group too.
             for _, spelling in ipairs(SPELLINGS) do
                 local spell = spelling.spell
 
@@ -432,12 +418,8 @@ end
                 end)
             end
 
-            -- A link can go through a group that is not ours (the colorscheme's
-            -- or the user's) which itself links into a codewars group. Neovim
-            -- would collapse that from whatever the codewars group holds at
-            -- that moment, so each step must be followed one link at a time.
-            -- Each chain link goes through `depth` such groups; `spell` spells
-            -- the codewars group name at the end.
+            -- Each chain link goes through `depth` groups that are not ours and ends
+            -- in a codewars group named as `spell` spells it.
             local function alias_chain(head, depth, spell)
                 local overrides = { [CHAIN[1]] = head }
                 local aliases = {}
@@ -567,8 +549,7 @@ end
                 assert.are.equal(0xb1361e, raw("codewars_header").fg)
             end)
 
-            -- Group names are case-insensitive, so a link back spelled in
-            -- another case is the same cycle.
+            -- A link back spelled in another case is the same cycle.
             it("counts a link back in another case as the same group", function()
                 local overrides = {
                     codewars_rank_white = { link = "CODEWARS_RANK_YELLOW", bold = true },
