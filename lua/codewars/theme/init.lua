@@ -105,8 +105,8 @@ local highlights = {
 
 local colors
 
---- A `link` override replaces the default spec (merged, it would be both link
---- and color). With style keys it takes the target's fg and ctermfg, never its bg.
+--- A `link` override replaces the default spec (merged, it would be link and color).
+--- With style keys it takes the target's fg and ctermfg (explicit ones win), never its bg.
 ---@param name string a key of `highlights`
 ---@param overrides table the cleaned `theme`
 ---@param seen table<string, true> groups already on the link chain
@@ -133,9 +133,9 @@ local function definition(name, overrides, seen)
     return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
 end
 
---- The (fg, ctermfg) `target` has once apply() has run. Links are walked by hand
---- (apply() order is unspecified, so Neovim's resolution can be stale). Reaching a
---- group already on the chain gives no color; a group's own fg met on the way still counts.
+--- The (fg, ctermfg) `target` has once apply() has run. Links are walked by hand, since
+--- apply() order is unspecified: link-only overrides and other groups' links are followed,
+--- any other group gives the fg it ends up with, and one already on the chain gives none.
 ---@param target string
 ---@param overrides table the cleaned `theme`
 ---@param seen table<string, true> groups already on the link chain
