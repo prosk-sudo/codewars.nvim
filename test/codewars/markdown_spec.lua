@@ -151,9 +151,8 @@ describe("markdown.from_html passthrough", function()
     end)
 end)
 
--- `paired` used to match `<tag>(.-)</tag>`: the first closing tag ended the
--- construct, so a same-name tag nested inside it left the outer one's tail as
--- literal markup in the rendered description.
+-- A same-name tag nested inside another must not let the inner closer end the
+-- outer construct, or the outer one's tail is left as literal markup.
 describe("markdown.from_html nested same-name tags", function()
     local function lines(text)
         return vim.split(vim.trim(text), "\n", { plain = true })
@@ -220,10 +219,8 @@ describe("markdown.from_html nested same-name tags", function()
 end)
 
 -- Every closing tag copies the converted text inside it, so the work grows
--- with nesting depth times length: a description of tens of thousands of
--- nested tags used to stall the render. Nesting deeper than MAX_NEST_DEPTH
--- (64, in markdown.lua) is left as written; real descriptions nest a few
--- levels at most.
+-- with nesting depth times length. Nesting deeper than MAX_NEST_DEPTH (64, in
+-- markdown.lua) is left as written; real descriptions nest a few levels at most.
 describe("markdown.from_html nesting depth cap", function()
     local CAP = 64
 
@@ -267,9 +264,8 @@ describe("markdown.from_html nesting depth cap", function()
         local out = md.from_html(src)
         local elapsed_ms = (uv.hrtime() - started) / 1e6
         assert.are.equal(("**"):rep(CAP), out:sub(1, 2 * CAP))
-        -- Uncapped, this is quadratic in the depth (seconds); capped it is a
-        -- fraction of a second. The bound leaves generous room for a slow
-        -- machine; the structural specs above are the exact guard.
+        -- Uncapped this is quadratic in the depth (seconds). The bound leaves
+        -- room for a slow machine; the structural specs above are the exact guard.
         assert.is_true(elapsed_ms < 1500, ("took %d ms"):format(elapsed_ms))
     end)
 end)
@@ -329,9 +325,8 @@ describe("markdown.from_html unbalanced tags", function()
     end)
 end)
 
--- Behaviour of the tags that are rewritten one by one (links, images, lists,
--- headings, the unwrapped containers). They all used to be gsubs built on
--- `[^>]*` and `(.-)`; these pin what they produce on well-formed markup.
+-- Tags that are rewritten one by one (links, images, lists, headings, the
+-- unwrapped containers): these pin their output on well-formed markup.
 describe("markdown.from_html rewritten tags", function()
     it("converts a heading of each level and trims its text", function()
         assert.are.equal("## Title", vim.trim(md.from_html("<h2> Title </h2>")))
@@ -370,10 +365,9 @@ describe("markdown.from_html rewritten tags", function()
 end)
 
 -- Malformed markup must cost time proportional to its length. A tag with
--- attributes ends at the first `>` after it, and the old patterns (`[^>]*`,
--- `.-`) re-read the rest of the text from every start when there was none:
--- `("<b "):rep(20000)` took 2.7 s and doubling it took four times as long, so a
--- malformed description could stall the editor while it rendered.
+-- attributes ends at the first `>` after it; a naive pattern re-reads the rest
+-- of the text from every start when there is none (`("<b "):rep(20000)` took
+-- 2.7 s, and doubling it took four times as long).
 describe("markdown.from_html tags that never end", function()
     local uv = vim.uv or vim.loop
     local LIMIT_MS = 1000
@@ -407,8 +401,8 @@ describe("markdown.from_html tags that never end", function()
 
     it("scales linearly: twice the text takes about twice the time", function()
         local small, large = best_ms(("<b "):rep(20000)), best_ms(("<b "):rep(40000))
-        -- Linear is 2, quadratic 4. The floor keeps a sub-millisecond small
-        -- run from turning timer noise into a ratio.
+        -- Linear is 2, quadratic 4. The floor keeps timer noise on a
+        -- sub-millisecond small run from becoming a ratio.
         assert.is_true(large < 3 * math.max(small, 2),
             ("20000 took %.1f ms but 40000 took %.1f ms"):format(small, large))
     end)

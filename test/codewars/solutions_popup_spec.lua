@@ -298,9 +298,8 @@ describe("Solutions popup", function()
     end)
 
     -- Each pane is a bordered popup, and nui draws the border one row above
-    -- the content row it is given. Two panes therefore need 6 rows at the
-    -- least (1 + 2 border, twice); the old geometry forced each content
-    -- height to 1 anyway and drew the bottom pane past the last row.
+    -- the content row it is given. Two panes therefore need at least 6 rows
+    -- (1 content + 2 border, twice).
     describe("geometry on short editors", function()
         local BORDER = 2
         local log = require("codewars.logger")
@@ -320,7 +319,7 @@ describe("Solutions popup", function()
         end)
 
         -- An editor `cols` wide with `rows` usable rows (lines minus the
-        -- command line, which is what the geometry reads).
+        -- command line, as geometry() reads it).
         local function resize(cols, rows)
             vim.o.cmdheight = 1
             vim.o.columns = cols
@@ -410,9 +409,8 @@ describe("Solutions popup", function()
             assert.are.equal(5 - BORDER, (geometry(true)).height)
         end)
 
-        -- A bordered pane is 1 content row + BORDER. On 2 usable rows (3 lines
-        -- with a 1-line command line) even one pane would reach into the
-        -- command line, so there is no geometry at all.
+        -- A bordered pane is 1 content row + BORDER. On 2 usable rows even one
+        -- pane would reach into the command line, so there is no geometry.
         it("returns no pane when not even one bordered pane fits", function()
             resize(120, 2)
             for _, show_comments in ipairs({ false, true }) do
@@ -461,8 +459,8 @@ describe("Solutions popup", function()
             assert.are.same({}, said.warn)
         end)
 
-        -- Even if no VimResized reached the popup (eventignore here stands in
-        -- for any redraw that skipped it), the next render re-checks the room.
+        -- Even if no VimResized reached the popup (eventignore stands in for a
+        -- redraw that skipped it), the next render re-checks the room.
         it("closes a popup that no longer fits when a page turn finds the editor shrank", function()
             resize(120, 30)
             ui = Solutions:new({ sol(), sol() }, "python")
@@ -524,17 +522,15 @@ describe("Solutions popup", function()
             assert.are.same({}, said.warn)
         end)
 
-        -- The layout is computed when the popup renders. A terminal resized
-        -- while it is open used to leave the panes where they were, hanging
-        -- past the last row. Every spec here fires VimResized and calls
-        -- nothing else, then looks at the windows as they are right then.
+        -- The layout is computed when the popup renders, so a resize while it
+        -- is open must re-lay it out. Every spec here fires VimResized and
+        -- calls nothing else, then looks at the windows as they are.
         describe("when the editor is resized while it is open", function()
             local function resized()
                 vim.api.nvim_exec_autocmds("VimResized", {})
             end
 
-            -- The solutions popup's own VimResized autocmds, whatever group
-            -- they live in.
+            -- The solutions popup's own VimResized autocmds, in any group.
             local function resize_autocmds()
                 local mine = {}
                 for _, a in ipairs(vim.api.nvim_get_autocmds({ event = "VimResized" })) do

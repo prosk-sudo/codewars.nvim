@@ -31,12 +31,11 @@ local UNWRAP = { "center", "div", "span", "p" }
 --- with an allowlisted tag name (`List<bool>`, `Dictionary<int, string>`), so
 --- the tag name must be followed by `>` or whitespace to be an opener.
 ---
---- This is a scan, not the pattern `<tag%s[^>]*>`. That pattern re-reads the
---- rest of the text from every `<tag ` that has no `>` after it, which is
---- quadratic on malformed markup (`("<b "):rep(20000)` took seconds). Here the
---- search for a `>` runs once per opener and only ever moves forward: an
---- opener ends at its first `>` and the scan resumes after it, and a start
---- with no `>` left ends the scan, because no later start can have one.
+--- This is a scan, not `<tag%s[^>]*>`: that pattern re-reads the rest of the
+--- text from every `<tag ` with no `>` after it, which is quadratic on
+--- malformed markup (`("<b "):rep(20000)` took seconds). Here the `>` search
+--- only moves forward: an opener ends at its first `>`, and a start with no
+--- `>` left ends the scan, since no later start can have one.
 ---@param text string
 ---@param tag string
 ---@return { kind: string, s: integer, e: integer }[]
@@ -67,8 +66,7 @@ end
 --- Every opening and closing tag of `tag` in `text`, in document order, as
 --- `{ kind = "open"|"close", s = start, e = end }`. A closing tag may have
 --- whitespace before its `>`. A tag that starts inside the previous one (a
---- closing tag inside an attribute value) is not a tag of its own and is
---- dropped.
+--- closing tag in an attribute value) is dropped.
 ---@param text string
 ---@param tag string
 ---@return { kind: string, s: integer, e: integer }[]
@@ -93,10 +91,10 @@ local function tag_tokens(text, tag)
     return tokens
 end
 
---- The replacement for one matched construct: `repl(inner, opener)` for a
---- function (`opener` is the opening tag as written, for its attributes), or
---- the string with its `%1` (the inner text) and `%%` expanded the way gsub
---- reads them. A function may return nil to leave the construct as written.
+--- The replacement for one construct: `repl(inner, opener)` for a function
+--- (`opener` is the opening tag as written), or the string with `%1` (the
+--- inner text) and `%%` expanded as gsub does. A function may return nil to
+--- leave the construct as written.
 ---@param repl string|fun(inner: string, opener: string): string?
 ---@param inner string
 ---@param opener string
@@ -108,32 +106,29 @@ end
 
 --- How deep one tag may nest and still be converted. Each closing tag copies
 --- the converted text inside it, so a character at depth d is copied d times:
---- without a bound, tens of thousands of nested tags (or a hostile page) turn
---- a description render into seconds of work. Real descriptions nest two or
---- three levels. A tag nested deeper than this is left as written, together
---- with its own closer, which caps the work at O(length * MAX_NEST_DEPTH).
+--- unbounded, tens of thousands of nested tags (or a hostile page) stall a
+--- render. Real descriptions nest two or three levels. A deeper tag is left as
+--- written with its closer, which caps the work at O(length * MAX_NEST_DEPTH).
 local MAX_NEST_DEPTH = 64
 
---- Replace each paired `<tag>…</tag>` construct, both with and without
---- attributes. Each closing tag pairs with the nearest unclosed opener of the
---- same tag, so `<blockquote>a<blockquote>b</blockquote>c</blockquote>` is two
---- constructs, not one cut at the first `</blockquote>`. The inner one is
---- converted first, and its result is part of the outer one's `inner`.
+--- Replace each paired `<tag>…</tag>` construct, with or without attributes.
+--- A closing tag pairs with the nearest unclosed opener of the same tag, so
+--- `<blockquote>a<blockquote>b</blockquote>c</blockquote>` is two constructs,
+--- not one cut at the first `</blockquote>`. The inner one converts first and
+--- is part of the outer one's `inner`.
 ---
---- Unbalanced markup never errors: a closing tag with no opener, and an opener
---- with no closer, stay in the text exactly as written, and so does every tag
---- nested deeper than MAX_NEST_DEPTH. One pass over the tags, no recursion.
+--- Unbalanced markup never errors: an unpaired opener or closer, and every tag
+--- nested deeper than MAX_NEST_DEPTH, stays as written. One pass, no recursion.
 ---@param text string
 ---@param tag string
 ---@param repl string|fun(inner: string, opener: string): string?
 ---@return string
 local function paired(text, tag, repl)
-    -- `out` is the converted text so far, in pieces. An opener goes in as
-    -- literal text and its index in `out` onto `waiting`; if a closer claims
-    -- it, everything after it is the construct's inner text and is replaced,
-    -- and if none does, the opener is simply still there. An opener past the
-    -- depth cap waits as `false`, so its closer still pairs with it (and
-    -- stays literal) instead of closing an outer construct by mistake.
+    -- `out` holds the converted text in pieces. An opener goes in as literal
+    -- text and its index in `out` onto `waiting`; a closer that claims it
+    -- replaces everything from there on, otherwise the opener just stays. An
+    -- opener past the depth cap waits as `false`, so its closer pairs with it
+    -- (and stays literal) instead of closing an outer construct.
     local out, waiting = {}, {}
     local pos = 1
     for _, token in ipairs(tag_tokens(text, tag)) do
@@ -161,11 +156,10 @@ local function paired(text, tag, repl)
     return table.concat(out)
 end
 
---- Rewrite every single tag of `tag` (openers and closers) on its own, for the
+--- Rewrite every single tag of `tag` (openers and closers) on its own, for
 --- tags with no inner text to convert: `fn(tag_text, kind)` returns the
 --- replacement, or nil to leave that tag as written. Same scan as `paired`, so
---- an unfinished `<p ` costs no more than its length, which the gsubs this
---- replaces (`</?p%s[^>]*>`) did not.
+--- an unfinished `<p ` costs only its length.
 ---@param text string
 ---@param tag string
 ---@param fn fun(tag_text: string, kind: string): string?

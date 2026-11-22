@@ -140,10 +140,9 @@ end
 --- usable row. Every `row` is a CONTENT row: nui draws each border one row
 --- above it, so the stack's top edge is `row - 1`.
 ---
---- Two bordered panes need MIN_STACK rows. On an editor too short for that
---- the second pane (info box or comments) is dropped, returned as nil, and
---- the code pane takes what fits. One bordered pane needs MIN_PANE rows; on
---- an editor shorter than that nothing fits, so there is no geometry at all
+--- Two bordered panes need MIN_STACK rows. On a shorter editor the second pane
+--- (info box or comments) is dropped (nil) and the code pane takes what fits.
+--- One bordered pane needs MIN_PANE rows; below that there is no geometry
 --- (all three nil) and the caller must not open a popup.
 ---@param sol cw.Solution? the solution whose info line sets the minimum width
 ---@return table? code_geom, table? info_geom, table? comments_geom
@@ -157,7 +156,7 @@ function Solutions:geometry(sol)
 
     local total = math.min(math.max(MIN_STACK, math.floor(rows * HEIGHT)), rows)
     -- At least 1: the top border sits on `row - 1`, which must not be above
-    -- the screen. Only a stack that fills (almost) the whole editor is moved.
+    -- the screen.
     local row = math.max(1, math.floor((rows - total) / 2))
 
     if total < MIN_STACK then
@@ -240,10 +239,8 @@ function Solutions:render()
     local sol = self.solutions[self.index]
     local code_geom, info_geom, comments_geom = self:geometry(sol)
     if not code_geom then
-        -- Not even one bordered pane fits above the command line. Panes are
-        -- already unmounted above, so a popup that no longer fits (the editor
-        -- shrank) closes rather than hanging off-screen, and with nothing
-        -- left to lay out it stops listening for resizes too.
+        -- Not even one bordered pane fits. The panes are already unmounted, so
+        -- a popup the editor outgrew closes and stops listening for resizes.
         self:_unwatch_resize()
         return log.warn("Not enough room to show solutions; make the window taller")
     end
@@ -284,10 +281,9 @@ function Solutions:render()
 end
 
 --- Listen for the editor being resized for as long as the panes are mounted.
---- The layout is only computed in render(), so without this a terminal
---- resized while the popup is open leaves the panes where they were, past the
---- last row. One group per instance, created on first mount and removed in
---- close() (or when a resize finds nothing left to lay out), so nothing
+--- The layout is only computed in render(), so without this a resize leaves the
+--- panes past the last row. One group per instance, created on first mount and
+--- removed in close() (or when a resize finds nothing to lay out), so nothing
 --- outlives the popup and re-rendering never stacks a second autocmd.
 function Solutions:_watch_resize()
     if self._resize_group then return end
@@ -328,11 +324,10 @@ local function restore_view(popup, view)
     vim.api.nvim_win_call(popup.winid, function() vim.fn.winrestview(view) end)
 end
 
---- Lay the panes out again for the editor's current size, through the same
---- geometry() and render() as every other redraw, keeping the user's place:
---- the solution, the cursor and scroll of the code and comments panes, and
---- the focused pane. The second pane appears or goes as the room allows, and
---- when not even one pane fits render() closes the popup with its notice.
+--- Lay the panes out again for the editor's current size through geometry()
+--- and render(), keeping the user's place: the solution, the cursor and scroll
+--- of the code and comments panes, and the focused pane. When not even one
+--- pane fits, render() closes the popup with its notice.
 function Solutions:relayout()
     if not on_screen(self.popup) then
         -- The panes went away some other way: nothing to lay out.
@@ -442,9 +437,9 @@ function Solutions:toggle_comments()
     self.show_comments = not self.show_comments
     self.focus = self.show_comments and "comments" or "code"
     self:render()
-    -- The code pane is up but the comments did not fit under it: say so, and
-    -- go back to "comments closed" so the next press asks again instead of
-    -- toggling something that was never on screen.
+    -- The comments did not fit under the code pane: say so and go back to
+    -- "comments closed", so the next press asks again instead of toggling
+    -- something that was never on screen.
     if self.show_comments and self.popup and not self.comments_popup then
         self.show_comments = false
         self.focus = "code"
