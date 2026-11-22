@@ -30,12 +30,8 @@ local UNWRAP = { "center", "div", "span", "p" }
 --- deletes everything in between. Descriptions are full of generics that start
 --- with an allowlisted tag name (`List<bool>`, `Dictionary<int, string>`), so
 --- the tag name must be followed by `>` or whitespace to be an opener.
----
---- This is a scan, not `<tag%s[^>]*>`: that pattern re-reads the rest of the
---- text from every `<tag ` with no `>` after it, which is quadratic on
---- malformed markup (`("<b "):rep(20000)` took seconds). Here the `>` search
---- only moves forward: an opener ends at its first `>`, and a start with no
---- `>` left ends the scan, since no later start can have one.
+--- Scanned forward, not `<tag%s[^>]*>`: that is quadratic on malformed markup
+--- (`("<b "):rep(20000)` took seconds).
 ---@param text string
 ---@param tag string
 ---@return { kind: string, s: integer, e: integer }[]
@@ -46,7 +42,7 @@ local function find_openers(text, tag)
     while true do
         local s = text:find(head, pos, true)
         if not s then return openers end
-        local after = s + #head -- the character after the tag name
+        local after = s + #head
         local e
         if text:sub(after, after) == ">" then
             e = after
@@ -63,10 +59,8 @@ local function find_openers(text, tag)
     end
 end
 
---- Every opening and closing tag of `tag` in `text`, in document order, as
---- `{ kind = "open"|"close", s = start, e = end }`. A closing tag may have
---- whitespace before its `>`. A tag that starts inside the previous one (a
---- closing tag in an attribute value) is dropped.
+--- Every opening and closing tag of `tag` in `text`, in document order. A tag
+--- starting inside the previous one (a closer in an attribute value) is dropped.
 ---@param text string
 ---@param tag string
 ---@return { kind: string, s: integer, e: integer }[]
@@ -91,10 +85,8 @@ local function tag_tokens(text, tag)
     return tokens
 end
 
---- The replacement for one construct: `repl(inner, opener)` for a function
---- (`opener` is the opening tag as written), or the string with `%1` (the
---- inner text) and `%%` expanded as gsub does. A function may return nil to
---- leave the construct as written.
+--- A function `repl(inner, opener)` may return nil to leave the construct as
+--- written; a string has `%1` (inner text) and `%%` expanded as gsub does.
 ---@param repl string|fun(inner: string, opener: string): string?
 ---@param inner string
 ---@param opener string
@@ -104,31 +96,19 @@ local function expand(repl, inner, opener)
     return (repl:gsub("%%([%%1])", function(c) return c == "1" and inner or "%" end))
 end
 
---- How deep one tag may nest and still be converted. Each closing tag copies
---- the converted text inside it, so a character at depth d is copied d times:
---- unbounded, tens of thousands of nested tags (or a hostile page) stall a
---- render. Real descriptions nest two or three levels. A deeper tag is left as
---- written with its closer, which caps the work at O(length * MAX_NEST_DEPTH).
+--- How deep one tag may nest and still convert; deeper ones stay as written.
+--- Each closer copies its inner text, so unbounded nesting is quadratic.
 local MAX_NEST_DEPTH = 64
 
---- Replace each paired `<tag>…</tag>` construct, with or without attributes.
---- A closing tag pairs with the nearest unclosed opener of the same tag, so
---- `<blockquote>a<blockquote>b</blockquote>c</blockquote>` is two constructs,
---- not one cut at the first `</blockquote>`. The inner one converts first and
---- is part of the outer one's `inner`.
----
---- Unbalanced markup never errors: an unpaired opener or closer, and every tag
---- nested deeper than MAX_NEST_DEPTH, stays as written. One pass, no recursion.
+--- Replace each paired `<tag>…</tag>`; a closer pairs with the nearest unclosed
+--- opener (inner first). Unpaired and too-deep tags stay as written, no error.
 ---@param text string
 ---@param tag string
 ---@param repl string|fun(inner: string, opener: string): string?
 ---@return string
 local function paired(text, tag, repl)
-    -- `out` holds the converted text in pieces. An opener goes in as literal
-    -- text and its index in `out` onto `waiting`; a closer that claims it
-    -- replaces everything from there on, otherwise the opener just stays. An
-    -- opener past the depth cap waits as `false`, so its closer pairs with it
-    -- (and stays literal) instead of closing an outer construct.
+    -- `waiting` holds each unclosed opener's index in `out`, or `false` past
+    -- the depth cap so its closer still pairs with it, not an outer opener.
     local out, waiting = {}, {}
     local pos = 1
     for _, token in ipairs(tag_tokens(text, tag)) do
@@ -143,7 +123,6 @@ local function paired(text, tag, repl)
             if opener then
                 local opening, inner = out[opener], table.concat(out, "", opener + 1)
                 for i = #out, opener, -1 do out[i] = nil end
-                -- A nil from `repl` leaves the construct exactly as written.
                 out[#out + 1] = expand(repl, inner, opening) or (opening .. inner .. literal)
             else
                 out[#out + 1] = literal -- closes an opener past the depth cap
@@ -156,10 +135,8 @@ local function paired(text, tag, repl)
     return table.concat(out)
 end
 
---- Rewrite every single tag of `tag` (openers and closers) on its own, for
---- tags with no inner text to convert: `fn(tag_text, kind)` returns the
---- replacement, or nil to leave that tag as written. Same scan as `paired`, so
---- an unfinished `<p ` costs only its length.
+--- Rewrite each single tag of `tag` on its own: `fn(tag_text, kind)` returns
+--- the replacement, or nil to leave it as written. Same scan as `paired`.
 ---@param text string
 ---@param tag string
 ---@param fn fun(tag_text: string, kind: string): string?
@@ -176,8 +153,7 @@ local function rewrite_tags(text, tag, fn)
     return table.concat(out)
 end
 
---- The attribute text of an opening tag as written: `<a href="u">` gives
---- `href="u"`, and a bare `<a>` gives "".
+--- The attribute text of an opening tag: `<a href="u">` gives `href="u"`.
 ---@param opener string
 ---@param tag string
 ---@return string
@@ -282,8 +258,7 @@ function M.from_html(text)
     -- end cannot eat the blank lines inside it, the way it would for any other
     -- generated block. Only the framing newlines are trimmed.
     text = paired(text, "pre", function(inner)
-        -- `.*%S` ends at the last non-space in one backwards walk; the
-        -- obvious `%s+$` retries from every space of a long run.
+        -- `%s+$` retries from every space of a long run; `.*%S` does not.
         inner = (inner:gsub("^%s*\n", "")):match("^(.*%S)") or ""
         return "\n" .. keep("```\n" .. inner .. "\n```") .. "\n"
     end)

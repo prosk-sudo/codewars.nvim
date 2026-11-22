@@ -151,8 +151,7 @@ describe("markdown.from_html passthrough", function()
     end)
 end)
 
--- A same-name tag nested inside another must not let the inner closer end the
--- outer construct, or the outer one's tail is left as literal markup.
+-- An inner same-name closer must not end the outer construct.
 describe("markdown.from_html nested same-name tags", function()
     local function lines(text)
         return vim.split(vim.trim(text), "\n", { plain = true })
@@ -192,7 +191,6 @@ describe("markdown.from_html nested same-name tags", function()
         assert.is_nil(out:find("</li>", 1, true))
         assert.is_nil(out:find("<ul", 1, true))
         assert.is_nil(out:find("</ul>", 1, true))
-        -- Document order survives.
         assert.is_true(out:find("- a", 1, true) < out:find("- b", 1, true))
         assert.is_true(out:find("- c", 1, true) < out:find("- d", 1, true))
     end)
@@ -218,9 +216,7 @@ describe("markdown.from_html nested same-name tags", function()
 
 end)
 
--- Every closing tag copies the converted text inside it, so the work grows
--- with nesting depth times length. Nesting deeper than MAX_NEST_DEPTH (64, in
--- markdown.lua) is left as written; real descriptions nest a few levels at most.
+-- Nesting deeper than MAX_NEST_DEPTH (64, in markdown.lua) is left as written.
 describe("markdown.from_html nesting depth cap", function()
     local CAP = 64
 
@@ -264,14 +260,12 @@ describe("markdown.from_html nesting depth cap", function()
         local out = md.from_html(src)
         local elapsed_ms = (uv.hrtime() - started) / 1e6
         assert.are.equal(("**"):rep(CAP), out:sub(1, 2 * CAP))
-        -- Uncapped this is quadratic in the depth (seconds). The bound leaves
-        -- room for a slow machine; the structural specs above are the exact guard.
+        -- Loose bound for slow machines; the specs above are the exact guard.
         assert.is_true(elapsed_ms < 1500, ("took %d ms"):format(elapsed_ms))
     end)
 end)
 
--- Real descriptions are not always balanced. Whatever the markup, the
--- conversion must finish, never raise, and leave a tag it cannot pair as text.
+-- Conversion must finish and never raise; unpairable tags stay as text.
 describe("markdown.from_html unbalanced tags", function()
     local function lines(text)
         return vim.split(vim.trim(text), "\n", { plain = true })
@@ -318,15 +312,13 @@ describe("markdown.from_html unbalanced tags", function()
         -- More openers than closers: the extra ones stay, the pairs convert.
         local half = md.from_html(("<b>"):rep(40) .. "x" .. ("</b>"):rep(20))
         assert.are.equal(("<b>"):rep(20) .. ("**"):rep(20) .. "x" .. ("**"):rep(20), half)
-        -- Here every closer pairs with an opener past the depth cap (the 64
-        -- outer openers are never closed), so nothing converts.
+        -- Every closer pairs with an opener past the depth cap: nothing converts.
         local deep = ("<b>"):rep(2000) .. "x" .. ("</b>"):rep(1000)
         assert.are.equal(deep, md.from_html(deep))
     end)
 end)
 
--- Tags that are rewritten one by one (links, images, lists, headings, the
--- unwrapped containers): these pin their output on well-formed markup.
+-- Output of the one-by-one tags (links, images, lists, headings, containers).
 describe("markdown.from_html rewritten tags", function()
     it("converts a heading of each level and trims its text", function()
         assert.are.equal("## Title", vim.trim(md.from_html("<h2> Title </h2>")))
@@ -364,10 +356,8 @@ describe("markdown.from_html rewritten tags", function()
     end)
 end)
 
--- Malformed markup must cost time proportional to its length. A tag with
--- attributes ends at the first `>` after it; a naive pattern re-reads the rest
--- of the text from every start when there is none (`("<b "):rep(20000)` took
--- 2.7 s, and doubling it took four times as long).
+-- Malformed markup must cost time linear in its length: a naive `[^>]*`
+-- pattern re-reads the rest of the text from every unfinished start.
 describe("markdown.from_html tags that never end", function()
     local uv = vim.uv or vim.loop
     local LIMIT_MS = 1000
@@ -401,8 +391,7 @@ describe("markdown.from_html tags that never end", function()
 
     it("scales linearly: twice the text takes about twice the time", function()
         local small, large = best_ms(("<b "):rep(20000)), best_ms(("<b "):rep(40000))
-        -- Linear is 2, quadratic 4. The floor keeps timer noise on a
-        -- sub-millisecond small run from becoming a ratio.
+        -- Linear is 2, quadratic 4; the floor keeps timer noise out of the ratio.
         assert.is_true(large < 3 * math.max(small, 2),
             ("20000 took %.1f ms but 40000 took %.1f ms"):format(small, large))
     end)
@@ -412,8 +401,8 @@ describe("markdown.from_html tags that never end", function()
             "blockquote", "pre", "a", "img", "li", "ul", "ol", "h1", "h4", "strong", "code",
             "em", "b", "i", "sup", "sub", "center", "div", "span", "p",
         }
-        -- A finished `<ul x>` or `<p x>` is dropped even with no closer; every
-        -- other shape here is unpaired or unfinished, so it stays as written.
+        -- A finished `<ul x>`/`<p x>` is dropped even with no closer; every
+        -- other shape stays as written.
         local dropped = { ul = true, ol = true, center = true, div = true, span = true, p = true }
         for _, tag in ipairs(tags) do
             for _, unit in ipairs({ "<" .. tag .. " ", "<" .. tag .. " x>", "</" .. tag .. " " }) do
@@ -428,8 +417,7 @@ describe("markdown.from_html tags that never end", function()
     end)
 
     it("is linear for an opener whose only > is the one in a distant closing tag", function()
-        -- Every `<a ` has the same far `>`; the closer after it is gone, so
-        -- nothing pairs and nothing is rewritten.
+        -- Every `<a ` has the same far `>`; its closer is gone, so nothing pairs.
         local src = ("<a "):rep(20000) .. "</a>"
         local ms, out = render(src)
         assert.is_true(ms < LIMIT_MS, ("took %d ms"):format(ms))

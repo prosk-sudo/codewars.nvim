@@ -24,9 +24,7 @@ local HEIGHT = 0.7
 local COMMENTS_SHARE = 0.4
 local INFO_HEIGHT = 1
 local BORDER = 2 -- rows a bordered popup costs beyond its content
-local MIN_CONTENT = 1 -- content rows a pane keeps at the least
--- Rows one bordered pane needs, and the stack of the code pane plus a
--- second pane, both at MIN_CONTENT, each with its border.
+local MIN_CONTENT = 1
 local MIN_PANE = MIN_CONTENT + BORDER
 local MIN_STACK = 2 * MIN_PANE
 
@@ -136,14 +134,10 @@ end
 --- comments pane under it (the info box gives way, its hints move into the
 --- comments title). Sized from the editor and CLAMPED to it: the box is
 --- at least wide enough for the info line (so its hints are never cut
---- off), and the stack never starts above row 0 or ends below the last
---- usable row. Every `row` is a CONTENT row: nui draws each border one row
---- above it, so the stack's top edge is `row - 1`.
----
---- Two bordered panes need MIN_STACK rows. On a shorter editor the second pane
---- (info box or comments) is dropped (nil) and the code pane takes what fits.
---- One bordered pane needs MIN_PANE rows; below that there is no geometry
---- (all three nil) and the caller must not open a popup.
+--- off), and the stack never starts above row 0 or ends below the last usable
+--- row. Every `row` is a CONTENT row: nui draws the border at `row - 1`.
+--- Under MIN_STACK rows the second pane is nil; under MIN_PANE rows all three
+--- are nil and the caller must not open a popup.
 ---@param sol cw.Solution? the solution whose info line sets the minimum width
 ---@return table? code_geom, table? info_geom, table? comments_geom
 function Solutions:geometry(sol)
@@ -155,8 +149,7 @@ function Solutions:geometry(sol)
     local col = math.max(0, math.floor((cols - width) / 2))
 
     local total = math.min(math.max(MIN_STACK, math.floor(rows * HEIGHT)), rows)
-    -- At least 1: the top border sits on `row - 1`, which must not be above
-    -- the screen.
+    -- At least 1: the top border sits at `row - 1`, which must not be off screen.
     local row = math.max(1, math.floor((rows - total) / 2))
 
     if total < MIN_STACK then
@@ -239,8 +232,7 @@ function Solutions:render()
     local sol = self.solutions[self.index]
     local code_geom, info_geom, comments_geom = self:geometry(sol)
     if not code_geom then
-        -- Not even one bordered pane fits. The panes are already unmounted, so
-        -- a popup the editor outgrew closes and stops listening for resizes.
+        -- Nothing fits: the panes are already unmounted, so stop watching resizes.
         self:_unwatch_resize()
         return log.warn("Not enough room to show solutions; make the window taller")
     end
@@ -280,11 +272,8 @@ function Solutions:render()
     vim.api.nvim_set_current_win(target.winid)
 end
 
---- Listen for the editor being resized for as long as the panes are mounted.
---- The layout is only computed in render(), so without this a resize leaves the
---- panes past the last row. One group per instance, created on first mount and
---- removed in close() (or when a resize finds nothing to lay out), so nothing
---- outlives the popup and re-rendering never stacks a second autocmd.
+--- Re-lay out the panes on VimResized while mounted. One augroup per instance,
+--- removed on close, so re-rendering never stacks a second autocmd.
 function Solutions:_watch_resize()
     if self._resize_group then return end
     self._resize_group = vim.api.nvim_create_augroup("codewars_solutions_" .. self.id, { clear = true })
@@ -301,8 +290,7 @@ function Solutions:_unwatch_resize()
     self._resize_group = nil
 end
 
---- True when the pane has a live window. nui clears `winid` itself when a
---- pane's window is closed, so the field can be nil, not just stale.
+--- True when the pane has a live window (nui nils `winid` when it closes).
 ---@param popup NuiPopup?
 ---@return boolean
 local function on_screen(popup)
@@ -324,10 +312,8 @@ local function restore_view(popup, view)
     vim.api.nvim_win_call(popup.winid, function() vim.fn.winrestview(view) end)
 end
 
---- Lay the panes out again for the editor's current size through geometry()
---- and render(), keeping the user's place: the solution, the cursor and scroll
---- of the code and comments panes, and the focused pane. When not even one
---- pane fits, render() closes the popup with its notice.
+--- Re-render for the current editor size, keeping the solution, the cursor and
+--- scroll of the code and comments panes, and the focused pane.
 function Solutions:relayout()
     if not on_screen(self.popup) then
         -- The panes went away some other way: nothing to lay out.
@@ -437,9 +423,7 @@ function Solutions:toggle_comments()
     self.show_comments = not self.show_comments
     self.focus = self.show_comments and "comments" or "code"
     self:render()
-    -- The comments did not fit under the code pane: say so and go back to
-    -- "comments closed", so the next press asks again instead of toggling
-    -- something that was never on screen.
+    -- Comments did not fit: revert to "closed" so the next press asks again.
     if self.show_comments and self.popup and not self.comments_popup then
         self.show_comments = false
         self.focus = "code"
@@ -494,7 +478,7 @@ function Solutions:new(solutions, language)
     end
     instances = instances + 1
     return setmetatable({
-        id = instances, -- names this popup's resize augroup
+        id = instances,
         solutions = items,
         language = language,
         index = 1,

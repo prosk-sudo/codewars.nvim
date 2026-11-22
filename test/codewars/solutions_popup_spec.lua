@@ -297,9 +297,7 @@ describe("Solutions popup", function()
         end)
     end)
 
-    -- Each pane is a bordered popup, and nui draws the border one row above
-    -- the content row it is given. Two panes therefore need at least 6 rows
-    -- (1 content + 2 border, twice).
+    -- nui draws the border above the content row, so two panes need 6 rows.
     describe("geometry on short editors", function()
         local BORDER = 2
         local log = require("codewars.logger")
@@ -318,8 +316,7 @@ describe("Solutions popup", function()
             vim.o.cmdheight, vim.o.columns, vim.o.lines = saved[3], saved[1], saved[2]
         end)
 
-        -- An editor `cols` wide with `rows` usable rows (lines minus the
-        -- command line, as geometry() reads it).
+        -- `rows` is usable rows: lines minus the command line.
         local function resize(cols, rows)
             vim.o.cmdheight = 1
             vim.o.columns = cols
@@ -409,8 +406,7 @@ describe("Solutions popup", function()
             assert.are.equal(5 - BORDER, (geometry(true)).height)
         end)
 
-        -- A bordered pane is 1 content row + BORDER. On 2 usable rows even one
-        -- pane would reach into the command line, so there is no geometry.
+        -- One bordered pane needs 3 rows; with 2 there is no geometry.
         it("returns no pane when not even one bordered pane fits", function()
             resize(120, 2)
             for _, show_comments in ipairs({ false, true }) do
@@ -459,8 +455,7 @@ describe("Solutions popup", function()
             assert.are.same({}, said.warn)
         end)
 
-        -- Even if no VimResized reached the popup (eventignore stands in for a
-        -- redraw that skipped it), the next render re-checks the room.
+        -- eventignore stands in for a missed VimResized; the next render re-checks.
         it("closes a popup that no longer fits when a page turn finds the editor shrank", function()
             resize(120, 30)
             ui = Solutions:new({ sol(), sol() }, "python")
@@ -505,8 +500,7 @@ describe("Solutions popup", function()
             assert.truthy(said.info[1]:find("taller", 1, true))
             assert.is_nil(ui.comments_popup)
             assert.is_not_nil(ui.popup, "the code pane stays open")
-            -- The comments were not shown, so the next press asks again
-            -- instead of silently toggling them off.
+            -- Not shown, so the next press asks again instead of toggling off.
             assert.is_false(ui.show_comments)
             ui:toggle_comments()
             assert.are.equal(2, #said.info)
@@ -522,9 +516,7 @@ describe("Solutions popup", function()
             assert.are.same({}, said.warn)
         end)
 
-        -- The layout is computed when the popup renders, so a resize while it
-        -- is open must re-lay it out. Every spec here fires VimResized and
-        -- calls nothing else, then looks at the windows as they are.
+        -- Every spec here fires VimResized and nothing else, then checks the windows.
         describe("when the editor is resized while it is open", function()
             local function resized()
                 vim.api.nvim_exec_autocmds("VimResized", {})
@@ -539,8 +531,7 @@ describe("Solutions popup", function()
                 return mine
             end
 
-            -- A pane's content geometry, read from the window nui draws its
-            -- border in (border row/col sit one above/left of the content).
+            -- Content geometry; the border window sits one row/col above/left of it.
             local function content(popup)
                 local b = box(popup)
                 return { width = b.width - 2, height = b.height - 2, row = b.row + 1, col = b.col + 1 }
@@ -593,8 +584,8 @@ describe("Solutions popup", function()
 
                 resize(80, 23)
                 resized()
-                -- On 80 columns the box is widened to fit the info line, so the
-                -- width comes from geometry(); the rows are the 23-row pins.
+                -- At 80 columns the box widens to fit the info line, so width comes
+                -- from geometry().
                 local want_code, _, want_comments = ui:geometry(ui.solutions[1])
                 assert.are.same(want_code, content(ui.popup))
                 assert.are.same(want_comments, content(ui.comments_popup))
