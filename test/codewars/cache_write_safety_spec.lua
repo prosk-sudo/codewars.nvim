@@ -19,6 +19,16 @@ local function spit(path, text)
     f:close()
 end
 
+--- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+local function put(path, payload)
+    spit(path, require("codewars.cache.backup").frame_backup(payload))
+end
+
+--- ... and the bytes a backup file holds, nil if it is not a complete backup.
+local function payload_of(path)
+    return require("codewars.cache.backup").parse_backup(slurp(path))
+end
+
 local function perms(path)
     local stat = uv.fs_stat(path)
     return stat and bit.band(stat.mode, 511)
@@ -111,7 +121,7 @@ describe("cache.utils write_json keeps the previous cache when a write fails", f
             local seen
             uv.fs_write = function(fd, data, offset)
                 if data == payload then
-                    seen = { mode = perms(bak), text = slurp(bak) }
+                    seen = { mode = perms(bak), text = payload_of(bak) }
                 end
                 return real_write(fd, data, offset)
             end
@@ -149,7 +159,7 @@ describe("cache.utils write_json keeps the previous cache when a write fails", f
         assert.is_false(ok)
         assert.matches("ENOSPC", err)
         assert.matches(vim.pesc(bak), err)
-        assert.equals(original, slurp(bak), "the backup must hold the previous cache in full")
+        assert.equals(original, payload_of(bak), "the backup must hold the previous cache in full")
         assert.equals(1, #errors, vim.inspect(errors))
     end)
 
@@ -199,7 +209,7 @@ describe("cache.utils write_json keeps the previous cache when a write fails", f
 
     it("recovers a leftover backup before writing over a damaged cache, so a second failure cannot lose it", function()
         spit(file, "{ torn")
-        spit(bak, original)
+        put(bak, original)
         disk_full_on(payload)
 
         local ok = write()

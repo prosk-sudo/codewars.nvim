@@ -26,6 +26,16 @@ local function spit(path, text)
     f:close()
 end
 
+--- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+local function put(path, payload)
+    spit(path, require("codewars.cache.backup").frame_backup(payload))
+end
+
+--- ... and the bytes a backup file holds, nil if it is not a complete backup.
+local function payload_of(path)
+    return require("codewars.cache.backup").parse_backup(slurp(path))
+end
+
 local function perms(path)
     local stat = uv.fs_stat(path)
     return stat and bit.band(stat.mode, 511)
@@ -114,7 +124,7 @@ describe("cache.utils write_json, state by state", function()
         it("is not touched: a disk that fills while backing up refuses the write", function()
             spit(file, original)
             local before = uv.fs_stat(file)
-            disk_full_on(original)
+            disk_full_on(require("codewars.cache.backup").frame_backup(original)) -- only the backup copy writes it
 
             local ok, err = write()
 
@@ -174,8 +184,8 @@ describe("cache.utils write_json, state by state", function()
 
             it(("is not overwritten by a cache that is %s, and goes once the write lands"):format(what), function()
                 spit(file, damaged)
-                spit(bak, good_bak)
-                local seen = look_during_write(function() return slurp(bak) end)
+                put(bak, good_bak)
+                local seen = look_during_write(function() return payload_of(bak) end)
 
                 assert.is_true((write()))
 
@@ -186,7 +196,7 @@ describe("cache.utils write_json, state by state", function()
 
             it(("is written back over a cache that is %s when the write fails, then goes"):format(what), function()
                 spit(file, damaged)
-                spit(bak, good_bak)
+                put(bak, good_bak)
                 disk_full_on(payload)
 
                 local ok = write()
@@ -198,20 +208,20 @@ describe("cache.utils write_json, state by state", function()
 
             it(("is kept when it cannot be written back over a cache that is %s"):format(what), function()
                 spit(file, damaged)
-                spit(bak, good_bak)
+                put(bak, good_bak)
                 disk_full_on(payload, { good_bak })
 
                 local ok, err = write()
 
                 assert.is_false(ok)
                 assert.matches(vim.pesc(bak), err)
-                assert.equals(good_bak, slurp(bak))
+                assert.equals(good_bak, payload_of(bak))
             end)
         end
 
         it("is kept when the write is refused before anything changed", function()
             spit(file, "{ torn")
-            spit(bak, good_bak)
+            put(bak, good_bak)
             uv.fs_chmod(file, 256) -- 0400
             if uv.fs_access(file, "W") then return pending("running as a user that ignores file modes") end
 
@@ -219,14 +229,14 @@ describe("cache.utils write_json, state by state", function()
 
             assert.is_false(ok)
             assert.equals("{ torn", slurp(file))
-            assert.equals(good_bak, slurp(bak), "the good copy was removed though the cache was never written")
+            assert.equals(good_bak, payload_of(bak), "the good copy was removed though the cache was never written")
         end)
 
         -- A cache that is absent was deleted: its backup is stale, and goes BEFORE the new
         -- cache is created, so that a crash partway through creating it leaves nothing to
         -- recover the deleted data from.
         it("is gone before a cache that is not there is created", function()
-            spit(bak, good_bak)
+            put(bak, good_bak)
             local seen = look_during_write(function() return uv.fs_lstat(bak) == nil and "gone" or "still there" end)
 
             assert.is_true((write()))
@@ -237,7 +247,7 @@ describe("cache.utils write_json, state by state", function()
         end)
 
         it("is gone when the new cache fails, which is removed too", function()
-            spit(bak, good_bak)
+            put(bak, good_bak)
             disk_full_on(payload)
 
             local ok = write()
@@ -249,7 +259,7 @@ describe("cache.utils write_json, state by state", function()
 
         it("is used as it is when the directory cannot be written, and emptied since it cannot be removed", function()
             spit(file, "{ torn")
-            spit(bak, good_bak)
+            put(bak, good_bak)
             if not cannot_write_dir() then return pending("running as a user that ignores directory modes") end
 
             local ok = write()
@@ -262,7 +272,7 @@ describe("cache.utils write_json, state by state", function()
 
         it("is not touched by the retry that follows a recovery that could not be written back", function()
             spit(file, "{ torn")
-            spit(bak, good_bak)
+            put(bak, good_bak)
             -- 1. the read finds the damage and the backup, and the disk is full
             disk_full_on(good_bak)
             assert.same({ older = string.rep("b", 300) }, cache_utils.read_json(P:new(file)))
@@ -273,7 +283,7 @@ describe("cache.utils write_json, state by state", function()
             local ok = write({ quiet = true })
 
             assert.is_false(ok)
-            assert.equals(good_bak, slurp(bak), "the good copy was overwritten with the damaged cache")
+            assert.equals(good_bak, payload_of(bak), "the good copy was overwritten with the damaged cache")
             -- 3. once there is room the next read recovers it
             uv.fs_write = real_write
             assert.same({ older = string.rep("b", 300) }, cache_utils.read_json(P:new(file)))
@@ -287,7 +297,7 @@ describe("cache.utils write_json, state by state", function()
             local backed_up
             uv.fs_write = function(fd, data, offset)
                 if data ~= payload then return real_write(fd, data, offset) end
-                backed_up = slurp(bak)
+                backed_up = payload_of(bak)
                 real_write(fd, data:sub(1, 100), offset)
                 return nil, "ENOSPC: no space left on device"
             end
@@ -338,7 +348,7 @@ describe("cache.utils write_json, state by state", function()
         for _, how in ipairs({ "open", "read", "mode" }) do
             it(("refuses the write over a damaged cache, touching neither file (%s error)"):format(how), function()
                 spit(file, "{ torn")
-                spit(bak, good_bak)
+                put(bak, good_bak)
                 local before = uv.fs_stat(file)
                 if how == "mode" then
                     uv.fs_chmod(bak, 0)
@@ -355,14 +365,14 @@ describe("cache.utils write_json, state by state", function()
                 assert.matches(vim.pesc(bak), err)
                 assert.equals("{ torn", slurp(file))
                 assert.equals(before.mtime.nsec, uv.fs_stat(file).mtime.nsec)
-                assert.equals(good_bak, slurp(bak), "a backup that could not be read was replaced")
+                assert.equals(good_bak, payload_of(bak), "a backup that could not be read was replaced")
                 assert.equals(1, #errors, vim.inspect(errors))
             end)
         end
 
         it("refuses it over an empty cache as well, and says nothing when quiet", function()
             spit(file, "")
-            spit(bak, good_bak)
+            put(bak, good_bak)
             bak_unreadable("open")
 
             local ok, err = write({ quiet = true })
@@ -371,13 +381,13 @@ describe("cache.utils write_json, state by state", function()
             assert.is_false(ok)
             assert.matches(vim.pesc(bak), err)
             assert.equals("", slurp(file))
-            assert.equals(good_bak, slurp(bak))
+            assert.equals(good_bak, payload_of(bak))
             assert.same({}, errors)
         end)
 
         it("is stale beside a cache that decodes, so it is replaced and the write goes ahead", function()
             spit(file, original)
-            spit(bak, good_bak)
+            put(bak, good_bak)
             bak_unreadable("open")
 
             local ok = write()
@@ -389,7 +399,7 @@ describe("cache.utils write_json, state by state", function()
         end)
 
         it("is removed once a new file has landed beside it: it is stale then, and may not stay unread", function()
-            spit(bak, good_bak)
+            put(bak, good_bak)
             bak_unreadable("open")
 
             local ok = write()
@@ -481,7 +491,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
             local nonblock = uv.constants and uv.constants.O_NONBLOCK
             if not nonblock then return pending("this luv does not expose O_NONBLOCK") end
             spit(file, original)
-            spit(bak, good_bak)
+            put(bak, good_bak)
             local reads = {}
             uv.fs_open = function(path, flags, mode)
                 if is_read_open(flags) then reads[path] = flags end
@@ -490,7 +500,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
 
             assert.is_true((write()))
             spit(file, "{ torn")
-            spit(bak, good_bak)
+            put(bak, good_bak)
             cache_utils.read_json(P:new(file))
 
             for _, path in ipairs({ file, bak }) do
@@ -531,7 +541,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
         }) do
             it(("is refused before a byte is read when the opened descriptor %s"):format(name), function()
                 spit(file, "{ torn")
-                spit(bak, good_bak)
+                put(bak, good_bak)
                 local read_any = fstat_says(change)
 
                 local ok, err = write()
@@ -541,7 +551,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
                 assert.is_false(ok)
                 assert.matches(vim.pesc(bak), err)
                 assert.equals("{ torn", slurp(file))
-                assert.equals(good_bak, slurp(bak))
+                assert.equals(good_bak, payload_of(bak))
             end)
         end
     end)
@@ -549,8 +559,8 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
     describe("a .bak that is stale or no use", function()
         it("is replaced by a fresh backup when the cache decodes", function()
             spit(file, original)
-            spit(bak, good_bak)
-            local seen = look_during_write(function() return slurp(bak) end)
+            put(bak, good_bak)
+            local seen = look_during_write(function() return payload_of(bak) end)
 
             assert.is_true((write()))
 
@@ -560,8 +570,8 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
 
         it("is replaced by a fresh backup of what is there when nothing decodes", function()
             spit(file, "{ torn")
-            spit(bak, "{ also torn")
-            local seen = look_during_write(function() return slurp(bak) end)
+            put(bak, "{ also torn")
+            local seen = look_during_write(function() return payload_of(bak) end)
 
             assert.is_true((write()))
 
@@ -571,7 +581,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
 
         it("is replaced by a fresh backup when it is undecodable and the cache decodes", function()
             spit(file, original)
-            spit(bak, "{ torn")
+            put(bak, "{ torn")
             disk_full_on(payload)
 
             local ok = write()
@@ -600,7 +610,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
             spit(file, original)
             uv.fs_symlink(target, bak)
             local seen = look_during_write(function()
-                return { kind = uv.fs_lstat(bak).type, text = slurp(bak) }
+                return { kind = uv.fs_lstat(bak).type, text = payload_of(bak) }
             end)
 
             assert.is_true((write()))
@@ -624,12 +634,12 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
 
         it("is unlinked when the cache is damaged too, since a link is no good copy", function()
             spit(file, "{ torn")
-            spit(target, good_bak)
+            put(target, good_bak)
             uv.fs_symlink(target, bak)
 
             assert.is_true((write()))
 
-            assert.equals(good_bak, slurp(target))
+            assert.equals(good_bak, payload_of(target))
             assert.is_nil(uv.fs_lstat(bak))
         end)
 
@@ -676,7 +686,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
     describe("quiet", function()
         it("logs nothing over a damaged cache and a good backup, written or not", function()
             spit(file, "{ torn")
-            spit(bak, good_bak)
+            put(bak, good_bak)
             disk_full_on(payload)
             assert.is_false((write({ quiet = true })))
             assert.same({}, errors)
@@ -684,7 +694,7 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
 
             uv.fs_write = real_write
             spit(file, "{ torn")
-            spit(bak, good_bak)
+            put(bak, good_bak)
             assert.is_true((write({ quiet = true })))
             assert.same({}, errors)
             assert.same({}, warnings)

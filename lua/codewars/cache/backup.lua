@@ -25,6 +25,16 @@
 ---    the write is refused and neither file is touched. Only a .bak that was
 ---    read in full and does not decode, one beside a cache that decodes, or a
 ---    symlink or other non-regular file, is ever removed or replaced.
+---  * A backup is only trusted if it proves it is complete. It is written as one
+---    header line, `CWBAK1 <byte-length> <sha256-hex>`, then the original bytes. A
+---    crash while it is being created (the failure clean-up does not run when the
+---    process dies) can leave a prefix that is itself valid JSON, so a backup is
+---    "good" only if the header parses, the payload has exactly that many bytes, the
+---    checksum matches, and the payload then decodes. Anything else (a missing or
+---    garbled header, a short payload, a checksum mismatch, a file with no header)
+---    is undecodable, never used for recovery, and replaced or discarded under the
+---    rules below. Recovery and restores write back only the verified payload,
+---    never the header.
 ---  * The copy outlives the write only when the old bytes could not be put back
 ---    (or the editor died mid-write). Then it is the one good copy of the
 ---    previous cache, and no later write replaces it with a cache that does not
@@ -103,6 +113,33 @@ local function write_flags(create)
     local flags = bit.bor(constants.O_WRONLY, constants.O_NONBLOCK or 0)
     if create then flags = bit.bor(flags, constants.O_CREAT or 0, constants.O_EXCL or 0) end
     return flags
+end
+
+local BACKUP_MAGIC = "CWBAK1"
+
+--- A backup of `bytes`: a header line with their length and sha256, then the bytes.
+---@param bytes string
+---@return string
+function M.frame_backup(bytes)
+    return ("%s %d %s\n%s"):format(BACKUP_MAGIC, #bytes, vim.fn.sha256(bytes), bytes)
+end
+
+--- The bytes a backup holds, if it proves it is complete: the header parses, the
+--- payload has exactly the length it names, and its checksum matches. nil for
+--- anything else: a missing or garbled header, a short payload, a corrupt one, a
+--- file that is not a backup at all. Whether the payload is a cache is another
+--- question (it must decode).
+---@param text string
+---@return string? payload
+function M.parse_backup(text)
+    local newline = text:find("\n", 1, true)
+    if not newline then return nil end
+    local length, sum = text:sub(1, newline - 1):match("^" .. BACKUP_MAGIC .. " (%d+) (%x+)$")
+    if not length then return nil end
+    local payload = text:sub(newline + 1)
+    if #payload ~= tonumber(length) then return nil end
+    if vim.fn.sha256(payload) ~= sum then return nil end
+    return payload
 end
 
 ---@param file string
@@ -317,7 +354,9 @@ end
 ---@alias cw.cache.BackupState "absent"|"unknown"|"foreign"|"unreadable"|"good"|"unusable"
 
 --- `read_backup`, with a regular file that was read in full sorted into one
---- that decodes (a good copy; `detail` is its bytes) and one that does not.
+--- that is a complete backup of something that decodes (a good copy; `detail` is
+--- that payload, without the header) and one that is not: no header, a short or
+--- corrupt payload, or a payload that does not decode.
 ---@param bak string
 ---@param parse fun(text: string): any?
 ---@return cw.cache.BackupState state
@@ -325,7 +364,8 @@ end
 local function inspect_backup(bak, parse)
     local state, detail = read_backup(bak)
     if state ~= "read" then return state, detail end
-    if parse(detail) ~= nil then return "good", detail end
+    local payload = M.parse_backup(detail)
+    if payload and parse(payload) ~= nil then return "good", payload end
     return "unusable"
 end
 
@@ -363,7 +403,7 @@ local function make_backup(bak, original, mode, state, kind)
         if not ok then return false, ("%s could not be cleared away (%s)"):format(bak, tostring(err)) end
         if state == "foreign" then note = foreign_note(bak, kind) end
     end
-    local ok, err = write_file(bak, original, { mode = mode, exact = true, create = true })
+    local ok, err = write_file(bak, M.frame_backup(original), { mode = mode, exact = true, create = true })
     return ok, err, note
 end
 
@@ -618,10 +658,13 @@ function M.settle(file, parse, main_stat)
     if not main_stat then return nil end
     local state, text = read_backup(bak)
     if state ~= "read" then return nil end
-    local data = parse(text)
+    -- Only a backup that proves it is complete, and only its payload is written back.
+    local payload = M.parse_backup(text)
+    if not payload then return nil end
+    local data = parse(payload)
     if data == nil then return nil end
 
-    local restored, err = write_file(file, text, { identity = main_stat })
+    local restored, err = write_file(file, payload, { identity = main_stat })
     if restored then return data end
     return data, tostring(err)
 end

@@ -27,6 +27,16 @@ local function spit(path, text)
     f:close()
 end
 
+--- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+local function put(path, payload)
+    spit(path, require("codewars.cache.backup").frame_backup(payload))
+end
+
+--- ... and the bytes a backup file holds, nil if it is not a complete backup.
+local function payload_of(path)
+    return require("codewars.cache.backup").parse_backup(slurp(path))
+end
+
 describe("cache.backup, absent caches, unknown backups and deletions", function()
     local config = require("codewars.config")
     local log = require("codewars.logger")
@@ -162,7 +172,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         it("is not recovered, even through a dangling link: nothing is created from a leftover backup", function()
             local target = tmp .. "/real-cache.json"
             uv.fs_symlink(target, file)
-            spit(bak, older)
+            put(bak, older)
 
             assert.is_nil(read())
 
@@ -270,7 +280,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end
 
         it("leaves nothing to recover after a crash partway through creating it", function()
-            spit(bak, older)
+            put(bak, older)
             crash_after_create()
 
             assert.is_false((write({ quiet = true })))
@@ -282,7 +292,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
 
         it("leaves nothing to recover after such a crash when the backup could only be emptied", function()
-            spit(bak, older)
+            put(bak, older)
             unlink_fails()
             crash_after_create()
 
@@ -295,7 +305,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
 
         it("is emptied before the cache is created when it cannot be unlinked, and the write succeeds", function()
-            spit(bak, older)
+            put(bak, older)
             unlink_fails()
             local seen = {}
             uv.fs_write = function(fd, data, offset)
@@ -313,7 +323,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
 
         it("refuses the write, creating nothing, when it can be neither removed nor emptied", function()
-            spit(bak, older)
+            put(bak, older)
             unlink_fails()
             empty_fails()
 
@@ -324,12 +334,12 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             assert.matches(vim.pesc(bak), err)
             assert.matches("delete", err)
             assert.is_nil(uv.fs_lstat(file), "a cache was created beside a backup that could not be dealt with")
-            assert.equals(older, slurp(bak))
+            assert.equals(older, payload_of(bak))
             assert.equals(1, #errors, vim.inspect(errors))
         end)
 
         it("says nothing about refusing when the write is quiet", function()
-            spit(bak, older)
+            put(bak, older)
             unlink_fails()
             empty_fails()
 
@@ -341,7 +351,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
 
         it("is removed, whatever it holds: undecodable, or empty", function()
             for _, held in ipairs({ "{ torn", "" }) do
-                spit(bak, held)
+                put(bak, held)
 
                 assert.is_true((write()))
 
@@ -364,11 +374,11 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             local middle = tmp .. "/middle.json"
             uv.fs_symlink(tmp .. "/nowhere.json", middle)
             uv.fs_symlink(middle, file)
-            spit(bak, older)
+            put(bak, older)
 
             assert.is_false((write()))
 
-            assert.equals(older, slurp(bak), "a backup was discarded though nothing could be written")
+            assert.equals(older, payload_of(bak), "a backup was discarded though nothing could be written")
         end)
 
         it("does not change a plain new cache with no backup beside it", function()
@@ -454,19 +464,19 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         -- Every write over an existing cache is in place, so an interrupted one leaves the
         -- cache present and damaged. An absent cache was deleted, and stays so.
         it("returns nil on a read and touches nothing", function()
-            spit(bak, older)
+            put(bak, older)
             local before = uv.fs_stat(bak)
 
             assert.is_nil(read())
 
             assert.is_nil(uv.fs_lstat(file))
-            assert.equals(older, slurp(bak))
+            assert.equals(older, payload_of(bak))
             assert.equals(before.mtime.nsec, uv.fs_stat(bak).mtime.nsec)
             assert.same({}, warnings)
         end)
 
         it("gets a new cache from the next write, and the stale backup goes", function()
-            spit(bak, older)
+            put(bak, older)
 
             assert.is_true((write()))
 
@@ -475,7 +485,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
 
         it("gets a new cache from the next write, and the stale backup is emptied when it cannot go", function()
-            spit(bak, older)
+            put(bak, older)
             uv.fs_unlink = function(path)
                 if path == bak then return nil, "EPERM: operation not permitted: " .. path, "EPERM" end
                 return real_unlink(path)
@@ -490,7 +500,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
 
         it("still has a damaged cache beside a good backup recovered", function()
             spit(file, "{ torn")
-            spit(bak, older)
+            put(bak, older)
 
             assert.same({ older = string.rep("o", 300) }, read())
             assert.equals(older, slurp(file))
@@ -518,7 +528,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
 
         it("drop unlinks a backup", function()
-            spit(bak, older)
+            put(bak, older)
 
             assert.is_true((backup.drop(P:new(file))))
 
@@ -526,7 +536,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
 
         it("drop empties a backup it cannot unlink, so it can never be recovered from", function()
-            spit(bak, older)
+            put(bak, older)
             unlink_fails()
 
             assert.is_true((backup.drop(P:new(file))))
@@ -536,7 +546,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
 
         it("drop returns false, saying why, when it can neither unlink nor empty it", function()
-            spit(bak, older)
+            put(bak, older)
             unlink_fails()
             empty_fails()
 
@@ -550,7 +560,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         it("a stash is deleted, and stays deleted, when its backup could only be emptied", function()
             local stash = require("codewars.cache.stash").for_kind("t-stash-")
             local path = assert(stash.save({ id = "k1", code = "x" }))
-            spit(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
+            put(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
             bak = path .. ".bak"
             unlink_fails()
 
@@ -563,7 +573,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         it("a stash is deleted, and the user warned, when its backup can be neither removed nor emptied", function()
             local stash = require("codewars.cache.stash").for_kind("t-stash-")
             local path = assert(stash.save({ id = "k1", code = "x" }))
-            spit(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
+            put(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
             bak = path .. ".bak"
             unlink_fails()
             empty_fails()
@@ -583,7 +593,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             vim.fn.mkdir(cache_utils.cache_file("sessions"):absolute(), "p")
             session.save("two-sum", "python", { solutionId = "s1" })
             local path = cache_utils.cache_file("sessions"):joinpath("two-sum_python.json"):absolute()
-            spit(path .. ".bak", vim.json.encode({ solutionId = "s0", cached_at = os.time() }))
+            put(path .. ".bak", vim.json.encode({ solutionId = "s0", cached_at = os.time() }))
             bak = path .. ".bak"
             unlink_fails()
             empty_fails()
@@ -603,7 +613,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             vim.fn.mkdir(cache_utils.cache_file("sessions"):absolute(), "p")
             session.save("two-sum", "python", { solutionId = "s1" })
             local path = cache_utils.cache_file("sessions"):joinpath("two-sum_python.json"):absolute()
-            spit(path .. ".bak", vim.json.encode({ solutionId = "s0", cached_at = os.time() }))
+            put(path .. ".bak", vim.json.encode({ solutionId = "s0", cached_at = os.time() }))
             bak = path .. ".bak"
             unlink_fails()
 
@@ -618,7 +628,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             local dir = cache_utils.cache_file("sessions"):absolute()
             vim.fn.mkdir(dir, "p")
             session.save("a", "python", { solutionId = "1" })
-            spit(dir .. "/a_python.json.bak", "{}")
+            put(dir .. "/a_python.json.bak", "{}")
             bak = dir .. "/a_python.json.bak"
             unlink_fails()
             empty_fails()
@@ -633,7 +643,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             local profile = require("codewars.cache.profile")
             local path = cache_utils.cache_file("profile.json"):absolute()
             spit(path, "{}")
-            spit(path .. ".bak", vim.json.encode({ username = "old" }))
+            put(path .. ".bak", vim.json.encode({ username = "old" }))
             bak = path .. ".bak"
             unlink_fails()
             empty_fails()
@@ -651,7 +661,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             local profile = require("codewars.cache.profile")
             local path = cache_utils.cache_file("profile.json"):absolute()
             spit(path, "{}")
-            spit(path .. ".bak", vim.json.encode({ username = "old" }))
+            put(path .. ".bak", vim.json.encode({ username = "old" }))
             bak = path .. ".bak"
             unlink_fails()
 
@@ -665,7 +675,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             local completed = require("codewars.cache.completed")
             local list = cache_utils.cache_file("completed.json"):absolute()
             spit(list, "{}")
-            spit(list .. ".bak", "{}")
+            put(list .. ".bak", "{}")
             bak = list .. ".bak"
             unlink_fails()
             empty_fails()
@@ -683,7 +693,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             local problemlist = require("codewars.cache.problemlist")
             local list = cache_utils.cache_file("problemlist.json"):absolute()
             spit(list, "{}")
-            spit(list .. ".bak", "{}")
+            put(list .. ".bak", "{}")
             bak = list .. ".bak"
             unlink_fails()
             empty_fails()

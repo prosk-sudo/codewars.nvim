@@ -20,6 +20,16 @@ local function spit(path, text)
     f:close()
 end
 
+--- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+local function put(path, payload)
+    spit(path, require("codewars.cache.backup").frame_backup(payload))
+end
+
+--- ... and the bytes a backup file holds, nil if it is not a complete backup.
+local function payload_of(path)
+    return require("codewars.cache.backup").parse_backup(slurp(path))
+end
+
 describe("cache.backup, a file that was created and then failed", function()
     local config = require("codewars.config")
     local log = require("codewars.logger")
@@ -166,9 +176,9 @@ describe("cache.backup, a file that was created and then failed", function()
             end
         end
 
-        it("empties a fresh backup first, so the prefix of the copy is never recovered", function()
+        it("empties a fresh backup first, so no part of the copy is left behind", function()
             spit(file, number) -- a good cache, and one whose copy has a valid prefix
-            fails_after_a_valid_prefix_and_cannot_unlink(number, bak)
+            fails_after_a_valid_prefix_and_cannot_unlink(backup.frame_backup(number), bak)
 
             local ok, err = cache_utils.write_json(P:new(file), 1, { quiet = true })
 
@@ -179,7 +189,7 @@ describe("cache.backup, a file that was created and then failed", function()
             assert.matches("could not be removed", err)
             assert.matches("emptied", err)
             assert.equals(number, slurp(file))
-            assert.equals(0, uv.fs_stat(bak).size, "a partial backup was left holding a valid prefix")
+            assert.equals(0, uv.fs_stat(bak).size, "a partial backup was left holding the start of the copy")
             spit(file, "{ torn") -- the cache is damaged later
             assert.is_nil(cache_utils.read_json(P:new(file)), "the prefix of a failed backup was recovered as the cache")
         end)
@@ -272,7 +282,7 @@ describe("cache.backup, a file that was created and then failed", function()
         end)
 
         it("is not unlinked when a backup that cannot be unlinked cannot be examined to be emptied", function()
-            spit(bak, original)
+            put(bak, original)
             uv.fs_unlink = function(path)
                 if path == bak then return nil, "EPERM: operation not permitted: " .. path, "EPERM" end
                 return real_unlink(path)
@@ -282,7 +292,7 @@ describe("cache.backup, a file that was created and then failed", function()
             local ok = backup.drop(P:new(file))
 
             assert.is_false(ok)
-            assert.equals(original, slurp(bak), "an existing backup was unlinked or changed")
+            assert.equals(original, payload_of(bak), "an existing backup was unlinked or changed")
         end)
     end)
 end)

@@ -25,6 +25,16 @@ local function spit(path, text)
     f:close()
 end
 
+--- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+local function put(path, payload)
+    spit(path, require("codewars.cache.backup").frame_backup(payload))
+end
+
+--- ... and the bytes a backup file holds, nil if it is not a complete backup.
+local function payload_of(path)
+    return require("codewars.cache.backup").parse_backup(slurp(path))
+end
+
 describe("cache.utils, the cache file", function()
     local config = require("codewars.config")
     local log = require("codewars.logger")
@@ -111,7 +121,7 @@ describe("cache.utils, the cache file", function()
 
             it(("is not recovered over by a read, and neither file is touched (%s error)"):format(how), function()
                 spit(file, newer) -- good, and newer than the backup an interrupted write left
-                spit(bak, older)
+                put(bak, older)
                 local file_sec, file_nsec = times(file)
                 local bak_sec, bak_nsec = times(bak)
                 if make_unreadable() == false then return pending("running as a user that ignores file modes") end
@@ -122,7 +132,7 @@ describe("cache.utils, the cache file", function()
                 uv.fs_chmod(file, 420)
                 assert.is_nil(data)
                 assert.equals(newer, slurp(file), "the newer cache was replaced by the older backup")
-                assert.equals(older, slurp(bak))
+                assert.equals(older, payload_of(bak))
                 assert.same({ file_sec, file_nsec }, { times(file) })
                 assert.same({ bak_sec, bak_nsec }, { times(bak) })
                 assert.same({}, warnings)
@@ -130,7 +140,7 @@ describe("cache.utils, the cache file", function()
 
             it(("makes a write refuse, with neither file touched (%s error)"):format(how), function()
                 spit(file, newer)
-                spit(bak, older)
+                put(bak, older)
                 local file_sec, file_nsec = times(file)
                 if make_unreadable() == false then return pending("running as a user that ignores file modes") end
 
@@ -141,7 +151,7 @@ describe("cache.utils, the cache file", function()
                 assert.is_false(ok)
                 assert.matches("could not back up", err)
                 assert.equals(newer, slurp(file))
-                assert.equals(older, slurp(bak), "the backup was replaced though the cache could not be read")
+                assert.equals(older, payload_of(bak), "the backup was replaced though the cache could not be read")
                 assert.same({ file_sec, file_nsec }, { times(file) })
                 assert.equals(1, #errors, vim.inspect(errors))
             end)
@@ -149,19 +159,19 @@ describe("cache.utils, the cache file", function()
 
         it("is still recovered from when it was read in full and is damaged", function()
             spit(file, "{ torn")
-            spit(bak, older)
+            put(bak, older)
 
             assert.same({ older = string.rep("o", 300) }, read())
             assert.equals(older, slurp(file))
         end)
 
         it("is not recovered when it is absent: the backup of a deleted cache does not bring it back", function()
-            spit(bak, older)
+            put(bak, older)
 
             assert.is_nil(read())
 
             assert.is_nil(uv.fs_lstat(file))
-            assert.equals(older, slurp(bak))
+            assert.equals(older, payload_of(bak))
         end)
     end)
 
@@ -206,14 +216,14 @@ describe("cache.utils, the cache file", function()
             assert.is_true(has(opens[1].flags, bit.bor(C.O_CREAT, C.O_EXCL)), "a new cache is created exclusively")
 
             spit(file, "{ torn")
-            spit(bak, older)
+            put(bak, older)
             opens = record_write_opens()
             read() -- recovery over a damaged cache
             assert_never_blocking_or_truncating(opens)
             assert.is_false(has(opens[1].flags, C.O_CREAT))
 
             uv.fs_unlink(file)
-            spit(bak, older)
+            put(bak, older)
             opens = record_write_opens()
             read() -- a cache that is not there is not recovered: nothing is opened for writing
             assert.same({}, opens)
@@ -271,7 +281,7 @@ describe("cache.utils, the cache file", function()
 
             it(("refuses recovery, before truncating, when the descriptor %s"):format(name), function()
                 spit(file, "{ torn")
-                spit(bak, older)
+                put(bak, older)
                 local done = descriptor_says(change)
 
                 local data = read()
@@ -280,7 +290,7 @@ describe("cache.utils, the cache file", function()
                 assert.is_false(done.truncated or done.written, "the file was truncated or written after failing the check")
                 assert.same({ older = string.rep("o", 300) }, data, "the recovered data is still returned")
                 assert.equals("{ torn", slurp(file))
-                assert.equals(older, slurp(bak))
+                assert.equals(older, payload_of(bak))
             end)
         end
 
@@ -325,7 +335,7 @@ end
 
             local res = in_child(child_body(([[
 spit(FILE, "{ torn")
-spit(BAK, %s)
+spit(BAK, backup.frame_backup(%s))
 local state, _, stat = backup.read_main(FILE)
 swap_on_open_for_writing()
 local data, err = backup.settle(FILE, parse, stat)
@@ -403,7 +413,7 @@ print("RESULT", tostring(ok), tostring(err), uv.fs_lstat(BAK) and "bak" or "noba
 
         it("is emptied too when it is the good copy the write kept", function()
             spit(file, "{ torn")
-            spit(bak, older)
+            put(bak, older)
             unlink_fails()
 
             assert.is_true((write()))
@@ -413,7 +423,7 @@ print("RESULT", tostring(ok), tostring(err), uv.fs_lstat(BAK) and "bak" or "noba
         end)
 
         it("is emptied too when a new file lands beside it", function()
-            spit(bak, older)
+            put(bak, older)
             unlink_fails()
 
             assert.is_true((write()))

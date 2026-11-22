@@ -21,6 +21,16 @@ local function spit(path, text)
     f:close()
 end
 
+--- A backup file holding `payload`, as the plugin writes one (a header line, then the bytes) ...
+local function put(path, payload)
+    spit(path, require("codewars.cache.backup").frame_backup(payload))
+end
+
+--- ... and the bytes a backup file holds, nil if it is not a complete backup.
+local function payload_of(path)
+    return require("codewars.cache.backup").parse_backup(slurp(path))
+end
+
 describe("cache backups", function()
     local config = require("codewars.config")
     local log = require("codewars.logger")
@@ -52,42 +62,42 @@ describe("cache backups", function()
 
         it("recovers from the backup when the file fails to decode", function()
             spit(file, '{"kept": "ye')
-            spit(bak, good)
+            put(bak, good)
 
             assert.same({ kept = "yes" }, read())
 
             assert.equals(good, slurp(file), "the backup was not written back")
-            assert.equals(good, slurp(bak), "a reader removed the backup; only a writer does")
+            assert.equals(good, payload_of(bak), "a reader removed the backup; only a writer does")
             assert.equals(1, #warnings, vim.inspect(warnings))
         end)
 
         it("recovers from the backup when the file is empty", function()
             spit(file, "")
-            spit(bak, good)
+            put(bak, good)
 
             assert.same({ kept = "yes" }, read())
             assert.equals(good, slurp(file))
-            assert.equals(good, slurp(bak), "a reader removed the backup; only a writer does")
+            assert.equals(good, payload_of(bak), "a reader removed the backup; only a writer does")
         end)
 
         -- A cache that is absent was deleted (by the plugin, or by hand): every write
         -- over an existing cache is in place, so an interrupted one leaves it present
         -- and damaged, never absent. A leftover backup must not bring it back.
         it("does nothing when the file is missing: a leftover backup does not bring a deleted cache back", function()
-            spit(bak, good)
+            put(bak, good)
             local before = uv.fs_stat(bak)
 
             assert.is_nil(read())
 
             assert.is_nil(uv.fs_lstat(file), "a deleted cache was recreated from its backup")
-            assert.equals(good, slurp(bak))
+            assert.equals(good, payload_of(bak))
             assert.equals(before.mtime.nsec, uv.fs_stat(bak).mtime.nsec)
             assert.same({}, warnings)
         end)
 
         it("says so once, not on every read", function()
             spit(file, "")
-            spit(bak, good)
+            put(bak, good)
 
             read()
             read()
@@ -99,31 +109,31 @@ describe("cache backups", function()
         -- a file that reads fine is no proof that the backup is stale.
         it("leaves the backup alone when the file decodes fine", function()
             spit(file, vim.json.encode({ kept = "newer" }))
-            spit(bak, good)
+            put(bak, good)
 
             assert.same({ kept = "newer" }, read())
 
-            assert.equals(good, slurp(bak), "a reader removed a backup that may be in use")
+            assert.equals(good, payload_of(bak), "a reader removed a backup that may be in use")
             assert.same({}, warnings)
         end)
 
         it("does not use a backup that is a symlink, and does not touch its target", function()
             local target = tmp .. "/elsewhere.json"
-            spit(target, good)
+            put(target, good)
             spit(file, "{ torn")
             uv.fs_symlink(target, bak)
 
             assert.is_nil(read())
 
             assert.equals("{ torn", slurp(file))
-            assert.equals(good, slurp(target))
+            assert.equals(good, payload_of(target))
             assert.equals("link", uv.fs_lstat(bak).type)
         end)
 
         for _, how in ipairs({ "open fails", "mode" }) do
             it(("does nothing when the backup cannot be read (%s): it may be the one good copy"):format(how), function()
                 spit(file, "{ torn")
-                spit(bak, good)
+                put(bak, good)
                 local real_open = uv.fs_open
                 if how == "mode" then
                     uv.fs_chmod(bak, 0)
@@ -144,7 +154,7 @@ describe("cache backups", function()
                 uv.fs_chmod(bak, 420)
                 assert.is_nil(data)
                 assert.equals("{ torn", slurp(file))
-                assert.equals(good, slurp(bak))
+                assert.equals(good, payload_of(bak))
                 assert.same({}, warnings)
             end)
         end
@@ -160,7 +170,7 @@ describe("cache backups", function()
 
         it("does not use a backup that does not decode either", function()
             spit(file, "{ torn")
-            spit(bak, "{ also torn")
+            put(bak, "{ also torn")
 
             assert.is_nil(read())
 
@@ -211,7 +221,7 @@ describe("cache backups", function()
             local backup = require("codewars.cache.backup")
             local file = tmp .. "/gone.json"
             spit(file, "{}")
-            spit(file .. ".bak", vim.json.encode({ back = true }))
+            put(file .. ".bak", vim.json.encode({ back = true }))
 
             vim.fn.delete(file)
             backup.drop(P:new(file))
@@ -223,7 +233,7 @@ describe("cache backups", function()
         it("drops a backup that has no cache beside it just the same", function()
             local backup = require("codewars.cache.backup")
             local file = tmp .. "/gone.json"
-            spit(file .. ".bak", "{}")
+            put(file .. ".bak", "{}")
 
             backup.drop(P:new(file))
 
@@ -233,7 +243,7 @@ describe("cache backups", function()
         it("does not bring a deleted stash back", function()
             local stash = require("codewars.cache.stash").for_kind("t-stash-")
             local path = assert(stash.save({ id = "k1", code = "x" }))
-            spit(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
+            put(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
 
             assert.is_true(stash.delete("k1"))
 
@@ -246,7 +256,7 @@ describe("cache backups", function()
             sessions_dir()
             session.save("two-sum", "python", { solutionId = "s1" })
             local path = cache_utils.cache_file("sessions"):joinpath("two-sum_python.json"):absolute()
-            spit(path .. ".bak", vim.json.encode({ solutionId = "s0", cached_at = os.time() }))
+            put(path .. ".bak", vim.json.encode({ solutionId = "s0", cached_at = os.time() }))
 
             session.delete("two-sum", "python")
 
@@ -258,7 +268,7 @@ describe("cache backups", function()
             local profile = require("codewars.cache.profile")
             local path = cache_utils.cache_file("profile.json"):absolute()
             spit(path, "{}")
-            spit(path .. ".bak", vim.json.encode({ username = "old" }))
+            put(path .. ".bak", vim.json.encode({ username = "old" }))
 
             profile.clear()
 
@@ -273,8 +283,8 @@ describe("cache backups", function()
             local dir = sessions_dir()
             session.save("a", "python", { solutionId = "1" })
             session.save("b", "python", { solutionId = "2" })
-            spit(dir .. "/a_python.json.bak", "{}")
-            spit(dir .. "/orphan_python.json.bak", "{}")
+            put(dir .. "/a_python.json.bak", "{}")
+            put(dir .. "/orphan_python.json.bak", "{}")
 
             assert.equals(2, session.clear_all())
 
@@ -285,8 +295,8 @@ describe("cache backups", function()
             local session = require("codewars.cache.session")
             local dir = sessions_dir()
             session.save("a", "python", { solutionId = "1" })
-            spit(dir .. "/a_python.json.bak", "{}")
-            spit(dir .. "/orphan_python.json.bak", "{}")
+            put(dir .. "/a_python.json.bak", "{}")
+            put(dir .. "/orphan_python.json.bak", "{}")
 
             assert.equals(1, session.count())
         end)
