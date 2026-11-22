@@ -538,7 +538,8 @@ function KataEditor:adopt(model)
         model.code_challenge.description, self.versions)
 end
 
---- Lock or unlock every pane; locked while any request is in flight.
+--- Lock or unlock every pane. set_state locks them in the saving, publishing,
+--- unpublishing, deleting and deleted states, not during the language-ID readback.
 ---@param locked boolean
 function KataEditor:set_panes_locked(locked)
     ui_utils.set_bufs_modifiable(vim.tbl_values(self.bufs or {}), locked)
@@ -558,7 +559,8 @@ end
 ---@type table<string, string>
 local requests_in_flight = {}
 
---- `kstate.step` that also honours a request in flight from another workspace.
+--- `kstate.step` that also honours an unpublish or delete in flight from another
+--- workspace of the same kata.
 ---@param action string
 ---@return string? next_state
 ---@return string? err
@@ -573,8 +575,8 @@ function KataEditor:_apply_unpublished()
     self:refresh_title()
 end
 
---- Apply a finished delete: lock for good. No snapshot or close, so unsaved
---- text still goes through _unmount's stash-or-rescue.
+--- Apply a finished delete: lock for good. No snapshot or close, so a later close
+--- of unsaved text still goes through _unmount's stash-or-rescue.
 function KataEditor:_apply_deleted()
     self:set_state(kstate.step("deleting", "delete_done")) -- "deleted"
     self:refresh_title()

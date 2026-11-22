@@ -555,7 +555,7 @@ describe("cmd.focus", function()
         trainer_hold = false
         for _, resolve in ipairs(held_fetches) do resolve() end
 
-        -- The in-flight flag lives in the command module; left set it blocks every focus.
+        -- The in-flight flag lives in the command module; left set it blocks later fetches.
         cmd.focus({ _positional = { "python", "rank_up" } })
         assert.are.equal(2, #trainer_calls)
         assert.are.equal(1, #mounts)

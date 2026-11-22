@@ -134,7 +134,7 @@ describe("closing with unsaved work", function()
     end)
 
     it("keeps a rescued pane modified even after the workspace's :w cleared it", function()
-        -- The pane's :w only clears 'modified'; a rescued copy never reached a file.
+        -- The pane's :w clears 'modified' without writing; the rescued copy was never written.
         local m = model()
         m.id = "../../not-an-id" -- refused by the stash
         ws = KataEditor:new(m):mount()

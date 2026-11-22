@@ -53,7 +53,7 @@ describe("closing a dirty kumite", function()
     after_each(cleanup)
 
     it("keeps the fixture as well as the code when the stash is refused", function()
-        -- A server reply can carry any id; the stash refuses a non-Codewars one.
+        -- A server reply can carry any id; the stash refuses an invalid one.
         local ws = open("../../not-an-id")
         close(ws)
         assert.is_not_nil(buffer_holding(EDITED_CODE), "the code buffer was destroyed")
@@ -80,8 +80,8 @@ describe("closing a dirty kumite", function()
     end)
 
     it("keeps a rescued buffer modified even after the workspace's :w cleared it", function()
-        -- The workspace's :w only clears 'modified'. A rescued buffer never reached
-        -- a file, so it must stay modified: that makes :bdelete refuse (E89).
+        -- The workspace's :w clears 'modified' without writing. A rescued buffer never
+        -- reached a file, so it must stay modified: that makes :bdelete refuse (E89).
         local ws = open("../../not-an-id")
         for _, bufnr in ipairs({ ws.bufnr, ws.fixture_split.bufnr }) do
             vim.api.nvim_buf_call(bufnr, function()

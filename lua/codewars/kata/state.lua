@@ -20,7 +20,7 @@ local state_machine = require("codewars.state_machine")
 --- Saving never changes publication, so `saving` reverts to whichever state
 --- entered it — that is why save_done is REVERT and not a fixed state.
 ---
---- Unpublishing and deleting lock every other action until the reply lands; a
+--- Unpublishing and deleting refuse every other action until the reply lands; a
 --- failure reverts. `deleted` is terminal, so a pending prompt cannot act on a gone kata.
 local REVERT = state_machine.REVERT
 

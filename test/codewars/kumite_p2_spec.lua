@@ -131,7 +131,7 @@ describe("cache.kumite_stash", function()
         for k in pairs(store) do store[k] = nil end
     end)
 
-    -- The stash only takes Codewars ids (24 hex characters).
+    -- The stash takes 24-hex Codewars ids (or local-<ms> ones).
     local ID = "5a1b2c3d4e5f60718293a4b5"
     local OTHER_ID = "6b2c3d4e5f60718293a4b5c6"
 

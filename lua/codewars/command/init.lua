@@ -804,8 +804,8 @@ local _last_focus = nil ---@type { lang: string, category: string, slug: string?
 -- reply (like the picker's _kumite_gen).
 local _focus_gen = 0
 
---- True once forget_focus has run since `gen`. The trainer polls it before each
---- request, since later ones go out under the new account.
+--- True once forget_focus has run since `gen`. The trainer polls it between
+--- requests, since later ones go out under the new account.
 ---@param gen integer
 ---@return fun(): boolean
 local function focus_cancelled(gen)

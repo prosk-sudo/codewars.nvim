@@ -166,7 +166,7 @@ function utils.rescue_or_delete(bufnr, rescue_label)
         return
     end
     if rescue_label then
-        -- Drop the workspace's :w handler (it only clears 'modified'). By id: a
+        -- Drop the workspace's :w handler (it clears 'modified' without writing). By id: a
         -- group-less nvim_clear_autocmds skips autocmds that are in a group.
         for _, autocmd in ipairs(vim.api.nvim_get_autocmds({ event = "BufWriteCmd", buffer = bufnr })) do
             pcall(vim.api.nvim_del_autocmd, autocmd.id)
