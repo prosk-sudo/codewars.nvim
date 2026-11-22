@@ -11,6 +11,8 @@ local ui_utils = require("codewars-ui.utils")
 ---@field comments_popup NuiPopup? comment thread, toggled with `c`
 ---@field show_comments boolean
 ---@field focus "code"|"comments"
+---@field id integer                 names this popup's resize augroup
+---@field _resize_group integer?     VimResized augroup, present while mounted
 local Solutions = {}
 Solutions.__index = Solutions
 
@@ -22,6 +24,9 @@ local HEIGHT = 0.7
 local COMMENTS_SHARE = 0.4
 local INFO_HEIGHT = 1
 local BORDER = 2 -- rows a bordered popup costs beyond its content
+local MIN_CONTENT = 1
+local MIN_PANE = MIN_CONTENT + BORDER
+local MIN_STACK = 2 * MIN_PANE
 
 -- Vote keys. Deliberately two-key: `b` and `v` are what a reader presses
 -- reflexively in a code buffer (back a word, visual select), and a vote
@@ -30,6 +35,8 @@ Solutions.KEY_BEST_PRACTICE = "gb"
 Solutions.KEY_CLEVER = "gv"
 
 local INFO_NS = vim.api.nvim_create_namespace("codewars_solutions_info")
+
+local instances = 0 -- popups created so far; each gets its own resize augroup
 
 function Solutions:show()
     if #self.solutions == 0 then
@@ -127,28 +134,37 @@ end
 --- comments pane under it (the info box gives way, its hints move into the
 --- comments title). Sized from the editor and CLAMPED to it: the box is
 --- at least wide enough for the info line (so its hints are never cut
---- off) and never taller than the screen or placed above row 0.
+--- off), and the stack never starts above row 0 or ends below the last usable
+--- row. Every `row` is a CONTENT row: nui draws the border at `row - 1`.
+--- Under MIN_STACK rows the second pane is nil; under MIN_PANE rows all three
+--- are nil and the caller must not open a popup.
 ---@param sol cw.Solution? the solution whose info line sets the minimum width
----@return table code_geom, table? info_geom, table? comments_geom
+---@return table? code_geom, table? info_geom, table? comments_geom
 function Solutions:geometry(sol)
     local cols, rows = vim.o.columns, vim.o.lines - vim.o.cmdheight
+    if rows < MIN_PANE then return nil, nil, nil end
     local min_width = sol and (vim.fn.strdisplaywidth(self:info_line(sol)) + 2) or 20
     local width = math.max(20, math.floor(cols * WIDTH), math.min(min_width, cols - BORDER))
     width = math.min(width, math.max(1, cols - BORDER))
     local col = math.max(0, math.floor((cols - width) / 2))
 
-    local total = math.min(math.max(6, math.floor(rows * HEIGHT)), math.max(1, rows))
-    local row = math.max(0, math.floor((rows - total) / 2))
+    local total = math.min(math.max(MIN_STACK, math.floor(rows * HEIGHT)), rows)
+    -- At least 1: the top border sits at `row - 1`, which must not be off screen.
+    local row = math.max(1, math.floor((rows - total) / 2))
+
+    if total < MIN_STACK then
+        return { width = width, height = total - BORDER, row = row, col = col }, nil, nil
+    end
 
     if self.show_comments then
-        local inner = math.max(2, total - 2 * BORDER)
-        local comments_h = math.max(1, math.floor(inner * COMMENTS_SHARE))
-        local code_h = math.max(1, inner - comments_h)
+        local inner = total - 2 * BORDER
+        local comments_h = math.max(MIN_CONTENT, math.floor(inner * COMMENTS_SHARE))
+        local code_h = math.max(MIN_CONTENT, inner - comments_h)
         return { width = width, height = code_h, row = row, col = col }, nil,
             { width = width, height = comments_h, row = row + code_h + BORDER, col = col }
     end
 
-    local code_h = math.max(1, total - INFO_HEIGHT - 2 * BORDER)
+    local code_h = total - INFO_HEIGHT - 2 * BORDER
     return { width = width, height = code_h, row = row, col = col },
         { width = width, height = INFO_HEIGHT, row = row + code_h + BORDER, col = col }, nil
 end
@@ -215,6 +231,11 @@ function Solutions:render()
 
     local sol = self.solutions[self.index]
     local code_geom, info_geom, comments_geom = self:geometry(sol)
+    if not code_geom then
+        -- Nothing fits: the panes are already unmounted, so stop watching resizes.
+        self:_unwatch_resize()
+        return log.warn("Not enough room to show solutions; make the window taller")
+    end
 
     self.popup = make_popup(code_geom, (" Solution %d/%d "):format(self.index, #self.solutions))
     self.popup:mount()
@@ -246,8 +267,68 @@ function Solutions:render()
         self:_bind(self.comments_popup.bufnr)
     end
 
+    self:_watch_resize()
     local target = (self.focus == "comments" and self.comments_popup) or self.popup
     vim.api.nvim_set_current_win(target.winid)
+end
+
+--- Re-lay out the panes on VimResized while mounted. One augroup per instance,
+--- made only if absent, so re-rendering never stacks a second autocmd.
+function Solutions:_watch_resize()
+    if self._resize_group then return end
+    self._resize_group = vim.api.nvim_create_augroup("codewars_solutions_" .. self.id, { clear = true })
+    -- Global, not buffer-local: VimResized is not tied to any buffer.
+    vim.api.nvim_create_autocmd("VimResized", {
+        group = self._resize_group,
+        callback = function() self:relayout() end,
+    })
+end
+
+function Solutions:_unwatch_resize()
+    if not self._resize_group then return end
+    pcall(vim.api.nvim_del_augroup_by_id, self._resize_group)
+    self._resize_group = nil
+end
+
+--- True when the pane has a live window (nui nils `winid` when it closes).
+---@param popup NuiPopup?
+---@return boolean
+local function on_screen(popup)
+    return popup ~= nil and popup.winid ~= nil and vim.api.nvim_win_is_valid(popup.winid)
+end
+
+--- A pane's window view (cursor, scroll), or nil if it is not on screen.
+---@param popup NuiPopup?
+---@return table?
+local function save_view(popup)
+    if not on_screen(popup) then return nil end
+    return vim.api.nvim_win_call(popup.winid, vim.fn.winsaveview)
+end
+
+---@param popup NuiPopup?
+---@param view table?
+local function restore_view(popup, view)
+    if not view or not on_screen(popup) then return end
+    vim.api.nvim_win_call(popup.winid, function() vim.fn.winrestview(view) end)
+end
+
+--- Re-render for the current editor size, keeping the solution, the cursor and
+--- scroll of the code and comments panes, and the focused pane.
+function Solutions:relayout()
+    if not on_screen(self.popup) then
+        -- The panes went away some other way: nothing to lay out.
+        return self:_unwatch_resize()
+    end
+    local current = vim.api.nvim_get_current_win()
+    if on_screen(self.comments_popup) and current == self.comments_popup.winid then
+        self.focus = "comments"
+    elseif current == self.popup.winid then
+        self.focus = "code"
+    end
+    local code_view, comments_view = save_view(self.popup), save_view(self.comments_popup)
+    self:render()
+    restore_view(self.popup, code_view)
+    restore_view(self.comments_popup, comments_view)
 end
 
 --- True when `bufnr` belongs to one of our panes.
@@ -342,6 +423,12 @@ function Solutions:toggle_comments()
     self.show_comments = not self.show_comments
     self.focus = self.show_comments and "comments" or "code"
     self:render()
+    -- Comments did not fit: revert to "closed" so the next press asks again.
+    if self.show_comments and self.popup and not self.comments_popup then
+        self.show_comments = false
+        self.focus = "code"
+        log.info("Not enough room to show comments; make the window taller")
+    end
 end
 
 function Solutions:switch_pane()
@@ -369,6 +456,7 @@ end
 
 function Solutions:close()
     self:_unmount_popups()
+    self:_unwatch_resize()
 end
 
 --- Accepts structured solutions (cw.Solution[]) or, for older callers
@@ -388,7 +476,9 @@ function Solutions:new(solutions, language)
             items[#items + 1] = s
         end
     end
+    instances = instances + 1
     return setmetatable({
+        id = instances,
         solutions = items,
         language = language,
         index = 1,

@@ -68,6 +68,22 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- A kata description with one tag nested inside another of the same name,
+  such as a blockquote in a blockquote, no longer leaves broken markup behind.
+  The converter ended the outer tag at the first closing tag it met; it now
+  pairs each closing tag with its own opener, so nested quotes render as `>`
+  and `> >` and nested list items are all kept. A tag with no partner is left
+  as written, and so is nesting more than 64 levels deep. Malformed markup
+  renders in time proportional to its length: tens of thousands of nested or
+  unfinished tags (`<b ` with no `>`, for one) no longer stall the render for
+  seconds (#30).
+- The solutions popup no longer runs off the screen on a very short editor.
+  When there is no room for both panes it drops the info box (or the
+  comments pane) and keeps the code, and it never starts above the top row.
+  On an editor too short for even one pane it says so instead of opening,
+  and `c` says when the comments do not fit. Resizing the terminal while the
+  popup is open lays it out again for the new size instead of leaving it
+  where it was, keeping your solution, cursor and focused pane (#29).
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

@@ -150,3 +150,278 @@ describe("markdown.from_html passthrough", function()
         assert.is_nil(out:find("CWMD", 1, true))
     end)
 end)
+
+-- An inner same-name closer must not end the outer construct.
+describe("markdown.from_html nested same-name tags", function()
+    local function lines(text)
+        return vim.split(vim.trim(text), "\n", { plain = true })
+    end
+
+    it("renders a nested blockquote as > and > > lines", function()
+        local out = md.from_html("<blockquote>a<blockquote>b</blockquote>c</blockquote>")
+        assert.are.same({ "> a", ">", "> > b", ">", "> c" }, lines(out))
+        assert.is_nil(out:find("blockquote", 1, true))
+    end)
+
+    it("nests a blockquote three deep", function()
+        local out = md.from_html(
+            "<blockquote>a<blockquote>b<blockquote>c</blockquote></blockquote></blockquote>")
+        assert.are.same({ "> a", ">", "> > b", "> >", "> > > c" }, lines(out))
+    end)
+
+    it("pairs an outer opener that has attributes with the inner one that has none", function()
+        local out = md.from_html('<blockquote class="hint">a<blockquote>b</blockquote></blockquote>')
+        assert.are.same({ "> a", ">", "> > b" }, lines(out))
+        out = md.from_html('<blockquote>a<blockquote cite="x">b</blockquote>c</blockquote>')
+        assert.are.same({ "> a", ">", "> > b", ">", "> c" }, lines(out))
+    end)
+
+    it("converts the markup inside the inner and the outer construct", function()
+        local out = md.from_html(
+            "<blockquote>be <b>careful</b><blockquote>inner <i>note</i></blockquote></blockquote>")
+        assert.are.same({ "> be **careful**", ">", "> > inner *note*" }, lines(out))
+    end)
+
+    it("keeps every item of a nested list", function()
+        local out = md.from_html("<ul><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ul>")
+        for _, item in ipairs({ "a", "b", "c", "d" }) do
+            assert.truthy(out:find("- " .. item, 1, true), "missing item " .. item)
+        end
+        assert.is_nil(out:find("<li", 1, true))
+        assert.is_nil(out:find("</li>", 1, true))
+        assert.is_nil(out:find("<ul", 1, true))
+        assert.is_nil(out:find("</ul>", 1, true))
+        assert.is_true(out:find("- a", 1, true) < out:find("- b", 1, true))
+        assert.is_true(out:find("- c", 1, true) < out:find("- d", 1, true))
+    end)
+
+    it("handles a string replacement (%1) through nesting, with or without attributes", function()
+        assert.are.equal("**x**y**z**", md.from_html("<b>x<b>y</b>z</b>"))
+        assert.are.equal("*x*y*z*", md.from_html('<i class="a">x<i>y</i>z</i>'))
+        assert.are.equal("**x**y**z**", md.from_html('<b>x<b class="n">y</b>z</b>'))
+    end)
+
+    it("still converts siblings, in both replacement forms", function()
+        assert.are.equal("**x** and **y**", md.from_html("<b>x</b> and <b>y</b>"))
+        local out = md.from_html("<blockquote>one</blockquote>between<blockquote>two</blockquote>")
+        assert.are.same({ "> one", "", "between", "", "> two" }, lines(out))
+        local pre = md.from_html("<pre>a</pre> text <pre>b</pre>")
+        assert.are.equal(4, select(2, pre:gsub("```", "")))
+        assert.truthy(pre:find("text", 1, true))
+    end)
+
+    it("does not count a longer tag name as a nested opener", function()
+        assert.are.equal("**a<bool>c</bool>**", md.from_html("<b>a<bool>c</bool></b>"))
+    end)
+
+end)
+
+-- Nesting deeper than MAX_NEST_DEPTH (64, in markdown.lua) is left as written.
+describe("markdown.from_html nesting depth cap", function()
+    local CAP = 64
+
+    local function bold(depth, inner)
+        return ("<b>"):rep(depth) .. inner .. ("</b>"):rep(depth)
+    end
+
+    it("converts nesting up to the cap in full", function()
+        assert.are.equal(("**"):rep(CAP) .. "x" .. ("**"):rep(CAP), md.from_html(bold(CAP, "x")))
+        local out = md.from_html(("<blockquote>"):rep(CAP) .. "x" .. ("</blockquote>"):rep(CAP))
+        assert.are.equal(("> "):rep(CAP) .. "x", vim.trim(out))
+    end)
+
+    it("leaves the one tag past the cap as written, paired with its own closer", function()
+        assert.are.equal(
+            ("**"):rep(CAP) .. "<b>x</b>" .. ("**"):rep(CAP),
+            md.from_html(bold(CAP + 1, "x")))
+        local out = md.from_html(("<blockquote>"):rep(CAP + 1) .. "x" .. ("</blockquote>"):rep(CAP + 1))
+        assert.are.equal(("> "):rep(CAP) .. "<blockquote>x</blockquote>", vim.trim(out))
+    end)
+
+    it("leaves every tag past the cap as written, however many there are", function()
+        local extra = 19936
+        local out = md.from_html(bold(CAP + extra, "x"))
+        assert.are.equal(
+            ("**"):rep(CAP) .. ("<b>"):rep(extra) .. "x" .. ("</b>"):rep(extra) .. ("**"):rep(CAP),
+            out)
+    end)
+
+    it("converts what follows a too-deep run as if the run had closed", function()
+        local out = md.from_html(bold(CAP + 6, "x") .. " and " .. bold(1, "y"))
+        assert.are.equal(
+            ("**"):rep(CAP) .. ("<b>"):rep(6) .. "x" .. ("</b>"):rep(6) .. ("**"):rep(CAP) .. " and **y**",
+            out)
+    end)
+
+    it("renders tens of thousands of nested tags without stalling", function()
+        local uv = vim.uv or vim.loop
+        local src = bold(100000, "x")
+        local started = uv.hrtime()
+        local out = md.from_html(src)
+        local elapsed_ms = (uv.hrtime() - started) / 1e6
+        assert.are.equal(("**"):rep(CAP), out:sub(1, 2 * CAP))
+        -- Loose bound for slow machines; the specs above are the exact guard.
+        assert.is_true(elapsed_ms < 1500, ("took %d ms"):format(elapsed_ms))
+    end)
+end)
+
+-- Conversion must finish and never raise; an unpaired `<b>`, `<blockquote>` or `<li>` stays as text.
+describe("markdown.from_html unbalanced tags", function()
+    local function lines(text)
+        return vim.split(vim.trim(text), "\n", { plain = true })
+    end
+
+    it("leaves an unclosed tag as text", function()
+        for _, src in ipairs({
+            "<b>never closed",
+            "<blockquote>never closed",
+            "<li>one<li>two",
+            '<b class="x">never closed',
+        }) do
+            assert.are.equal(src, md.from_html(src))
+        end
+    end)
+
+    it("leaves a closing tag with no opener as text", function()
+        for _, src in ipairs({ "a</b>b", "</blockquote>", "x</li>y" }) do
+            assert.are.equal(src, md.from_html(src))
+        end
+        assert.are.equal("</b>**x**", md.from_html("</b><b>x</b>"))
+        assert.are.equal("**x**</b>", md.from_html("<b>x</b></b>"))
+    end)
+
+    it("converts the balanced inner pair when the outer opener has no closer", function()
+        assert.are.equal("<b>a**b**", md.from_html("<b>a<b>b</b>"))
+        local out = md.from_html("<blockquote>a<blockquote>b</blockquote>")
+        assert.are.same({ "<blockquote>a", "", "> b" }, lines(out))
+    end)
+
+    it("converts the balanced pair when the extra closer comes first or last", function()
+        assert.are.equal("**a**b</b>", md.from_html("<b>a</b>b</b>"))
+        local out = md.from_html("<blockquote>a</blockquote>b</blockquote>")
+        assert.are.same({ "> a", "", "b</blockquote>" }, lines(out))
+    end)
+
+    it("finishes on a long run of unmatched tags", function()
+        local openers = ("<b>"):rep(5000)
+        assert.are.equal(openers, md.from_html(openers))
+        local closers = ("</b>"):rep(5000)
+        assert.are.equal(closers, md.from_html(closers))
+        local quotes = ("<blockquote>"):rep(3000) .. "x"
+        assert.are.equal(quotes, md.from_html(quotes))
+        -- More openers than closers: the extra ones stay, the pairs convert.
+        local half = md.from_html(("<b>"):rep(40) .. "x" .. ("</b>"):rep(20))
+        assert.are.equal(("<b>"):rep(20) .. ("**"):rep(20) .. "x" .. ("**"):rep(20), half)
+        -- Every closer pairs with an opener past the depth cap: nothing converts.
+        local deep = ("<b>"):rep(2000) .. "x" .. ("</b>"):rep(1000)
+        assert.are.equal(deep, md.from_html(deep))
+    end)
+end)
+
+-- Well-formed output for links, images, lists, headings and unwrapped containers.
+describe("markdown.from_html rewritten tags", function()
+    it("converts a heading of each level and trims its text", function()
+        assert.are.equal("## Title", vim.trim(md.from_html("<h2> Title </h2>")))
+        assert.are.equal("### T", vim.trim(md.from_html('<h3 class="x">T</h3>')))
+        assert.are.equal("###### six", vim.trim(md.from_html("<h6>six</h6>")))
+    end)
+
+    it("converts markup inside a heading and inside a link label", function()
+        assert.are.equal("# a **b**", vim.trim(md.from_html("<h1>a <b>b</b></h1>")))
+        assert.are.equal("[**x**](u)", md.from_html('<a href="u"><b>x</b></a>'))
+    end)
+
+    it("leaves a link without an href, and an image without a src, as written", function()
+        for _, src in ipairs({ '<a name="top">t</a>', "<a>t</a>", '<img alt="x">', "<img>" }) do
+            assert.are.equal(src, md.from_html(src))
+        end
+    end)
+
+    it("converts two links and two images in one description", function()
+        assert.are.equal("[a](1) and [b](2)", md.from_html('<a href="1">a</a> and <a href="2">b</a>'))
+        assert.are.equal("![](1)![](2)", md.from_html('<img src="1"><img src="2">'))
+    end)
+
+    it("drops list containers and unwrapped containers, with attributes or a space before >", function()
+        local out = md.from_html('<ol class="steps"><li>a</li></ol>')
+        assert.is_nil(out:find("<", 1, true))
+        assert.truthy(out:find("- a", 1, true))
+        assert.are.equal("t", md.from_html('<p style="x">t</p >'))
+        assert.are.equal("x y", md.from_html('<div class="a">x</div> <span id=s>y</span >'))
+        assert.are.equal("mid", vim.trim(md.from_html("<center>mid</center>")))
+    end)
+
+    it("pairs a closing tag that has whitespace before its >", function()
+        assert.are.equal("**x**", md.from_html("<b>x</b >"))
+    end)
+end)
+
+-- Malformed markup must cost time linear in its length: a naive `[^>]*`
+-- pattern re-reads the rest of the text from every unfinished start.
+describe("markdown.from_html tags that never end", function()
+    local uv = vim.uv or vim.loop
+    local LIMIT_MS = 1000
+
+    local function render(src)
+        collectgarbage()
+        local started = uv.hrtime()
+        local out = md.from_html(src)
+        return (uv.hrtime() - started) / 1e6, out
+    end
+
+    local function best_ms(src)
+        local best = math.huge
+        for _ = 1, 3 do best = math.min(best, (render(src))) end
+        return best
+    end
+
+    it("renders 100000 attribute openers with no > anywhere, unchanged and fast", function()
+        local src = ("<b "):rep(100000)
+        local ms, out = render(src)
+        assert.are.equal(src, out)
+        assert.is_true(ms < LIMIT_MS, ("took %d ms"):format(ms))
+    end)
+
+    it("does the same for a long tag name with an unfinished attribute", function()
+        local src = ("<blockquote x="):rep(50000)
+        local ms, out = render(src)
+        assert.are.equal(src, out)
+        assert.is_true(ms < LIMIT_MS, ("took %d ms"):format(ms))
+    end)
+
+    it("scales linearly: twice the text takes about twice the time", function()
+        local small, large = best_ms(("<b "):rep(20000)), best_ms(("<b "):rep(40000))
+        -- Linear is 2, quadratic 4; the floor keeps timer noise out of the ratio.
+        assert.is_true(large < 3 * math.max(small, 2),
+            ("20000 took %.1f ms but 40000 took %.1f ms"):format(small, large))
+    end)
+
+    it("is linear for every tag the converter reads, in each unfinished shape", function()
+        local tags = {
+            "blockquote", "pre", "a", "img", "li", "ul", "ol", "h1", "h4", "strong", "code",
+            "em", "b", "i", "sup", "sub", "center", "div", "span", "p",
+        }
+        -- Only a finished `<tag x>` of a `dropped` tag may change (it is dropped
+        -- even with no closer); every other unit must come back as written.
+        local dropped = { ul = true, ol = true, center = true, div = true, span = true, p = true }
+        for _, tag in ipairs(tags) do
+            for _, unit in ipairs({ "<" .. tag .. " ", "<" .. tag .. " x>", "</" .. tag .. " " }) do
+                local src = unit:rep(20000)
+                local ms, out = render(src)
+                assert.is_true(ms < LIMIT_MS, ("%q x20000 took %d ms"):format(unit, ms))
+                if not (dropped[tag] and unit == "<" .. tag .. " x>") then
+                    assert.are.equal(src, out, ("%q x20000 was rewritten"):format(unit))
+                end
+            end
+        end
+    end)
+
+    it("is linear for an opener whose only > is the one in a distant closing tag", function()
+        -- The first `<a ` ends at the far `>` of `</a>`, swallowing the closer, so
+        -- nothing pairs.
+        local src = ("<a "):rep(20000) .. "</a>"
+        local ms, out = render(src)
+        assert.is_true(ms < LIMIT_MS, ("took %d ms"):format(ms))
+        assert.are.equal(src, out)
+    end)
+end)
