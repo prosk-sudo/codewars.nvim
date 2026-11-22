@@ -6,6 +6,9 @@
 -- cache when the cache is deleted.
 local P = require("plenary.path")
 
+-- A Codewars kata id: 24 hex digits, which is what the stash accepts as an id.
+local STASH_ID = "0123456789abcdef01234567"
+
 local uv = vim.uv or vim.loop
 
 local function slurp(path)
@@ -242,12 +245,12 @@ describe("cache backups", function()
 
         it("does not bring a deleted stash back", function()
             local stash = require("codewars.cache.stash").for_kind("t-stash-")
-            local path = assert(stash.save({ id = "k1", code = "x" }))
-            put(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
+            local path = assert(stash.save({ id = STASH_ID, code = "x" }))
+            put(path .. ".bak", vim.json.encode({ id = STASH_ID, code = "old" }))
 
-            assert.is_true(stash.delete("k1"))
+            assert.is_true(stash.delete(STASH_ID))
 
-            assert.is_nil(stash.get("k1"))
+            assert.is_nil(stash.get(STASH_ID))
             assert.is_nil(uv.fs_stat(path .. ".bak"))
         end)
 

@@ -12,6 +12,9 @@
 --     and 0.10 do not have
 local P = require("plenary.path")
 
+-- A Codewars kata id: 24 hex digits, which is what the stash accepts as an id.
+local STASH_ID = "0123456789abcdef01234567"
+
 local uv = vim.uv or vim.loop
 
 local function slurp(path)
@@ -559,32 +562,32 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
 
         it("a stash is deleted, and stays deleted, when its backup could only be emptied", function()
             local stash = require("codewars.cache.stash").for_kind("t-stash-")
-            local path = assert(stash.save({ id = "k1", code = "x" }))
-            put(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
+            local path = assert(stash.save({ id = STASH_ID, code = "x" }))
+            put(path .. ".bak", vim.json.encode({ id = STASH_ID, code = "old" }))
             bak = path .. ".bak"
             unlink_fails()
 
-            assert.is_true(stash.delete("k1"))
+            assert.is_true(stash.delete(STASH_ID))
 
-            assert.is_nil(stash.get("k1"))
+            assert.is_nil(stash.get(STASH_ID))
             assert.equals(0, uv.fs_stat(bak).size)
         end)
 
         it("a stash is deleted, and the user warned, when its backup can be neither removed nor emptied", function()
             local stash = require("codewars.cache.stash").for_kind("t-stash-")
-            local path = assert(stash.save({ id = "k1", code = "x" }))
-            put(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
+            local path = assert(stash.save({ id = STASH_ID, code = "x" }))
+            put(path .. ".bak", vim.json.encode({ id = STASH_ID, code = "old" }))
             bak = path .. ".bak"
             unlink_fails()
             empty_fails()
 
-            local removed = stash.delete("k1")
+            local removed = stash.delete(STASH_ID)
 
             uv.fs_open = real_open
             assert.is_true(removed)
             assert.equals(1, #warnings, vim.inspect(warnings))
             assert.is_nil(uv.fs_lstat(path))
-            assert.is_nil(stash.get("k1"), "the deleted stash came back from its backup")
+            assert.is_nil(stash.get(STASH_ID), "the deleted stash came back from its backup")
             assert.is_nil(uv.fs_lstat(path), "reading the deleted stash recreated it")
         end)
 
