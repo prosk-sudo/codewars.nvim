@@ -508,9 +508,8 @@ describe("cmd.focus", function()
         assert.are.equal(0, #skip_calls, "skip acted on a forgotten focus")
     end)
 
-    -- A fetch in flight when the account changes (forget_focus) is answered
-    -- from the old account's queue, so its reply must not become the
-    -- remembered focus.
+    -- A fetch in flight when forget_focus runs is answered from the old account's
+    -- queue, so its reply must not become the remembered focus.
     it("a focus reply that lands after forget_focus is not remembered", function()
         trainer_hold = true
         cmd.focus({ _positional = { "python", "rank_up" } })
@@ -556,8 +555,7 @@ describe("cmd.focus", function()
         trainer_hold = false
         for _, resolve in ipairs(held_fetches) do resolve() end
 
-        -- The flag lives in the command module: left set, it would refuse
-        -- every focus the new account asks for.
+        -- The in-flight flag lives in the command module; left set it blocks every focus.
         cmd.focus({ _positional = { "python", "rank_up" } })
         assert.are.equal(2, #trainer_calls)
         assert.are.equal(1, #mounts)
@@ -581,9 +579,8 @@ describe("cmd.focus", function()
         assert.are.same({ lang = "go", category = "beta", slug = "served-kata-2" }, cmd.current_focus())
     end)
 
-    -- The trainer chains several requests per focus, each after the first sent
-    -- under whichever account is signed in by then, so the command hands it a
-    -- predicate to stop between requests, not just drop the final reply.
+    -- The trainer chains requests under whichever account is signed in, so the
+    -- command hands it a predicate to stop between them.
     it("a focus fetch is cancellable once forget_focus runs", function()
         trainer_hold = true
         cmd.focus({ _positional = { "python", "rank_up" } })

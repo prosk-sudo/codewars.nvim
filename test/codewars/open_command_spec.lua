@@ -1,8 +1,6 @@
--- :CW open hands the kata URL to the system opener. The slug comes from the
--- server, so it must only ever be a plain name (cmd.exe acts on & | ^ % even
--- inside one argv element, and vim.ui.open uses it too), and without
--- vim.ui.open (before 0.10) the URL must reach jobstart as one argv element,
--- never as text for a shell.
+-- :CW open passes the kata URL to the system opener. The server-supplied slug
+-- must be a plain name (cmd.exe acts on & | ^ % even in one argv element), and
+-- without vim.ui.open (before 0.10) the URL must reach jobstart as one argv element.
 describe(":CW open", function()
     local BASE = "https://www.codewars.com/kata/"
     local PLATFORMS = { "Darwin", "Linux", "Windows_NT" }
@@ -10,8 +8,7 @@ describe(":CW open", function()
     local real_ui_open, real_jobstart, real_os_uname, real_curr_kata, real_logger
     local utils, cmd, slug, started, opened, said
 
-    -- Runs :CW open as `os_name`, with or without vim.ui.open, and records
-    -- what reached the opener and what the user was told.
+    -- Runs :CW open as `os_name`; records what reached the opener and what the user saw.
     local function open_on(os_name, has_ui_open)
         started, opened, said = {}, {}, {}
         vim.ui.open = has_ui_open and function(target)
@@ -95,8 +92,7 @@ describe(":CW open", function()
     end)
 
     describe("opening a kata", function()
-        -- Every shape a real slug takes: a name, a name with digits, and the
-        -- 24-hex id the site also accepts in the URL.
+        -- Every real slug shape: a name, a name with digits, the 24-hex id.
         for label, good in pairs({
             ["a hyphenated name"] = "fake-binary",
             ["digits in the name"] = "sum-of-2-lowest-numbers",
@@ -120,10 +116,8 @@ describe(":CW open", function()
     end)
 
     describe("a slug that is not a plain name", function()
-        -- Each of these is something cmd.exe or a POSIX shell would act on, or
-        -- that would move the URL to another page. After the first two, each
-        -- slug has exactly one character outside the allowed set, so allowing
-        -- any one back makes exactly one of these fail.
+        -- Things a shell would act on, or that move the URL elsewhere. After the
+        -- first two, each has one bad character, so allowing it back fails one.
         for label, bad in pairs({
             ["a quote and a shell command"] = "x'; touch /tmp/pwned #",
             ["an ampersand and a program name"] = "x&calc.exe",

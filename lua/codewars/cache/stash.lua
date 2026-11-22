@@ -11,11 +11,8 @@ local HEX24 = require("codewars.api.utils").HEX24
 ---@class cw.cache.Stash
 local M = {}
 
---- An id becomes part of a file name and comes from unvalidated server replies
---- and scraped pages, so one holding "../" would write outside the cache dir.
---- Only two shapes are allowed, neither with a path separator: a Codewars id
---- (24 hex characters) and the "local-<ms>" id `:CW kumite new` gives a draft
---- until its first save, which a dirty close must still be able to stash.
+--- Ids come from unvalidated server replies and become file names, so "../" would
+--- escape the cache dir. Allowed: a 24-hex Codewars id or `:CW kumite new`'s "local-<ms>".
 ---@param id any
 ---@return boolean
 local function is_safe_id(id)

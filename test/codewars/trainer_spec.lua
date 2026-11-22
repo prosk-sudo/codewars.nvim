@@ -594,14 +594,11 @@ describe("api.trainer", function()
         end)
     end)
 
-    -- cmd.forget_focus runs when the signed-in account changes. Follow-up
-    -- requests go out under the NEW account and the self-heal's dequeue is an
-    -- irreversible pop, so the `cancelled` predicate must stop the workflow
-    -- between requests, not only after the last reply.
+    -- After forget_focus, follow-up requests go out under the NEW account and the
+    -- self-heal's pop is irreversible, so `cancelled` must stop the run between them.
     describe("cancellation between requests", function()
-        -- Answer one parked request. Consumed entries are blanked so the drain
-        -- below frees only what a failing test left in flight; otherwise the
-        -- module's in-flight lock would stay set and fail every later test.
+        -- Answer one parked request. Consumed entries are blanked so the drain below
+        -- frees only what a failing test left in flight (else the lock sticks).
         local function reply(i, res)
             local cb = held[i]
             held[i] = false

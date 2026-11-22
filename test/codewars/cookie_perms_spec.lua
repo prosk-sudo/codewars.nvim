@@ -1,7 +1,6 @@
--- The cookie file holds a live session (_session_id and CSRF token), so other
--- local accounts must not be able to read it. Lua has no octal literals, so
--- modes are decimal: 384 is 0600, 420 is 0644, 438 is 0666, 511 is 0777,
--- 256 is 0400 and 128 is 0200.
+-- The cookie is a live session, so other local accounts must not read it. Modes
+-- are decimal: 384 is 0600, 420 is 0644, 438 is 0666, 511 is 0777, 256 is 0400,
+-- 128 is 0200.
 describe("Cookie file permissions", function()
     local Path = require("plenary.path")
     local bit = require("bit")
@@ -11,7 +10,6 @@ describe("Cookie file permissions", function()
     local OLD = "CSRF-TOKEN=old; _session_id=old"
     local STR = "CSRF-TOKEN=abc; _session_id=xyz"
 
-    -- The libuv calls these tests wrap to watch or break the save.
     local WRAPPED = { "fs_open", "fs_write", "fs_fchmod", "fs_close", "fs_rename", "hrtime" }
     local real = {}
     for _, name in ipairs(WRAPPED) do
@@ -35,15 +33,14 @@ describe("Cookie file permissions", function()
         assert(vim.loop.fs_chmod(path, mode))
     end
 
-    -- Saves go through a temp file next to the cookie; anything else in the
-    -- directory is a leftover.
+    -- Saves go through a temp file next to the cookie; anything else is a leftover.
     local function is_temporary(p)
         return p ~= path and p:sub(1, #path) == path
     end
 
     before_each(function()
-        -- Keyed by name: Cookie.set's identity_changed() clears the other cache
-        -- files, and one shared path would delete the cookie just written.
+        -- Keyed by name: Cookie.set clears other cache files, so a shared path
+        -- would delete the cookie.
         dir = Path:new(vim.fn.tempname())
         dir:mkdir({ parents = true })
         path = dir:joinpath("cookie"):absolute()
@@ -60,8 +57,7 @@ describe("Cookie file permissions", function()
         package.loaded["codewars.cache.cookie"] = nil
     end)
 
-    -- Without the fix this depends on the umask (077 gives 0600 for free), so
-    -- the tests below check the same thing without leaning on it.
+    -- Passes unfixed under a 077 umask, so the tests below do not lean on it.
     it("creates the cookie file readable and writable by its owner only", function()
         assert.is_nil(Cookie.set(STR))
 
@@ -85,8 +81,7 @@ describe("Cookie file permissions", function()
         assert.equals("fchmod", events[1].op)
         assert.equals(OWNER_ONLY, events[1].mode)
         assert.equals("write", events[2].op)
-        -- The mode must land on the file being written, not whatever the path
-        -- names later.
+        -- The mode must land on the file being written, not whatever the path names.
         assert.equals(events[1].fd, events[2].fd)
     end)
 
@@ -107,8 +102,7 @@ describe("Cookie file permissions", function()
         assert.equals(OWNER_ONLY, mode_of(path))
     end)
 
-    -- A read-only file cannot be opened for writing, so reopening it could
-    -- never make it writable.
+    -- A read-only file cannot be opened for writing, so a save that reopens it fails.
     it("replaces a cookie file its owner can only read", function()
         precreate(256, OLD)
 
@@ -152,8 +146,7 @@ describe("Cookie file permissions", function()
         assert.are.same({}, leftovers)
     end)
 
-    -- Another Neovim running an older plugin can create the file mid-save. The
-    -- cookie goes into its own file and replaces whatever is at the path.
+    -- An older plugin in another Neovim can create the file mid-save; ours replaces it.
     it("replaces a world-readable file that appears while it is saving", function()
         local mode_when_written, raced
         vim.loop.fs_write = function(fd, data, ...)
@@ -174,8 +167,8 @@ describe("Cookie file permissions", function()
         assert.equals("xyz", Cookie.get().session_id)
     end)
 
-    -- A umask that strips the owner's write bit at creation would leave a 0400
-    -- file the next save cannot open. Simulated: Lua cannot set the umask.
+    -- A umask stripping owner-write at creation would leave a 0400 file. Simulated:
+    -- Lua cannot set the umask.
     it("still ends with an owner-writable file when the umask strips write on creation", function()
         vim.loop.fs_open = function(p, flags, mode, ...)
             if is_temporary(p) and mode then mode = bit.band(mode, bit.bnot(128)) end
@@ -189,8 +182,7 @@ describe("Cookie file permissions", function()
         assert.equals("uvw", Cookie.get().session_id)
     end)
 
-    -- Exclusive creation: a file already at the temporary name was not made by
-    -- this save, and writing into it would inherit its mode and owner.
+    -- Exclusive creation: an existing file at the temp name would keep its own mode.
     it("refuses to write into a file that already has its temporary name", function()
         precreate(420, OLD)
         vim.loop.hrtime = function() return 1 end
@@ -205,8 +197,7 @@ describe("Cookie file permissions", function()
         assert.equals(OLD, Path:new(path):read())
     end)
 
-    -- fs_write can store fewer bytes than it was given. Count only the cookie's
-    -- text: cleanup writes other cache files through the same call.
+    -- fs_write can store fewer bytes than given. Count only the cookie's text.
     local function is_cookie_text(data)
         return data ~= "" and STR:sub(-#data) == data
     end
@@ -229,8 +220,7 @@ describe("Cookie file permissions", function()
         assert.equals("xyz", Cookie.get().session_id)
     end)
 
-    -- Better the old session than none, and never a leaked descriptor or a
-    -- half-written file next to the cookie.
+    -- Better the old session than none, and no leaked descriptor or partial file.
     local failures = {
         { step = "fs_fchmod", fails = function() return nil, "EIO: i/o error" end, message = "EIO" },
         { step = "fs_write", fails = function() return nil, "EIO: i/o error" end, message = "EIO" },

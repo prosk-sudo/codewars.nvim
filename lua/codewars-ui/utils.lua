@@ -166,16 +166,15 @@ function utils.rescue_or_delete(bufnr, rescue_label)
         return
     end
     if rescue_label then
-        -- Drop the workspace's :w handler: it only prints a hint and clears
-        -- 'modified', which is wrong for the only copy. Deleted by id, since
-        -- nvim_clear_autocmds without a group skips autocmds that are in one.
+        -- Drop the workspace's :w handler (it only clears 'modified'). By id: a
+        -- group-less nvim_clear_autocmds skips autocmds that are in a group.
         for _, autocmd in ipairs(vim.api.nvim_get_autocmds({ event = "BufWriteCmd", buffer = bufnr })) do
             pcall(vim.api.nvim_del_autocmd, autocmd.id)
         end
         pcall(utils.buf_set_opts, bufnr, { buflisted = true, buftype = "" })
         pcall(vim.api.nvim_buf_set_name, bufnr, rescue_label)
-        -- The workspace's :w cleared the flag without writing. 'modified' makes
-        -- :bdelete and :q refuse, so Vim guards the only copy until it is written.
+        -- Its :w cleared the flag unwritten; 'modified' makes :bdelete and :q
+        -- refuse to drop the only copy.
         pcall(vim.api.nvim_set_option_value, "modified", true, { buf = bufnr })
     else
         vim.api.nvim_buf_delete(bufnr, { force = true, unload = false })

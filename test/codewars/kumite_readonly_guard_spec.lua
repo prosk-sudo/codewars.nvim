@@ -2,12 +2,10 @@ local Kumite = require("codewars-ui.kumite")
 
 local GUARDED_KEYS = { "i", "I", "a", "A", "o", "O", "c", "C", "s", "S", "R", "q" }
 
--- A fresh id per workspace: mount() focuses an open workspace for the same
--- snippet instead of building another.
+-- A fresh id per workspace: mount() reuses an open workspace for the same snippet.
 local mounted = 0
 
---- A really-mounted workspace, because the guard is a set of buffer-local
---- keymaps and only a real buffer can say whether they are still there.
+--- A really-mounted workspace: only a real buffer shows whether the keymaps remain.
 local function mount(state)
     mounted = mounted + 1
     local ws = Kumite:new({
@@ -25,7 +23,6 @@ local function mount(state)
     return ws
 end
 
---- The guard keys currently mapped in the code buffer.
 local function guarded(ws)
     local present = {}
     for _, map in ipairs(vim.api.nvim_buf_get_keymap(ws.bufnr, "n")) do
@@ -36,7 +33,6 @@ local function guarded(ws)
     end, GUARDED_KEYS)
 end
 
---- The buffer-local normal-mode mapping of `key` in the code buffer, if any.
 local function buffer_map(ws, key)
     for _, map in ipairs(vim.api.nvim_buf_get_keymap(ws.bufnr, "n")) do
         if map.lhs == key then
@@ -56,8 +52,7 @@ describe("Kumite read-only guard follows the state", function()
     before_each(function()
         real_api = package.loaded["codewars.api.kumite"]
         real_confirm = package.loaded["codewars-ui.popup.confirm"]
-        -- Both server calls succeed at once, and the convert confirmation is
-        -- answered "yes", so the whole transition runs synchronously.
+        -- Server calls succeed at once and the confirmation says "yes": synchronous.
         package.loaded["codewars.api.kumite"] = {
             is_server_id = function(id)
                 return type(id) == "string" and #id == 24 and id:match("^%x+$") ~= nil
@@ -83,8 +78,7 @@ describe("Kumite read-only guard follows the state", function()
     end)
 
     it("guards the insert keys while the kumite is published", function()
-        -- Precondition for the specs below: without it, "the guard is gone"
-        -- would also pass on a workspace that never had one.
+        -- Precondition: else "the guard is gone" passes on a workspace without one.
         local ws = mount("published")
         assert.same(GUARDED_KEYS, guarded(ws))
         assert.is_false(vim.bo[ws.bufnr].modifiable)
@@ -132,8 +126,7 @@ describe("Kumite read-only guard follows the state", function()
     end)
 
     it("leaves the user's own global mappings alone on an unmounted workspace", function()
-        -- With no buffer, keymap.del would fall back to GLOBAL mappings (leap
-        -- and flash bind `s` and `S`).
+        -- No buffer: keymap.del would hit GLOBAL mappings (leap and flash bind s, S).
         vim.keymap.set("n", "s", "<Nop>")
         local ws = Kumite:new({
             id = "6a63e7e085269ff93dc63399", title = "t", description = "", language = "python",
@@ -187,8 +180,7 @@ describe("Kumite read-only guard only removes its own mappings", function()
     end
 
     it("keeps a user's mapping through the first save of an editable kumite", function()
-        -- A FileType autocmd maps keys in a new buffer; a guard that was never
-        -- installed here has nothing of its own to remove.
+        -- A FileType autocmd maps keys in a new buffer; no guard here, nothing to remove.
         stub_save({ id = "6a63e7e085269ff93dc63388" }, nil)
         local ws = mount("local_fork")
         map_as_user(ws, "s")
