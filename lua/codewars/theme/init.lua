@@ -106,15 +106,14 @@ local highlights = {
 local colors
 
 --- The definition to set for one codewars group.
---- A `link` override replaces the default spec instead of merging into it:
---- merged, `{ fg = "#b1361e", bold = true, link = "Comment" }` is both a link
---- and a color. Any other override merges over the default as before.
---- A link cannot carry attributes, so `{ link = "X", bold = true }` becomes X's
---- foreground with the style keys on top (an explicit fg wins). Only the
---- foreground is taken, never the background, so a float keeps its own.
+--- A `link` override replaces the default spec: merged, it would be both a
+--- link and a color. Other overrides merge over the default.
+--- A link cannot carry attributes, so `{ link = "X", bold = true }` becomes
+--- X's foreground plus the style keys (an explicit fg wins). The background is
+--- never taken, so a float keeps its own.
 ---@param name string a key of `highlights`
 ---@param overrides table the user's `theme`, cleaned (see clean_overrides)
----@param seen table<string, true> the groups on the chain of links that led here
+---@param seen table<string, true> the groups already on the chain of links
 ---@return table
 local function definition(name, overrides, seen)
     local spec, override = highlights[name], overrides[name]
@@ -139,29 +138,23 @@ local function definition(name, overrides, seen)
 end
 
 --- The foreground (fg, ctermfg) that `target` has once apply() has run.
---- The chain of links is followed one step at a time and Neovim is never asked
---- to collapse it: apply() visits the groups in no particular order, and
---- straight after a `:colorscheme` ours hold nothing, so what Neovim would
---- resolve through a codewars group is not what that group will hold. Every
---- step lands on one of two things:
+--- Links are followed one step at a time, never collapsed by Neovim: apply()
+--- visits groups in no fixed order, and right after `:colorscheme` ours hold
+--- nothing, so Neovim's answer through a codewars group would not match what
+--- that group ends up holding. Each step is one of:
 ---   * a codewars group: worked out from its default and the user's override;
----   * any other group: read with `link = true`. A group that links gives
----     `{ link = "X" }` and the walk goes on with X (a group that has both a
----     link and an fg of its own follows the link, as Neovim does); a group
----     that does not link gives its own fg and ctermfg. These are the
----     colorscheme as it is now; apply() runs again after every `:colorscheme`.
---- A link that leads back to a group already on the chain (a -> b -> a, a -> a,
---- or one that mixes codewars groups with others) has no color to give. Every
---- codewars group in such a cycle keeps only its own style keys, whichever of
---- them is being applied.
---- Neovim matches group names without regard to case, so "CODEWARS_HEADER"
---- names the same group as "codewars_header". Every key of `highlights` is
---- lowercase, so the lowered target is the key for the lookup and for the
---- cycle check, whichever group it names. (A link-only override still goes to
---- Neovim as the user wrote it, and Neovim resolves it.)
+---   * any other group: read with `link = true`. A link continues the walk
+---     (it wins over the group's own fg, as in Neovim); otherwise the group's
+---     own fg and ctermfg are used. apply() reruns after every `:colorscheme`.
+--- A link back to a group already on the chain (a -> b -> a, a -> a, or a mix
+--- of codewars and other groups) has no color. Every codewars group in such a
+--- cycle keeps only its own style keys.
+--- Group names are case-insensitive and every key of `highlights` is lowercase,
+--- so the lowered target is the key for the lookup and the cycle check. A
+--- link-only override still goes to Neovim as written.
 ---@param target string
 ---@param overrides table the user's `theme`, cleaned (see clean_overrides)
----@param seen table<string, true> the groups on the chain of links that led here
+---@param seen table<string, true> the groups already on the chain of links
 ---@return table
 colors = function(target, overrides, seen)
     -- tostring: a `link` that is not a string is Neovim's to reject, below
@@ -186,13 +179,13 @@ colors = function(target, overrides, seen)
     return { fg = group.fg, ctermfg = group.ctermfg }
 end
 
---- Keys of an `nvim_set_hl` definition that only change how the group is set
---- (`default` keeps a definition that already exists, `force` replaces one).
---- They are not supported in `theme`: an override always applies.
+--- `nvim_set_hl` keys that only change how a group is set (`default` keeps an
+--- existing definition, `force` replaces it). `theme` does not support them:
+--- an override always applies.
 local IGNORED_KEYS = { "default", "force" }
 
---- A copy of the user's `theme` without the IGNORED_KEYS, so the user's own
---- table is left as it is. One warning per group that had any of them.
+--- A copy of the user's `theme` without the IGNORED_KEYS; the user's table is
+--- left untouched. Warns once per group that had any.
 ---@param overrides table the user's `theme`
 ---@return table
 local function clean_overrides(overrides)
@@ -237,14 +230,13 @@ end
 
 function theme.setup()
     local config = require("codewars.config")
-    -- Cleaned once here, and the ColorScheme callback reuses the same copy, so
-    -- a re-apply never warns again.
+    -- Cleaned once: the ColorScheme callback reuses the copy, so re-applying
+    -- never warns again.
     local overrides = clean_overrides(config.user.theme or {})
     apply(overrides)
 
-    -- `:colorscheme` clears every highlight group, ours included. The group is
-    -- created with clear = true so a second setup() replaces this autocmd
-    -- instead of stacking another copy.
+    -- `:colorscheme` clears every highlight group, ours included. clear = true
+    -- makes a second setup() replace this autocmd instead of stacking another.
     local group = vim.api.nvim_create_augroup("codewars_theme", { clear = true })
     vim.api.nvim_create_autocmd("ColorScheme", {
         group = group,
