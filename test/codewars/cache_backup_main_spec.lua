@@ -29,7 +29,7 @@ describe("cache.utils, the cache file", function()
     local log = require("codewars.logger")
     local cache_utils = require("codewars.cache.utils")
     local saved_storage, real_error, real_warn, errors, warnings
-    local real_open, real_read, real_fstat, real_unlink, real_ftruncate, real_write, real_close
+    local real_open, real_read, real_fstat, real_unlink, real_ftruncate, real_write, real_close, real_lstat
     local tmp, file, bak, newer, older, original, fresh
 
     local WRITE_BITS = bit.bor(uv.constants.O_WRONLY, uv.constants.O_RDWR, uv.constants.O_CREAT)
@@ -44,7 +44,7 @@ describe("cache.utils, the cache file", function()
         saved_storage, real_error, real_warn, errors, warnings = config.storage, log.error, log.warn, {}, {}
         real_open, real_read, real_fstat = uv.fs_open, uv.fs_read, uv.fs_fstat
         real_unlink, real_ftruncate, real_write = uv.fs_unlink, uv.fs_ftruncate, uv.fs_write
-        real_close = uv.fs_close
+        real_close, real_lstat = uv.fs_close, uv.fs_lstat
         config.storage = { home = P:new(tmp), cache = P:new(tmp) }
         log.error = function(msg) errors[#errors + 1] = tostring(msg) end
         log.warn = function(msg) warnings[#warnings + 1] = tostring(msg) end
@@ -58,7 +58,7 @@ describe("cache.utils, the cache file", function()
     after_each(function()
         uv.fs_open, uv.fs_read, uv.fs_fstat = real_open, real_read, real_fstat
         uv.fs_unlink, uv.fs_ftruncate, uv.fs_write = real_unlink, real_ftruncate, real_write
-        uv.fs_close = real_close
+        uv.fs_close, uv.fs_lstat = real_close, real_lstat
         config.storage, log.error, log.warn = saved_storage, real_error, real_warn
         pcall(uv.fs_chmod, file, 420)
         vim.fn.delete(tmp, "rf")
@@ -433,6 +433,53 @@ print("RESULT", tostring(ok), tostring(err), uv.fs_lstat(BAK) and "bak" or "noba
             assert.matches("by hand", err)
             assert.same(fresh, vim.json.decode(slurp(file)))
             assert.equals(1, #errors, vim.inspect(errors))
+        end)
+
+        -- Only ENOENT means it is gone. Any other failure to look is "unknown", and a
+        -- write that left an unexaminable backup behind must not report a clean success.
+        for _, code in ipairs({ "EIO", "EACCES" }) do
+            it(("is not reported gone when it cannot be examined afterwards (%s)"):format(code), function()
+                spit(file, original)
+                local tried = false
+                uv.fs_unlink = function(path)
+                    if path == bak then
+                        tried = true
+                        return nil, "EPERM: operation not permitted: " .. path, "EPERM"
+                    end
+                    return real_unlink(path)
+                end
+                uv.fs_lstat = function(path, ...)
+                    if path == bak and tried then return nil, code .. ": cannot look: " .. path, code end
+                    return real_lstat(path, ...)
+                end
+
+                local ok, err = write()
+
+                uv.fs_lstat = real_lstat
+                assert.is_false(ok, "a backup that could not even be examined was reported as removed")
+                assert.matches("was written", err)
+                assert.matches(vim.pesc(bak), err)
+                assert.matches("by hand", err)
+                assert.same(fresh, vim.json.decode(slurp(file)))
+                assert.equals(1, #errors, vim.inspect(errors))
+            end)
+        end
+
+        it("is gone when it was removed between the failed unlink and the look: that is ENOENT", function()
+            spit(file, original)
+            uv.fs_unlink = function(path)
+                if path == bak then
+                    real_unlink(path)
+                    return nil, "EPERM: operation not permitted: " .. path, "EPERM"
+                end
+                return real_unlink(path)
+            end
+
+            local ok, err = write()
+
+            assert.is_true(ok, tostring(err))
+            assert.is_nil(uv.fs_lstat(bak))
+            assert.same({}, warnings)
         end)
 
         it("fails quietly the same way when the write is quiet", function()

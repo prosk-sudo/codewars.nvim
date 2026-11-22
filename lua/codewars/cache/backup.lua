@@ -40,9 +40,21 @@
 ---    stale one it replaces). A reader never does: a cache that reads fine is no
 ---    proof that another process is not between copying it and rewriting it.
 ---
---- Two processes writing one cache at the same moment, or one reading while the
---- other writes, are not coordinated; that is out of scope here, as it was
---- before there were backups.
+--- Threat model. This protects against failed or partial writes (a full disk, I/O
+--- errors, a crash mid-write), transient read errors, and leftover or stale
+--- backups. It assumes the cache directory is the user's own (`stdpath("cache")`)
+--- and is not writable by other accounts. Out of scope:
+---  * a concurrent process with write access to that directory racing the plugin
+---    between a check and an open (planting a symlink, swapping a file): anyone
+---    who can write there can already change the user's caches directly;
+---  * a shared (sticky) directory holding a backup owned by another user, which
+---    this process may not be able to remove;
+---  * two Neovim instances, or a reader and a writer, using one cache at the same
+---    moment: they are not coordinated, as they were not before there were backups.
+--- What holds regardless: the plugin never writes through a symlink it created or
+--- followed for a backup itself (O_EXCL, lstat plus identity checks); every open
+--- is non-blocking and checked on its descriptor; and a failed write never loses
+--- the previous cache.
 local uv = vim.uv or vim.loop
 
 local M = {}
@@ -298,10 +310,20 @@ local function discard_backup(bak)
     local unlinked, unlink_err, name = uv.fs_unlink(bak)
     if unlinked or name == "ENOENT" then return true end
 
-    local stat = uv.fs_lstat(bak)
-    if not stat then return true end
-    local emptied, empty_err = false, "it is not a regular file"
-    if stat.type == "file" then emptied, empty_err = write_file(bak, "", { identity = stat }) end
+    -- Only ENOENT means it is gone. Any other failure to look is "unknown": it
+    -- cannot be emptied safely (there is no identity to check the open against)
+    -- and must not be reported as removed.
+    local stat, stat_err, stat_name = uv.fs_lstat(bak)
+    if not stat and stat_name == "ENOENT" then return true end
+    local emptied = false
+    local empty_err
+    if not stat then
+        empty_err = "it could not be examined: " .. tostring(stat_err)
+    elseif stat.type ~= "file" then
+        empty_err = "it is not a regular file"
+    else
+        emptied, empty_err = write_file(bak, "", { identity = stat })
+    end
     if emptied then
         return true, ("Could not remove %s (%s); emptied it instead, so it cannot be recovered from."):format(
             bak, tostring(unlink_err))
