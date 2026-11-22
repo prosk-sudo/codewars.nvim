@@ -1,7 +1,8 @@
 -- The cache file itself, as the backup logic meets it:
---   * recovery from <path>.bak runs only when the cache is absent, or was read in
---     full from a regular file and is empty or undecodable. A cache that merely
---     could not be read is unknown, not damaged: nothing is written over it
+--   * recovery from <path>.bak runs only when the cache exists and was read in
+--     full from a regular file and is empty or undecodable. A cache that is absent
+--     was deleted, and is not brought back; one that merely could not be read is
+--     unknown, not damaged: nothing is written over it
 --   * every file is opened for writing without blocking and without truncating,
 --     checked on its descriptor (a regular file, the very one that was read),
 --     and only then truncated
@@ -32,7 +33,8 @@ describe("cache.utils, the cache file", function()
     local real_open, real_read, real_fstat, real_unlink, real_ftruncate, real_write, real_close, real_lstat
     local tmp, file, bak, newer, older, original, fresh
 
-    local WRITE_BITS = bit.bor(uv.constants.O_WRONLY, uv.constants.O_RDWR, uv.constants.O_CREAT)
+    local C = uv.constants or {}
+    local WRITE_BITS = bit.bor(C.O_WRONLY or 0, C.O_RDWR or 0, C.O_CREAT or 0)
     local function is_write_open(flags)
         return flags == "w" or flags == "wx" or flags == "r+"
             or (type(flags) == "number" and bit.band(flags, WRITE_BITS) ~= 0)
@@ -153,17 +155,18 @@ describe("cache.utils, the cache file", function()
             assert.equals(older, slurp(file))
         end)
 
-        it("is still recovered from when it is absent", function()
+        it("is not recovered when it is absent: the backup of a deleted cache does not bring it back", function()
             spit(bak, older)
 
-            assert.same({ older = string.rep("o", 300) }, read())
-            assert.equals(older, slurp(file))
+            assert.is_nil(read())
+
+            assert.is_nil(uv.fs_lstat(file))
+            assert.equals(older, slurp(bak))
         end)
     end)
 
     describe("opened for writing", function()
         local function has(flags, bits) return bit.band(flags, bits) == bits end
-        local C = uv.constants
 
         local function record_write_opens()
             local opens = {}
@@ -185,6 +188,7 @@ describe("cache.utils, the cache file", function()
         end
 
         it("never blocks or truncates, and only creates where it is creating", function()
+            if not C.O_NONBLOCK then return pending("this luv does not expose the open flags") end
             spit(file, original)
             local opens = record_write_opens()
             assert.is_true((write())) -- in place over a good cache: backup created exclusively, cache rewritten
@@ -211,9 +215,8 @@ describe("cache.utils, the cache file", function()
             uv.fs_unlink(file)
             spit(bak, older)
             opens = record_write_opens()
-            read() -- recovery of a cache that is not there
-            assert_never_blocking_or_truncating(opens)
-            assert.is_true(has(opens[1].flags, bit.bor(C.O_CREAT, C.O_EXCL)), "an absent cache is recovered exclusively")
+            read() -- a cache that is not there is not recovered: nothing is opened for writing
+            assert.same({}, opens)
         end)
 
         --- Make the descriptor the cache is opened for writing on say something else than
@@ -306,7 +309,7 @@ local function spit(p, t) local f = assert(io.open(p, "wb")); f:write(t); f:clos
 local real_open = uv.fs_open
 local function swap_on_open_for_writing()
     uv.fs_open = function(path, flags, mode)
-        if path == FILE and type(flags) == "number" and bit.band(flags, uv.constants.O_WRONLY) ~= 0 then
+        if path == FILE and type(flags) == "number" and bit.band(flags, (uv.constants or {}).O_WRONLY or 1) ~= 0 then
             os.remove(FILE)
             vim.fn.system({ "mkfifo", FILE })
         end

@@ -9,11 +9,17 @@
 ---    cannot be written, the disk is full, the file cannot be read) is left
 ---    exactly as it is and the write is refused, never done without the copy:
 ---    a write that then ran out of space would destroy the only copy.
----  * Unknown is not junk. The cache is "damaged" only when it was read in full
----    from a regular file and is empty or does not decode; a cache that could
----    not be read at all (permission, an I/O error, a descriptor that is not what
----    was checked) is unknown, and nothing is written over it: a read recovers
----    nothing, a write is refused. Likewise a .bak that cannot be read is
+---  * Recovery runs only over a cache that exists and is damaged: read in full
+---    from a regular file, and empty or not decodable. Every write over an existing
+---    cache is in place, so an interrupted one leaves the cache present and damaged,
+---    never absent; a cache that is absent was deleted (by the plugin, or by
+---    hand), and a leftover backup must not bring it back. So a read of an absent
+---    cache returns nothing and touches nothing, and the next write creates the
+---    cache afresh and discards the stale backup.
+---  * Unknown is not junk. A cache that could not be read at all (permission, an
+---    I/O error, a descriptor that is not what was checked) is unknown, not
+---    damaged, and nothing is written over it: a read recovers nothing, a write
+---    is refused. Likewise a .bak that cannot be read is
 ---    unknown: next to a cache that is no good it may be the one good copy, so
 ---    the write is refused and neither file is touched. Only a .bak that was
 ---    read in full and does not decode, one beside a cache that decodes, or a
@@ -31,7 +37,7 @@
 ---    so one swapped for a pipe cannot hang the editor; the descriptor is then
 ---    checked (a regular file, the very one that was read or lstat-ed) before a
 ---    byte is read, and only then is it truncated and written.
----  * A cache that is absent is created exclusively (O_CREAT|O_EXCL), never
+---  * A cache that is absent is written by creating it exclusively (O_CREAT|O_EXCL), never
 ---    through whatever appears at its path after it was read. A dangling symlink
 ---    that is the configured cache is resolved one level and its target is
 ---    created (a link to a link is refused), and a failed write removes the file
@@ -113,6 +119,17 @@ end
 ---@return boolean
 function M.is_backup(name)
     return name:sub(-#SUFFIX) == SUFFIX
+end
+
+--- Whether `path` is rooted. Not vim.fn.isabsolutepath, which Neovim 0.9 and 0.10
+--- do not have: a leading "/", and on Windows also a drive ("C:\\", "C:/") or a UNC
+--- name ("\\\\host", "//host").
+---@param path string
+---@return boolean
+function M.is_absolute(path)
+    if path:sub(1, 1) == "/" then return true end
+    if vim.fn.has("win32") ~= 1 then return false end
+    return path:match("^%a:[\\/]") ~= nil or path:match("^[\\/][\\/]") ~= nil
 end
 
 --- `path` as the absolute string the fs calls take.
@@ -409,7 +426,7 @@ local function creation_target(file)
 
     local named, link_err = uv.fs_readlink(file)
     if not named then return nil, ("the link %s could not be read (%s)"):format(file, tostring(link_err)) end
-    local target = vim.fn.isabsolutepath(named) == 1 and named or (vim.fs.dirname(file) .. "/" .. named)
+    local target = M.is_absolute(named) and named or (vim.fs.dirname(file) .. "/" .. named)
     local target_stat, target_err, target_name = uv.fs_lstat(target)
     if target_stat then
         if target_stat.type == "link" then return nil, ("%s is a link to a link (%s)"):format(file, target) end
@@ -423,10 +440,10 @@ end
 
 --- Nothing is at `file`: create it exclusively and write it, and take what was
 --- written away again if it did not all land (the file that was created, never
---- the symlink that names it). A backup left at the name (a good copy, or one
---- that cannot be read and so may be one) stays until the new file has landed,
---- and is stale, so gone, once it has. A backup that cannot even be examined
---- may be a good copy that a new cache would make stale: nothing is written.
+--- the symlink that names it). A backup left at the name (the remains of a
+--- deletion, or of the cache deleted by hand) is not recovered from, and is stale
+--- once the new file has landed, so it goes then. A backup that cannot even be
+--- examined may be one that a new cache would make stale: nothing is written.
 local function write_new(file, bytes, parse)
     local bak = M.backup_path(file)
     local state, detail = inspect_backup(bak, parse)
@@ -525,36 +542,26 @@ function M.write(file, bytes, parse)
     return write_over(file, bytes, detail, stat, parse)
 end
 
---- A read found `file` absent, or read in full and empty or undecodable: if a
---- good copy is at the backup's name, write it back into the file. The backup
---- is left where it is.
+--- A read found `file` present, read in full and empty or undecodable: if a good
+--- copy is at the backup's name, write it back into the file, in place. The backup
+--- is left where it is. Never over an absent file: see the header.
 ---@param file string
 ---@param parse fun(text: string): any? the data in `text`, nil when it is not usable
----@param main_stat table? the descriptor's stat when `file` was read (it is not absent)
+---@param main_stat table the descriptor's stat when `file` was read; nil (absent) recovers nothing
 ---@return any? recovered the data of the backup, nil when it was not used
 ---@return string? err why it could not be written back into `file`
 function M.settle(file, parse, main_stat)
     local bak = M.backup_path(file)
     -- Not read in full from a regular file (absent, foreign, unreadable): it is
     -- unknown, so nothing is touched.
+    if not main_stat then return nil end
     local state, text = read_backup(bak)
     if state ~= "read" then return nil end
     local data = parse(text)
     if data == nil then return nil end
 
-    local path, opts = file, { identity = main_stat }
-    if not main_stat then
-        local why
-        path, why = creation_target(file)
-        if not path then return data, why end
-        -- Only the permission bits of the new file: failing to look is no reason not to recover.
-        local stat = uv.fs_stat(bak)
-        local mode = stat and bit.band(stat.mode, PERMISSION_BITS)
-        opts = { create = "exclusive", mode = mode, exact = mode ~= nil }
-    end
-    local restored, err, touched = write_file(path, text, opts)
+    local restored, err = write_file(file, text, { identity = main_stat })
     if restored then return data end
-    if not main_stat and touched then uv.fs_unlink(path) end -- a partial file we created
     return data, tostring(err)
 end
 

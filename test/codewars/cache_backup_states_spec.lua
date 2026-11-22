@@ -299,7 +299,8 @@ describe("cache.utils write_json, state by state", function()
     end)
 
     --- Whether an open is for writing (by name, or by the flag bits), or for reading.
-    local WRITE_BITS = bit.bor(uv.constants.O_WRONLY, uv.constants.O_RDWR, uv.constants.O_CREAT)
+    local C = uv.constants or {}
+    local WRITE_BITS = bit.bor(C.O_WRONLY or 0, C.O_RDWR or 0, C.O_CREAT or 0)
     local function is_write_open(flags)
         return flags == "w" or flags == "wx" or flags == "r+"
             or (type(flags) == "number" and bit.band(flags, WRITE_BITS) ~= 0)

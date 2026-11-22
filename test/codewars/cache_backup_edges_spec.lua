@@ -6,7 +6,10 @@
 --   * only ENOENT means a backup is absent; any other error looking at it is
 --     "unknown" and refuses a write, and a read recovers nothing
 --   * deleting a cache gets rid of its backup (unlink, else empty it), and says so
---     when it can do neither
+--     when it can do neither; and since an absent cache is never recovered, a
+--     backup that could not be removed brings nothing back
+--   * a symlink's target is resolved without vim.fn.isabsolutepath, which Neovim 0.9
+--     and 0.10 do not have
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop
@@ -33,7 +36,8 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
     local real_open, real_lstat, real_unlink, real_write
     local tmp, file, bak, precious, older, fresh, payload
 
-    local WRITE_BITS = bit.bor(uv.constants.O_WRONLY, uv.constants.O_RDWR, uv.constants.O_CREAT)
+    local C = uv.constants or {}
+    local WRITE_BITS = bit.bor(C.O_WRONLY or 0, C.O_RDWR or 0, C.O_CREAT or 0)
     local function is_write_open(flags)
         return flags == "w" or flags == "wx" or flags == "r+"
             or (type(flags) == "number" and bit.band(flags, WRITE_BITS) ~= 0)
@@ -54,9 +58,12 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         older = vim.json.encode({ older = string.rep("o", 300) })
         fresh = { fresh = string.rep("f", 600) }
         payload = vim.json.encode(fresh)
+        -- Not in Neovim 0.9 or 0.10: nothing here may call it.
+        vim.fn.isabsolutepath = function() error("E117: Unknown function: isabsolutepath") end
     end)
 
     after_each(function()
+        vim.fn.isabsolutepath = nil
         uv.fs_open, uv.fs_lstat, uv.fs_unlink, uv.fs_write = real_open, real_lstat, real_unlink, real_write
         config.storage, log.error, log.warn = saved_storage, real_error, real_warn
         pcall(uv.fs_chmod, file, 420)
@@ -114,17 +121,6 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
                 precious_untouched()
                 assert.equals(1, #errors, vim.inspect(errors))
             end)
-
-            it(("is not recovered through a symlink to another file planted after the read (%s)"):format(when), function()
-                spit(bak, older)
-                plant_link(when)
-
-                local data = read()
-
-                uv.fs_open = real_open
-                assert.same({ older = string.rep("o", 300) }, data, "the recovered data is still returned")
-                precious_untouched()
-            end)
         end
 
         it("is created at the target of a dangling symlink that is the configured cache, leaving the link", function()
@@ -149,17 +145,6 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             assert.equals("real-cache.json", uv.fs_readlink(file))
         end)
 
-        it("is recovered at the target of a dangling symlink too", function()
-            local target = tmp .. "/real-cache.json"
-            uv.fs_symlink(target, file)
-            spit(bak, older)
-
-            assert.same({ older = string.rep("o", 300) }, read())
-
-            assert.equals(older, slurp(target))
-            assert.equals("link", uv.fs_lstat(file).type)
-        end)
-
         it("is refused when the link points at another link", function()
             local middle = tmp .. "/middle.json"
             uv.fs_symlink(tmp .. "/nowhere.json", middle)
@@ -174,14 +159,15 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             assert.equals("link", uv.fs_lstat(file).type)
         end)
 
-        it("is refused by recovery when the link points at another link", function()
-            uv.fs_symlink(tmp .. "/nowhere.json", tmp .. "/middle.json")
-            uv.fs_symlink(tmp .. "/middle.json", file)
+        it("is not recovered, even through a dangling link: nothing is created from a leftover backup", function()
+            local target = tmp .. "/real-cache.json"
+            uv.fs_symlink(target, file)
             spit(bak, older)
 
-            read()
+            assert.is_nil(read())
 
-            assert.is_nil(uv.fs_lstat(tmp .. "/nowhere.json"))
+            assert.is_nil(uv.fs_lstat(target))
+            assert.equals("link", uv.fs_lstat(file).type)
         end)
 
         it("leaves a dangling link intact and no partial target when the write fails halfway", function()
@@ -205,6 +191,43 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             assert.is_false((write()))
 
             assert.is_nil(uv.fs_lstat(file))
+        end)
+    end)
+
+    describe("a link target that is absolute or relative", function()
+        local function with_win32(on, body)
+            local real_has = vim.fn.has
+            vim.fn.has = function(what)
+                if what == "win32" then return on and 1 or 0 end
+                return real_has(what)
+            end
+            local ok, err = pcall(body)
+            vim.fn.has = real_has
+            assert(ok, err)
+        end
+
+        it("is told by its first character where the path is rooted", function()
+            assert.is_true(backup.is_absolute("/var/cache/codewars.json"))
+            assert.is_false(backup.is_absolute("cache/codewars.json"))
+            assert.is_false(backup.is_absolute("../codewars.json"))
+            assert.is_false(backup.is_absolute(""))
+        end)
+
+        it("is not made absolute by a drive prefix or a UNC name except on Windows", function()
+            with_win32(false, function()
+                assert.is_false(backup.is_absolute("C:\\caches\\codewars.json"))
+                assert.is_false(backup.is_absolute("\\\\host\\share\\codewars.json"))
+            end)
+        end)
+
+        it("is made absolute by a drive prefix or a UNC name on Windows", function()
+            with_win32(true, function()
+                assert.is_true(backup.is_absolute("C:\\caches\\codewars.json"))
+                assert.is_true(backup.is_absolute("c:/caches/codewars.json"))
+                assert.is_true(backup.is_absolute("\\\\host\\share\\codewars.json"))
+                assert.is_true(backup.is_absolute("//host/share/codewars.json"))
+                assert.is_false(backup.is_absolute("caches\\codewars.json"))
+            end)
         end)
     end)
 
@@ -278,6 +301,53 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
     end)
 
+    describe("an absent cache with a good backup beside it", function()
+        -- Every write over an existing cache is in place, so an interrupted one leaves the
+        -- cache present and damaged. An absent cache was deleted, and stays so.
+        it("returns nil on a read and touches nothing", function()
+            spit(bak, older)
+            local before = uv.fs_stat(bak)
+
+            assert.is_nil(read())
+
+            assert.is_nil(uv.fs_lstat(file))
+            assert.equals(older, slurp(bak))
+            assert.equals(before.mtime.nsec, uv.fs_stat(bak).mtime.nsec)
+            assert.same({}, warnings)
+        end)
+
+        it("gets a new cache from the next write, and the stale backup goes", function()
+            spit(bak, older)
+
+            assert.is_true((write()))
+
+            assert.same(fresh, vim.json.decode(slurp(file)))
+            assert.is_nil(uv.fs_lstat(bak))
+        end)
+
+        it("gets a new cache from the next write, and the stale backup is emptied when it cannot go", function()
+            spit(bak, older)
+            uv.fs_unlink = function(path)
+                if path == bak then return nil, "EPERM: operation not permitted: " .. path, "EPERM" end
+                return real_unlink(path)
+            end
+
+            assert.is_true((write()))
+
+            assert.equals(0, uv.fs_stat(bak).size)
+            spit(file, "{ torn") -- damaged later
+            assert.is_nil(read(), "an emptied backup brought the old cache back")
+        end)
+
+        it("still has a damaged cache beside a good backup recovered", function()
+            spit(file, "{ torn")
+            spit(bak, older)
+
+            assert.same({ older = string.rep("o", 300) }, read())
+            assert.equals(older, slurp(file))
+        end)
+    end)
+
     describe("deleting a cache", function()
         local function unlink_fails()
             uv.fs_unlink = function(path)
@@ -341,7 +411,7 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             assert.equals(0, uv.fs_stat(bak).size)
         end)
 
-        it("a stash is kept, and the user told, when its backup can be neither removed nor emptied", function()
+        it("a stash is deleted, and the user warned, when its backup can be neither removed nor emptied", function()
             local stash = require("codewars.cache.stash").for_kind("t-stash-")
             local path = assert(stash.save({ id = "k1", code = "x" }))
             spit(path .. ".bak", vim.json.encode({ id = "k1", code = "old" }))
@@ -352,10 +422,11 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             local removed = stash.delete("k1")
 
             uv.fs_open = real_open
-            assert.is_false(removed)
-            assert.equals(1, #errors, vim.inspect(errors))
-            assert.matches("k1", errors[1])
-            assert.is_table(stash.get("k1"), "the stash was deleted though its backup could not be")
+            assert.is_true(removed)
+            assert.equals(1, #warnings, vim.inspect(warnings))
+            assert.is_nil(uv.fs_lstat(path))
+            assert.is_nil(stash.get("k1"), "the deleted stash came back from its backup")
+            assert.is_nil(uv.fs_lstat(path), "reading the deleted stash recreated it")
         end)
 
         it("a session is deleted, and the user warned, when its backup can be neither removed nor emptied", function()
@@ -374,6 +445,8 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             assert.is_nil(uv.fs_lstat(path), "the session was kept")
             assert.equals(1, #warnings, vim.inspect(warnings))
             assert.matches("by hand", warnings[1])
+            assert.is_nil(session.get("two-sum", "python"), "a deleted session came back from its backup")
+            assert.is_nil(uv.fs_lstat(path), "reading the deleted session recreated it")
         end)
 
         it("a session is deleted, and stays deleted, when its backup could only be emptied", function()
@@ -421,6 +494,8 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             uv.fs_open = real_open
             assert.is_nil(uv.fs_lstat(path))
             assert.equals(1, #warnings, vim.inspect(warnings))
+            assert.is_nil(cache_utils.read_json(P:new(path)), "a cleared profile came back from its backup")
+            assert.is_nil(uv.fs_lstat(path), "reading the cleared profile recreated it")
         end)
 
         it("a profile stays cleared when its backup could only be emptied", function()
@@ -451,6 +526,8 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             uv.fs_open = real_open
             assert.is_nil(uv.fs_lstat(list))
             assert.equals(1, #warnings, vim.inspect(warnings))
+            assert.is_nil(cache_utils.read_json(P:new(list)), "a cleared cache came back from its backup")
+            assert.is_nil(uv.fs_lstat(list))
         end)
 
         it("the problem list is deleted, and the user warned, when a backup can be neither removed nor emptied", function()

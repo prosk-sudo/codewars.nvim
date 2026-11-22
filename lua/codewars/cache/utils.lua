@@ -36,11 +36,11 @@ local function warn_once(key, message)
     log.warn(message)
 end
 
---- `file` is absent, or was read in full and is damaged. A good copy at its
---- backup's name is written back into it and returned; the backup stays where
---- it is (only a writer removes one).
+--- `file` exists and was read in full, and is empty or undecodable. A good copy
+--- at its backup's name is written back into it and returned; the backup stays
+--- where it is (only a writer removes one).
 ---@param file string
----@param main_stat table? the descriptor's stat when `file` was read
+---@param main_stat table the descriptor's stat when `file` was read
 ---@return table? data the backup's, when it was recovered
 local function recover(file, main_stat)
     if not backup.has_backup(file) then return nil end
@@ -61,11 +61,13 @@ end
 function M.read_json(path)
     local file = backup.file_name(path)
     local state, detail, stat = backup.read_main(file)
-    -- Could not be read: not known to be damaged, so not recovered over.
-    if state == "unreadable" then return nil end
-    local data = state == "read" and parse(detail) or nil
+    -- Could not be read: not known to be damaged, so not recovered over. Absent:
+    -- deleted, by the plugin or by hand, and a leftover backup does not bring it back.
+    if state ~= "read" then return nil end
+    local data = parse(detail)
     if data ~= nil then return data end
-    -- Absent, or read in full and empty or undecodable.
+    -- Present, read in full, and empty or undecodable: damaged, as an interrupted
+    -- write over it leaves it.
     return recover(file, stat)
 end
 

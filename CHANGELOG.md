@@ -190,7 +190,8 @@ All notable changes to codewars.nvim are documented here.
   itself, with its owner, permissions and read-only state, is never swapped out.
   A cache that cannot be backed up first, because the directory cannot be
   written or the disk is full, is left as it is and the write is reported as
-  failed, not done without a backup. This guards against failed writes and
+  failed, not done without a backup. A cache you deleted is never brought back
+  from a backup left beside it. This guards against failed writes and
   crashes, and assumes the cache directory is yours: anyone who can write there
   can already change your caches.
 

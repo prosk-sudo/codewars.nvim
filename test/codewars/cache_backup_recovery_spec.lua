@@ -70,15 +70,19 @@ describe("cache backups", function()
             assert.equals(good, slurp(bak), "a reader removed the backup; only a writer does")
         end)
 
-        it("recovers from the backup when the file is missing, with the backup's permission bits", function()
+        -- A cache that is absent was deleted (by the plugin, or by hand): every write
+        -- over an existing cache is in place, so an interrupted one leaves it present
+        -- and damaged, never absent. A leftover backup must not bring it back.
+        it("does nothing when the file is missing: a leftover backup does not bring a deleted cache back", function()
             spit(bak, good)
-            uv.fs_chmod(bak, 384) -- 0600
+            local before = uv.fs_stat(bak)
 
-            assert.same({ kept = "yes" }, read())
+            assert.is_nil(read())
 
-            assert.equals(good, slurp(file))
-            assert.equals(384, bit.band(uv.fs_stat(file).mode, 511))
-            assert.equals(good, slurp(bak), "a reader removed the backup; only a writer does")
+            assert.is_nil(uv.fs_lstat(file), "a deleted cache was recreated from its backup")
+            assert.equals(good, slurp(bak))
+            assert.equals(before.mtime.nsec, uv.fs_stat(bak).mtime.nsec)
+            assert.same({}, warnings)
         end)
 
         it("says so once, not on every read", function()
@@ -126,7 +130,7 @@ describe("cache backups", function()
                     if uv.fs_access(bak, "R") then return pending("running as a user that ignores file modes") end
                 else
                     uv.fs_open = function(path, flags, mode)
-                        local writing = type(flags) == "number" and bit.band(flags, uv.constants.O_WRONLY) ~= 0
+                        local writing = type(flags) == "number" and bit.band(flags, (uv.constants or {}).O_WRONLY or 1) ~= 0
                         if path == bak and not writing then
                             return nil, "EACCES: permission denied: " .. bak, "EACCES"
                         end
