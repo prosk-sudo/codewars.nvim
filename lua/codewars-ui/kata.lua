@@ -129,8 +129,8 @@ function Kata:_default_file_name(lang)
     return by_slug
 end
 
---- Point self.file at this kata's solution in self.lang, seeding the starter when
---- there is none. Either way the starter goes on record, so :CW unfinished can tell work from a look.
+--- Point self.file at this kata's solution in self.lang, seeding the starter when there
+--- is none. A new file's starter goes on record, an existing file's only if none is yet.
 ---@return boolean existed
 function Kata:_open_file()
     local lang = utils.get_lang(self.lang)
