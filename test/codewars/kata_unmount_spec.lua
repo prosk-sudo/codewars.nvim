@@ -148,9 +148,7 @@ describe("Kata close lifecycle", function()
         wait_gone(buf)
     end)
 
-    -- :CW recent is where the user goes back to. A switch that fails and is
-    -- rolled back leaves them in the language they were in, and the history
-    -- has to say the same.
+    -- A rolled-back switch leaves the user in their old language; :CW recent must say so too.
     describe("and :CW recent", function()
         local recent = require("codewars.cache.recent")
 

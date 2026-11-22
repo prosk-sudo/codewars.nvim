@@ -96,8 +96,7 @@ function utils.kata_tabp(k)
     end
 end
 
---- The tab a kata is open in for this slug and language, and the kata
---- there. There is one tab per kata and language.
+--- The tab a kata is open in for this slug and language (one per pair), and that kata.
 ---@param title_slug string
 ---@param lang cw.lang
 ---@return integer? tabpage
