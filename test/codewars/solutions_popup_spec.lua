@@ -297,7 +297,7 @@ describe("Solutions popup", function()
         end)
     end)
 
-    -- nui draws the border above the content row, so two panes need 6 rows.
+    -- A bordered pane takes 3 rows (1 content + 2 border); two panes need 6.
     describe("geometry on short editors", function()
         local BORDER = 2
         local log = require("codewars.logger")
@@ -516,13 +516,13 @@ describe("Solutions popup", function()
             assert.are.same({}, said.warn)
         end)
 
-        -- Every spec here fires VimResized and nothing else, then checks the windows.
+        -- `resize()` only sets the editor size; `resized()` then fires VimResized by hand.
         describe("when the editor is resized while it is open", function()
             local function resized()
                 vim.api.nvim_exec_autocmds("VimResized", {})
             end
 
-            -- The solutions popup's own VimResized autocmds, in any group.
+            -- VimResized autocmds in the `codewars_solutions*` groups.
             local function resize_autocmds()
                 local mine = {}
                 for _, a in ipairs(vim.api.nvim_get_autocmds({ event = "VimResized" })) do

@@ -265,7 +265,7 @@ describe("markdown.from_html nesting depth cap", function()
     end)
 end)
 
--- Conversion must finish and never raise; unpairable tags stay as text.
+-- Conversion must finish and never raise; an unpaired `<b>`, `<blockquote>` or `<li>` stays as text.
 describe("markdown.from_html unbalanced tags", function()
     local function lines(text)
         return vim.split(vim.trim(text), "\n", { plain = true })
@@ -318,7 +318,7 @@ describe("markdown.from_html unbalanced tags", function()
     end)
 end)
 
--- Output of the one-by-one tags (links, images, lists, headings, containers).
+-- Well-formed output for links, images, lists, headings and unwrapped containers.
 describe("markdown.from_html rewritten tags", function()
     it("converts a heading of each level and trims its text", function()
         assert.are.equal("## Title", vim.trim(md.from_html("<h2> Title </h2>")))
@@ -401,8 +401,8 @@ describe("markdown.from_html tags that never end", function()
             "blockquote", "pre", "a", "img", "li", "ul", "ol", "h1", "h4", "strong", "code",
             "em", "b", "i", "sup", "sub", "center", "div", "span", "p",
         }
-        -- A finished `<ul x>`/`<p x>` is dropped even with no closer; every
-        -- other shape stays as written.
+        -- Only a finished `<tag x>` of a `dropped` tag may change (it is dropped
+        -- even with no closer); every other unit must come back as written.
         local dropped = { ul = true, ol = true, center = true, div = true, span = true, p = true }
         for _, tag in ipairs(tags) do
             for _, unit in ipairs({ "<" .. tag .. " ", "<" .. tag .. " x>", "</" .. tag .. " " }) do
@@ -417,7 +417,8 @@ describe("markdown.from_html tags that never end", function()
     end)
 
     it("is linear for an opener whose only > is the one in a distant closing tag", function()
-        -- Every `<a ` has the same far `>`; its closer is gone, so nothing pairs.
+        -- The first `<a ` ends at the far `>` of `</a>`, swallowing the closer, so
+        -- nothing pairs.
         local src = ("<a "):rep(20000) .. "</a>"
         local ms, out = render(src)
         assert.is_true(ms < LIMIT_MS, ("took %d ms"):format(ms))

@@ -273,7 +273,7 @@ function Solutions:render()
 end
 
 --- Re-lay out the panes on VimResized while mounted. One augroup per instance,
---- removed on close, so re-rendering never stacks a second autocmd.
+--- made only if absent, so re-rendering never stacks a second autocmd.
 function Solutions:_watch_resize()
     if self._resize_group then return end
     self._resize_group = vim.api.nvim_create_augroup("codewars_solutions_" .. self.id, { clear = true })

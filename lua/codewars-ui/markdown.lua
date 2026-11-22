@@ -158,7 +158,7 @@ end
 ---@param tag string
 ---@return string
 local function tag_attrs(opener, tag)
-    return opener:sub(#tag + 3, -2) -- past "<tag" and the whitespace, before ">"
+    return opener:sub(#tag + 3, -2) -- past "<tag" and one whitespace char, before ">"
 end
 
 --- A placeholder stash. Anything handed to `keep` is swapped for an opaque
