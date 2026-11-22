@@ -668,7 +668,7 @@ function cmd.completed()
     picker.completed()
 end
 
---- :CW unfinished -- kata you started and never submitted, to pick back up.
+--- :CW unfinished: kata you started and never submitted, to pick back up.
 function cmd.unfinished()
     require("codewars.picker").unfinished()
 end

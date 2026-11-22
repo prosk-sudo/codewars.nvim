@@ -24,7 +24,7 @@ local safe_name = require("codewars.safe_name")
 ---@field bufnr integer?
 ---@field winid integer?
 ---@field file Path?
----@field _picked_file string? solution file the user chose, to open rather than the one the slug names
+---@field _picked_file string? solution file the user chose, to open instead of the slug's
 ---@field description cw.ui.Description
 ---@field console cw.ui.Console
 ---@field last_attempt_success boolean
@@ -145,9 +145,7 @@ function Kata:_refuse_unsafe_name()
     return true
 end
 
---- The file the user chose from a list of solution files, when there is one
---- to open in `lang`: it still exists, and is for this language -- a switch to
---- another language has its own file to open.
+--- The file the user chose from a list, if it still exists and is for `lang`.
 ---@param lang table an entry from config.langs
 ---@return string?
 function Kata:_picked_file_name(lang)
@@ -172,24 +170,20 @@ function Kata:_legacy_file_name(lang)
     end
 end
 
---- The solution file a kata opens when nothing says which: the one named
---- after its slug.
+--- The file named after the slug, opened when nothing says which.
 ---@param lang table an entry from config.langs
 ---@return string
 function Kata:_default_file_name(lang)
     local by_slug = ("%s.%s"):format(self.slug, lang.ft)
-    -- Older versions named a kata opened by its id after the id. The kata has
-    -- its slug by now, so look for that file too, or the work in it never
-    -- shows and a fresh starter is seeded beside it.
+    -- Older versions named the file after the kata's id; find it, or its work never shows.
     if not config.storage.home:joinpath(by_slug):exists() then
         return self:_legacy_file_name(lang) or by_slug
     end
     return by_slug
 end
 
---- Point self.file at this kata's solution in self.lang, seeding the starter
---- when there is no file yet. Either way the starter goes on record, so that
---- :CW unfinished can tell a kata you are working in from one you only opened.
+--- Point self.file at this kata's solution in self.lang, seeding the starter when
+--- there is none. The starter goes on record so :CW unfinished can tell work from a look.
 ---@return boolean existed
 function Kata:_open_file()
     -- The last line of defence: mount() has refused these already, but this is
@@ -214,8 +208,7 @@ function Kata:_open_file()
     return false
 end
 
---- What :CW unfinished shows for this kata: the catalogue does not hold
---- every kata, so the name and rank go on record with its starter.
+--- What :CW unfinished records: name and rank (the catalogue lacks some kata).
 ---@return cw.KataInfo
 function Kata:_info()
     return { name = self.name, rank_id = self.rank }
@@ -371,18 +364,9 @@ function Kata:_abandon_mount()
     self._on_mounted = nil
 end
 
---- This kata is already open in a tab: there is one per kata and language
---- (detect_duplicate_kata, :CW recent and the focus layer are built on it),
---- so a second mount goes to that tab instead of opening another. A file
---- picked from a list is the one case where that can be a different file
---- than the user asked for -- `<slug>.py` open, `<id>.py` picked -- and then
---- the tab is not silently passed off as the pick.
----
---- Known limitation, accepted: the warning explains the outcome but the
---- picked file is not opened. It only arises when one kata has both an
---- id-named and a slug-named file for the same language, which only files
---- from old plugin versions can be. Closing the open tab and picking again
---- opens the picked file.
+--- The kata is already open in a tab (one per kata and language), so a second mount goes
+--- there. A picked file that differs from the open one (`<id>.py` vs `<slug>.py`, which only
+--- legacy files cause) is not opened: the warning says so. Close the tab and pick again.
 ---@param tabp integer
 ---@param open cw.ui.Kata? the instance open in that tab
 function Kata:_go_to_open_tab(tabp, open)
@@ -698,9 +682,8 @@ function Kata:reset_code()
     if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
         local starter = self:_starter_code()
         self:_set_code(starter)
-        -- This starter counts as untouched now too. The earlier ones stay on
-        -- record: only the buffer changed, and the file on disk, which the
-        -- list reads, still holds what it did until the buffer is saved.
+        -- This starter counts as untouched too, and the earlier ones stay on record:
+        -- the file the list reads keeps its old content until the buffer is saved.
         if self._file_name then
             require("codewars.unfinished").reseeded(self._file_name, starter, self:_info())
         end
@@ -800,9 +783,8 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 log.info(("Switched to %s"):format(new_lang))
             end)
 
-            -- Only a switch that went through is where the user now is: a
-            -- rolled-back one leaves them in the language they were in, and
-            -- :CW recent has to say the same.
+            -- Only a switch that went through is where the user now is; a
+            -- rolled-back one leaves them in their old language for :CW recent.
             if ok then
                 require("codewars.cache.recent").record(self)
             else
@@ -828,7 +810,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
 end)
 
 ---@class cw.ui.KataOpts
----@field file string? a solution file in storage.home to open, where the kata has more than one
+---@field file string? a solution file in storage.home to open, when the kata has several
 
 ---@param slug string
 ---@param lang? string

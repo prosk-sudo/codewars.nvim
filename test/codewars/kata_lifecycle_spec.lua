@@ -138,9 +138,8 @@ describe("Kata mount lifecycle", function()
         assert.has_no.errors(function() k:mount() end)
     end)
 
-    -- One tab per kata and language: picking another of its files from
-    -- :CW unfinished cannot open a second tab, but it must not look like it
-    -- opened the file either.
+    -- One tab per kata and language: picking another of its files from :CW unfinished
+    -- opens no second tab, and must not look as if it opened that file.
     describe("mounted onto the tab the kata is already open in", function()
         local open_tab, tabs_before
 
