@@ -643,6 +643,9 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
             uv.fs_open = real_open
             assert.is_nil(uv.fs_lstat(path))
             assert.equals(1, #warnings, vim.inspect(warnings))
+            assert.is_truthy(warnings[1]:find(bak, 1, true), "the warning does not name the backup")
+            assert.is_truthy(warnings[1]:find("delete it by hand", 1, true), warnings[1])
+            assert.is_nil(warnings[1]:find("come back", 1, true), "the warning promises a recovery that never happens")
             assert.is_nil(cache_utils.read_json(P:new(path)), "a cleared profile came back from its backup")
             assert.is_nil(uv.fs_lstat(path), "reading the cleared profile recreated it")
         end)

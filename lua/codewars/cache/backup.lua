@@ -360,8 +360,7 @@ function M.drop_or_warn(path)
     local ok, why = M.drop(path)
     if ok then return true end
     require("codewars.logger").warn(
-        ("Clearing %s: %s; delete it by hand, or the cache that was cleared can come back."):format(
-            M.file_name(path), why))
+        ("Clearing %s: %s; delete it by hand."):format(M.file_name(path), why))
     return false
 end
 
