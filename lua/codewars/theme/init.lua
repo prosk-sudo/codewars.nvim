@@ -133,9 +133,9 @@ local function definition(name, overrides, seen)
     return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
 end
 
---- The (fg, ctermfg) `target` has once apply() has run. Links are walked by hand:
---- apply() sets groups in no fixed order, so Neovim's resolution can be stale.
---- A link cycle has no color: styled links in it keep only their own style keys.
+--- The (fg, ctermfg) `target` has once apply() has run. Links are walked by hand
+--- (apply() order is unspecified, so Neovim's resolution can be stale). Reaching a
+--- group already on the chain gives no color; a group's own fg met on the way still counts.
 ---@param target string
 ---@param overrides table the cleaned `theme`
 ---@param seen table<string, true> groups already on the link chain
