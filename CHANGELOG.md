@@ -198,11 +198,15 @@ All notable changes to codewars.nvim are documented here.
   taken for its title, and its language list is no longer cut short; a result
   with no closing tag counts as dropped. Only real tags count: text that
   merely looks like one, in a comment, a script, a style, a textarea, a title,
-  a template or a quoted attribute value, neither makes a result nor changes
-  where one ends, and a result is the element with `list-item-kata` as a
-  whole class name. A result's link and languages are read from the parsed
-  attributes of its tags, so a `>` or an `href=` inside another attribute's
-  value cannot hide a title or stand in for one. A
+  a template, `xmp`, `iframe`, `noembed`, `noframes`, `noscript`, after a
+  `plaintext` or in a quoted attribute value, neither makes a result nor
+  changes where one ends, and a result is the element with `list-item-kata`
+  as a whole class name. A result's link and languages are read from the
+  parsed attributes of its tags, with character references decoded, so a
+  link written `href="&#47;kata&#47;..."` is read, and a `>` or an `href=`
+  inside another attribute's value cannot hide a title or stand in for one.
+  The reader is for Codewars' search markup, not a general HTML parser:
+  what it cannot read is dropped or, for a whole page, drift. A
   page with results that all fail to
   read now stops the kata list build (the cache is left as it was) and the
   daily check with a warning that the markup may have changed, instead of

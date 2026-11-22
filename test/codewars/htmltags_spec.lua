@@ -62,6 +62,28 @@ describe("api.htmltags", function()
             assert.are.same({ b = "it's" }, attrs("<a b=it's>"))
         end)
 
+        -- A browser reads character references in a value; a parser that does
+        -- not reads `href="&#47;kata..."` as a different link.
+        it("decodes character references in values: named, decimal and hex", function()
+            assert.are.same(
+                { href = "/kata/a?b=1&c", class = "x y", title = "A > B" },
+                attrs([[<a href="&#47;kata&#x2F;a&quest;b&equals;1&amp;c" class='x&#32;y' title=A&#x20;&gt;&#32;B>]])
+            )
+        end)
+
+        it("decodes a value once, and leaves an unknown reference as written", function()
+            assert.are.same(
+                { a = "&#47;", b = "x&bogus;y", c = "&#xD800;&#;" },
+                attrs([[<p a="&amp;#47;" b='x&bogus;y' c="&#xD800;&#;">]])
+            )
+        end)
+
+        it("does not decode a name, or let a reference end a tag or a value", function()
+            local tags = htmltags.scan([[<p a&#98;="1" b="&quot;" c='&#39;' d="&#62;">x</p>]])
+            assert.are.same({ ["a&#98;"] = "1", b = '"', c = "'", d = ">" }, tags[1].attrs)
+            assert.are.same({ "p", "/p" }, names([[<p a&#98;="1" b="&quot;" c='&#39;' d="&#62;">x</p>]]))
+        end)
+
         it("has no attributes for a closing tag or a tag without any", function()
             assert.are.same({}, htmltags.scan("<p></p>")[1].attrs)
             assert.are.same({}, htmltags.scan("<p></p>")[2].attrs)
@@ -99,6 +121,25 @@ describe("api.htmltags", function()
         assert.are.same({ "p", "/p" }, names("<p><TEXTAREA><b></TextArea ></p>"))
         assert.are.same({ "p" }, names("<p><textarea><div>never closed</p>"))
         assert.are.same({ "p" }, names("<p><title><div>never closed</p>"))
+    end)
+
+    -- The rest of HTML's raw text and escapable raw text elements. `noscript`
+    -- is read as it is when scripts run.
+    it("skips xmp, iframe, noembed, noframes and noscript as raw text", function()
+        for _, element in ipairs({ "xmp", "iframe", "noembed", "noframes", "noscript" }) do
+            local open, close = "<" .. element .. ">", "</" .. element .. ">"
+            assert.are.same({ "p", "/p" }, names("<p>" .. open .. '<div class="a"><!-- ' .. close .. "</p>"), element)
+            assert.are.same({ "p", "/p" }, names("<p>" .. open:upper() .. "<div>" .. close:upper() .. "</p>"), element)
+            assert.are.same({ "p", "b", "/b", "/p" }, names("<p>" .. open .. "<i>" .. close .. "<b></b></p>"), element)
+            assert.are.same({ "p" }, names("<p>" .. open .. "<div>never closed</p>"), element)
+        end
+    end)
+
+    it("stops reading at a plaintext, which has no end", function()
+        assert.are.same({ "p" }, names("<p><plaintext><div></div></plaintext></p>"))
+        assert.are.same({ "p" }, names("<p><PLAINTEXT>"))
+        local _, text = htmltags.scan("<p>a<plaintext><b>rest")
+        assert.are.equal("<p>a" .. (" "):rep(#"<plaintext><b>rest"), text)
     end)
 
     it("skips a template whole, counting nested templates", function()

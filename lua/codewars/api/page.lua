@@ -12,10 +12,20 @@ local ENTITIES = {
     ["&#x27;"] = "'",
     ["&#x2F;"] = "/",
     ["&nbsp;"] = " ",
+    -- The named forms of the characters a link or a class is made of, which
+    -- an attribute value can spell as references (`href="&sol;kata&sol;..."`).
+    ["&apos;"] = "'",
+    ["&sol;"] = "/",
+    ["&quest;"] = "?",
+    ["&num;"] = "#",
+    ["&equals;"] = "=",
+    ["&colon;"] = ":",
 }
 
---- Decode the common HTML entities found in scraped Codewars pages.
---- Single-pass table gsub: unknown entities pass through unchanged.
+--- Decode the common HTML entities found in scraped Codewars pages:
+--- the named ones in the table above, and every numeric one (decimal or hex).
+--- Single-pass table gsub: unknown entities pass through unchanged, and what
+--- a reference decodes to is not decoded again (`&amp;#47;` is `&#47;`).
 ---@param s string
 ---@return string
 function page.unescape(s)

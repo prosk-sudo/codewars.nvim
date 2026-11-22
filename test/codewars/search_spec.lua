@@ -901,6 +901,143 @@ describe("api.search", function()
             end)
         end)
 
+        -- Attribute values are read as a browser reads them, character
+        -- references decoded: `href="&#47;kata&#47;<id>"` is the same link.
+        describe("character references in attributes", function()
+            local function parse_link(anchor) return search.parse_html(block(anchor)) end
+
+            it("reads a link whose slashes are spelled as numeric or named references", function()
+                for _, href in ipairs({
+                    "&#47;kata&#47;" .. SLUG,
+                    "&#x2F;kata&#x2F;" .. SLUG,
+                    "&#x2f;kata&#x2f;" .. SLUG,
+                    "&sol;kata&sol;" .. SLUG,
+                    "/kata/" .. SLUG:sub(1, 1) .. "&#" .. SLUG:byte(2) .. ";" .. SLUG:sub(3), -- one digit of the id
+                    "/kata/" .. SLUG .. "&quest;beta&equals;false",
+                    "/kata/" .. SLUG .. "&#35;top",
+                }) do
+                    local results = parse_link(('<a href="%s">Kata</a>'):format(href))
+                    assert.are.equal(1, #results, href)
+                    assert.are.equal(SLUG, results[1].slug, href)
+                end
+            end)
+
+            it("does not call a page of encoded links drift", function()
+                local link = ('<a href="&#47;kata&#47;%s">Kata</a>'):format(SLUG)
+                local results, err, dropped = search.parse_html(block(link) .. block(link))
+                assert.is_nil(err)
+                assert.are.equal(2, #results)
+                assert.are.equal(0, dropped)
+            end)
+
+            it("decodes a value once, as a browser does", function()
+                local results, err = parse_link(('<a href="&amp;#47;kata&amp;#47;%s">Kata</a>'):format(SLUG))
+                assert.are.same({}, results)
+                assert.is_true(err.drift)
+            end)
+
+            it("counts an encoded list-item-kata in class as the block's class", function()
+                for _, class in ipairs({ "list-item-&#107;ata", "&#108;ist&#45;item&#45;kata x", "a &#x6C;ist-item-kata" }) do
+                    local html = ('<div class="%s"><a href="/kata/%s">Name</a></div>'):format(class, SLUG)
+                    local results, err, dropped = search.parse_html(html)
+                    assert.is_nil(err, class)
+                    assert.are.equal(1, #results, class)
+                    assert.are.equal(0, dropped, class)
+                end
+                -- Decoded, it is still a whole class name or it is not a block.
+                local results = search.parse_html(('<div class="not-&#108;ist-item-kata"><a href="/kata/%s">N</a></div>'):format(SLUG))
+                assert.are.same({}, results)
+            end)
+
+            it("reads an encoded data-language", function()
+                local results = search.parse_html(result(1, "One", 0, {
+                    extra = [[<i data-language="py&#116;hon"></i><i data-language='&#x72;uby'></i>]]
+                        .. [[<i data-language="c&#43;&#43;"></i>]],
+                }))
+                assert.are.same({ "python", "ruby", "c++" }, results[1].languages)
+            end)
+
+            it("leaves a reference it does not know as written", function()
+                local results = search.parse_html(result(1, "One", 0, {
+                    extra = [[<i data-language="a&bogus;b"></i><i data-language="x&#xD800;y"></i>]],
+                }))
+                assert.are.same({ "a&bogus;b", "x&#xD800;y" }, results[1].languages)
+                -- And a link that does not decode to /kata/<id> is not a kata.
+                assert.are.equal(0, #parse_link(('<a href="/kata/%s&bogus;">Kata</a>'):format(SLUG)))
+                assert.are.equal(0, #parse_link(('<a href="&bogus;/kata/%s">Kata</a>'):format(SLUG)))
+            end)
+        end)
+
+        -- The rest of HTML's raw text elements: nothing between the tags is
+        -- markup. `noscript` is read as it is when scripts run.
+        describe("xmp, iframe, noembed, noframes, noscript and plaintext", function()
+            local ELEMENTS = { "xmp", "iframe", "noembed", "noframes", "noscript" }
+
+            it("does not take a block in one of them for a result", function()
+                local copy = result(3, "Inert Kata", 2)
+                for _, element in ipairs(ELEMENTS) do
+                    for _, inert in ipairs({
+                        ("<%s>%s</%s>"):format(element, copy, element),
+                        ("<%s>%s</%s>"):format(element:upper(), copy, element:upper()),
+                    }) do
+                        local results, err, dropped = search.parse_html(inert)
+                        assert.are.same({}, results, inert)
+                        assert.is_nil(err, inert) -- no false drift
+                        assert.are.equal(0, dropped, inert)
+
+                        results, err, dropped = search.parse_html(inert .. result(1, "One", 2) .. inert)
+                        assert.is_nil(err, inert)
+                        assert.are.same({ "One" }, names(results), inert)
+                        assert.are.equal(0, dropped, inert)
+                    end
+                end
+            end)
+
+            it("does not read a title out of one inside a block, or count its elements", function()
+                local link = '<a href="/kata/' .. hex(9) .. '">Hidden Title</a>'
+                for _, element in ipairs(ELEMENTS) do
+                    local inside = ("<%s>%s<div><div></%s>"):format(element, link, element)
+                    local results, err, dropped = search.parse_html(unreadable_title(2, "Two", 2, { extra = inside }))
+                    assert.are.same({}, results, element)
+                    assert.is_true(err.drift, element)
+                    assert.are.equal(1, dropped, element)
+
+                    results, err, dropped = search.parse_html(
+                        '<div id="results">' .. result(1, "One", 2, { extra = inside }) .. footer(10) .. "</div>"
+                    )
+                    assert.is_nil(err, element)
+                    assert.are.same({ "One" }, names(results), element)
+                    assert.are.equal(0, dropped, element)
+                end
+            end)
+
+            it("returns what it read when one is never closed", function()
+                for _, element in ipairs(ELEMENTS) do
+                    local results, err, dropped = search.parse_html(
+                        result(1, "One", 2) .. "<" .. element .. ">" .. result(2, "Two", 2)
+                    )
+                    assert.is_nil(err, element)
+                    assert.are.same({ "One" }, names(results), element)
+                    assert.are.equal(0, dropped, element)
+                end
+            end)
+
+            it("stops reading at a plaintext", function()
+                local results, err, dropped = search.parse_html(result(1, "One", 2) .. "<plaintext>" .. result(2, "Two", 2))
+                assert.is_nil(err)
+                assert.are.same({ "One" }, names(results))
+                assert.are.equal(0, dropped)
+
+                -- A block that a plaintext cuts off is unclosed, so it is dropped.
+                results, err, dropped = search.parse_html(
+                    result(1, "One", 2) .. result(2, "Two", 2, { extra = "<plaintext>" })
+                )
+                assert.is_nil(err)
+                assert.are.same({ "One" }, names(results))
+                assert.are.equal(1, dropped)
+            end)
+        end)
+
         -- One pass over the page: a block is scanned once, and a block that
         -- never closes does not send every block after it back over the rest
         -- of the page. A generous bound, only to catch a rescan per block.

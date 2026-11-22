@@ -1,6 +1,16 @@
 --- A small HTML tag tokenizer, for telling real tags from text that only looks
 --- like them.
 ---
+--- Scope. This reads Codewars' kata-search markup: real tags, their
+--- attributes with character references decoded, comments, and the elements
+--- whose contents are text. It is not a general HTML5 parser, and does not try
+--- to be: it does not build a tree, repair misnested or unclosed elements, or
+--- know the corner cases of foreign (SVG, MathML) content, `--!>` comment
+--- ends, or the Windows-1252 remapping of numeric references. What it cannot
+--- read is not guessed at: whoever builds on it counts it as a dropped block,
+--- or as drift for a whole page, so that a markup change shows up as a warning
+--- or an error and never as a silently wrong list.
+---
 --- A page's markup is not what a pattern for `<div` finds: `<!-- <div> -->`,
 --- a `<script>` holding an HTML template, a `title="a > b <div>"` attribute
 --- are all text. One forward pass reads the page the way a browser would
@@ -13,11 +23,13 @@
 ---     page. `<!-->` and `<!--->` are whole comments, as in HTML.
 ---   * `<!DOCTYPE ...>`, `<![CDATA[ ... >`, `<? ... >` and `</ ... >` with no
 ---     name: skipped to the next `>`, as the bogus comments they are.
----   * `<script>` and `<style>` (raw text), `<textarea>` and `<title>`
----     (escapable raw text): what is between the tags is text. The element is
----     skipped whole, up to the first closing `</script`, `</style`,
----     `</textarea` or `</title` (any case); nothing inside is a tag. One
----     never closed runs to the end of the page.
+---   * `<script>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`
+---     and `<noscript>` (raw text; `noscript` as it is read when scripts run),
+---     `<textarea>` and `<title>` (escapable raw text): what is between the
+---     tags is text. The element is skipped whole, up to the first closing tag
+---     of its name (any case); nothing inside is a tag. One never closed runs
+---     to the end of the page. `<plaintext>` has no closing tag: it and
+---     everything after it is text.
 ---   * `<template>`: its contents are inert (a browser keeps them out of the
 ---     page). The element is skipped whole up to its matching `</template>`,
 ---     counting nested templates; comments and scripts inside are read as
@@ -30,6 +42,9 @@
 --- tag's `attrs` maps the lower-cased names to their values (quoted or not,
 --- `""` for a bare name), the first of a repeated name winning, as in a
 --- browser. Text in one attribute's value is never read as another attribute.
+--- Values are decoded as a browser decodes them: `&#47;`, `&#x2F;` and
+--- `&sol;` are all `/` (see api.page's `unescape`; a reference it does not
+--- know is left as written, and a decoded value is not decoded again).
 --- The page is read once, front to back, with no backtracking: every `find`
 --- starts where the last one stopped.
 ---@class cw.Api.HtmlTags
@@ -53,13 +68,22 @@ local function any_case(name)
     return (name:gsub("%a", function(c) return "[" .. c:lower() .. c:upper() .. "]" end))
 end
 
---- Raw-text elements, and where each one's text ends: its closing tag.
-local RAW_TEXT_END = {
-    script = "</" .. any_case("script") .. "[%s/>]",
-    style = "</" .. any_case("style") .. "[%s/>]",
-    textarea = "</" .. any_case("textarea") .. "[%s/>]",
-    title = "</" .. any_case("title") .. "[%s/>]",
-}
+--- Raw-text and escapable raw text elements, and where each one's text ends:
+--- its closing tag.
+local RAW_TEXT_END = {}
+for _, name in ipairs({
+    "script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title",
+}) do
+    RAW_TEXT_END[name] = "</" .. any_case(name) .. "[%s/>]"
+end
+
+--- The text of an attribute value, character references decoded.
+---@param value string
+---@return string
+local function decode(value)
+    if not value:find("&", 1, true) then return value end
+    return require("codewars.api.page").unescape(value)
+end
 
 --- Read the attributes of the tag whose name ends just before `i`, up to its
 --- `>`. A quote opens a value only straight after an `=`.
@@ -95,7 +119,7 @@ local function scan_attributes(html, i)
                 value, i = html:sub(i, value_end), value_end + 1
             end
         end
-        if attrs[name] == nil then attrs[name] = value end
+        if attrs[name] == nil then attrs[name] = decode(value) end
     end
 end
 
@@ -189,7 +213,10 @@ function htmltags.scan(html)
             if not tag then break end -- the page ends inside the tag
             pos = tag.finish + 1
 
-            if not tag.close and RAW_TEXT_END[tag.name] then
+            if not tag.close and tag.name == "plaintext" then
+                blank(tag.start, len) -- no closing tag: the rest of the page is text
+                pos = len + 1
+            elseif not tag.close and RAW_TEXT_END[tag.name] then
                 local text_end = html:find(RAW_TEXT_END[tag.name], pos)
                 stop = (text_end and html:find(">", text_end, true)) or len
                 blank(tag.start, stop)

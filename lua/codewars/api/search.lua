@@ -322,6 +322,15 @@ end
 
 --- Parse the search results HTML to extract kata entries.
 ---
+--- Scope. This reads Codewars' kata-search markup: real tags, attributes with
+--- character references decoded, comments, and the elements whose contents
+--- are text (see api.htmltags). It is not a general HTML5 parser. Whatever it
+--- cannot read is not guessed at: a result it cannot read counts as dropped,
+--- and a page of results it cannot read at all is drift, so that a change in
+--- Codewars' markup shows up as a warning or an error, never as a silently
+--- wrong list. HTML5 corner cases outside that markup are deliberately out of
+--- scope, and fail the same loud way.
+---
 --- Returns the entries it could read, an error when the page has result
 --- blocks and NONE of them could be read (`err.drift` is true: the markup
 --- changed, which is not the same as a page with no results), and how many
