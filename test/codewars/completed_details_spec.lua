@@ -1,5 +1,4 @@
--- Kata details looked up from Codewars and cached for the lists that show a
--- kata the catalogue does not hold: :CW completed, and :CW unfinished.
+-- Kata details cached for lists that show kata the catalogue lacks (:CW completed and unfinished).
 local P = require("plenary.path")
 
 describe("completed.enrich", function()

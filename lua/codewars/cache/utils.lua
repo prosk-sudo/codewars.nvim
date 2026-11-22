@@ -82,7 +82,7 @@ end
 --- cannot be backed up first is not written at all, and that is reported.
 ---@param path Path
 ---@param data table
----@param opts { quiet: boolean? }? `quiet`: log nothing on failure, for a caller that reports it itself in its own words (and may try again, as a batch of lookups does, without a line per try)
+---@param opts { quiet: boolean? }? `quiet`: log nothing on failure, for a caller that reports it itself
 ---@return boolean ok
 ---@return string? err
 function M.write_json(path, data, opts)

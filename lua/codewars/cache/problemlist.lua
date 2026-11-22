@@ -45,8 +45,7 @@ problemlist.MAX_COOLDOWN_MS = 60000
 --- server that will not let a single page through.
 problemlist.MAX_COOLDOWNS = 4
 
---- How long to wait after the `refusals`-th 429 in a row: COOLDOWN_MS,
---- doubling each time, up to MAX_COOLDOWN_MS.
+--- Wait after the `refusals`-th 429 in a row: COOLDOWN_MS doubling, up to MAX_COOLDOWN_MS.
 ---@param refusals integer
 ---@return integer ms
 function problemlist.cooldown_ms(refusals)
@@ -60,11 +59,8 @@ function problemlist.slower(pace_ms)
     return math.min(math.floor(pace_ms * 1.25), problemlist.MAX_PACE_MS)
 end
 
---- A scheduler for paced requests: `paced(fn)` runs `fn` no sooner than
---- `pace_ms()` after the previous one started. Always deferred, even at zero
---- delay, so a request whose callback fires synchronously cannot recurse
---- through a whole run. Once `cancelled()` is true nothing more is sent, even
---- by a request already waiting its turn.
+--- Runs `paced(fn)` no sooner than `pace_ms()` after the previous start. Always deferred, so a
+--- synchronous callback cannot recurse; once `cancelled()`, even waiting requests are not sent.
 ---@param pace_ms fun(): integer read each time, so a run can slow down
 ---@param cancelled fun(): boolean
 ---@param since integer? when the previous request started (uv.now()), if one just did

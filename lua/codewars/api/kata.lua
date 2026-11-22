@@ -7,7 +7,7 @@ local kata = {}
 
 ---@param slug string
 ---@param cb? function
----@param opts? table request options for the request layer, e.g. `retry_rate_limited = false` for a caller that paces itself; only with `cb`
+---@param opts? table request options, e.g. `retry_rate_limited = false` for a self-pacing caller; only with `cb`
 ---@return table?, cw.err?
 function kata.get(slug, cb, opts)
     local endpoint = urls.kata:format(slug)

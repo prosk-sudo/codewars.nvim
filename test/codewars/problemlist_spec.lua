@@ -577,8 +577,7 @@ describe("cache.problemlist daily check", function()
     end)
 end)
 
--- What the kata-list build paces itself with, shared with the other lookups
--- that have to stay under Codewars' ~60 requests a minute.
+-- Pacing helpers shared with other lookups, to stay under Codewars' ~60 requests a minute.
 describe("cache.problemlist pacing helpers", function()
     local problemlist = require("codewars.cache.problemlist")
     local uv = vim.uv or vim.loop

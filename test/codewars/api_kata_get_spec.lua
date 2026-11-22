@@ -1,6 +1,5 @@
--- A caller that paces its own requests has to say so to the request layer:
--- GETs retry a refused (429) reply on their own backoff unless told not to,
--- which spends slots of the rate-limit window the caller is trying to keep.
+-- A caller that paces its own requests must opt out of the request layer's 429 retries,
+-- which would spend the rate-limit window's slots.
 describe("api.kata.get", function()
     local utils = require("codewars.api.utils")
     local kata = require("codewars.api.kata")

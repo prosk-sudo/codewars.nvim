@@ -52,8 +52,7 @@ end
 local function fetch_user_data(menu, cb, opts)
     local user_api = require("codewars.api.user")
     local profile_cache = require("codewars.cache.profile")
-    -- Detection is shared with whatever else needs the account before the
-    -- menu has run (:CW unfinished): see codewars.identity.
+    -- Shared with whatever needs the account before the menu runs (:CW unfinished).
     local identity = require("codewars.identity")
 
     -- cb redraws, so calling it per update is how progressively better data

@@ -1,5 +1,4 @@
--- A caller that reports a failed cache write itself, once and in its own
--- words, asks write_json not to log one more line per failure.
+-- A caller that reports a failed write itself asks write_json not to log it too.
 local P = require("plenary.path")
 
 describe("cache.utils write_json", function()
