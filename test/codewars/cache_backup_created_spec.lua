@@ -1,5 +1,5 @@
--- A file created with O_CREAT|O_EXCL is ours: if anything fails after that it is removed, or emptied if it can't be;
--- if neither works the error names it. A file that was already there is never unlinked for a failed write.
+-- Covers: a file created with O_CREAT|O_EXCL (new cache, fresh backup, dangling-link target) when a write, its
+-- clean-up or its close fails, and a file that was already there.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop

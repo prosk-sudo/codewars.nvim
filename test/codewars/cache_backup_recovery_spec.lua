@@ -1,5 +1,5 @@
--- <path>.bak is the previous cache while a write is under way. If a restore failed or the editor died, the next read
--- recovers from it if it is complete and the cache is no good. Readers never remove one or read through a symlink.
+-- Covers: recovery on read (present, damaged cache; complete backup) and the cases that must not recover, a failed
+-- restore read back, deleting a cache, and the scans over cache and solution folders.
 local P = require("plenary.path")
 
 -- A kata id: 24 hex digits, which the stash accepts.

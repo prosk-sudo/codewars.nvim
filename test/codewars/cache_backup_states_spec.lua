@@ -1,5 +1,5 @@
--- What write_json does for each state of the cache, its <path>.bak and the directory: an existing cache is not written
--- without a backup; a good .bak is not overwritten by an undecodable cache; a new copy never writes through a .bak.
+-- Covers: write_json state by state: the cache (absent, good, damaged), its <path>.bak (absent, good, unreadable,
+-- stale, symlink) and whether the cache can be backed up first.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop

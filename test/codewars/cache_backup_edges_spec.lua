@@ -1,5 +1,5 @@
--- Plain-bug edges of the in-place writer: an absent cache is created exclusively (a dangling link's target, never
--- link); only ENOENT means a backup is absent; deleting a cache drops its backup or says it can't; no isabsolutepath.
+-- Covers: absent caches (exclusive create, link targets), stale and unexaminable backups, and deleting a cache
+-- with its backup.
 local P = require("plenary.path")
 
 -- A kata id: 24 hex digits, which the stash accepts.

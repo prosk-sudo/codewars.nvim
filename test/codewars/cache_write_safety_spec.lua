@@ -1,5 +1,5 @@
--- A cache write that fails partway puts the previous cache back, or keeps it in <path>.bak if it can't.
--- The file is rewritten in place, so it keeps its owner, mode and ACLs.
+-- Covers: write_json when a write fails partway (a full disk, a zero-byte write): restoring, writing in place,
+-- the backup's permission bits, and what is left in the cache and in <path>.bak.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop

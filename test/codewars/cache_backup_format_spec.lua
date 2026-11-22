@@ -1,5 +1,5 @@
--- A backup is trusted only if its `CWBAK1 <byte-length> <sha256-hex>` header, length and checksum match and the
--- payload decodes: a crash can leave a prefix that is itself valid JSON.
+-- Covers: the backup format (a `CWBAK1 <byte-length> <sha256-hex>` header, then the payload), reads of complete and
+-- damaged backups, and a crash while one is being written.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop

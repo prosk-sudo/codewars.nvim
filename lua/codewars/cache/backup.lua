@@ -1,5 +1,6 @@
---- Writes a cache file in place, keeping a copy of the old bytes at <file>.bak (Vim's
---- `backupcopy=yes`): put back if the write fails (else kept in the .bak), removed or emptied once it lands.
+--- Writes a cache file in place, keeping a copy of the old bytes at <file>.bak (Vim's `backupcopy=yes`).
+--- On failure the copy is put back (else kept in the .bak); once the write lands it is removed, else emptied,
+--- else the write is reported as failed.
 --- An existing cache is never replaced by a temp file and rename, so it keeps its inode, owner, mode, ACLs and
 --- read-only state. It is not written without a backup: a full disk mid-write would destroy the only copy.
 ---
@@ -446,13 +447,14 @@ local function not_backed_up(file, err)
     return ("could not back up %s before writing it (%s); it was left as it was"):format(file, tostring(err))
 end
 
---- `file` exists and was read as `original` (stat `identity`): back it up, write in place, restore on failure.
+--- `file` was read as `original` (stat `identity`): back it up, write in place; on failure restore or keep the .bak.
 --- In place, never via a temp file and rename: that would lose its owner, mode, ACLs and read-only state.
 local function write_over(file, bytes, original, identity, parse)
     local bak = M.backup_path(file)
     local function decodes() return parse(original) ~= nil end
 
-    -- An unreadable copy is unknown, not junk: beside a bad cache it may be the one good copy, so touch nothing.
+    -- An unexaminable copy refuses the write; so does an unreadable one beside a cache that does not decode (it may
+    -- be the one good copy). Beside a decoding cache an unreadable copy is replaced.
     local state, kept = inspect_backup(bak, parse)
     if state == "unknown" then
         return false, not_backed_up(file, ("%s could not be examined (%s), and may be the only good copy"):format(
@@ -483,7 +485,7 @@ local function write_over(file, bytes, original, identity, parse)
         return true, nil, join(note, message)
     end
     if not truncated then
-        -- Refused before anything changed, so nothing to put back. Our own copy goes; a good one left earlier stays.
+        -- Refused before anything changed: nothing to put back. Our copy is removed if it can be; a good one is kept.
         if not kept then uv.fs_unlink(bak) end
         return false, err, note
     end
