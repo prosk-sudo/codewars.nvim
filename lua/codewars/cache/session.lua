@@ -78,7 +78,7 @@ function session.count()
     return count
 end
 
---- Delete all cached sessions and their backups (a leftover one would bring its session back).
+--- Delete all cached sessions and their backups, so no stale backup is left beside a session made later.
 --- Returns how many sessions were deleted; backups are not counted.
 ---@return integer
 function session.clear_all()

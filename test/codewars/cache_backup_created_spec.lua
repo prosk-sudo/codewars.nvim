@@ -1,5 +1,5 @@
--- A file created with O_CREAT|O_EXCL is ours: if anything fails after that it is removed, or emptied if it can't be,
--- so no partial cache, link target or .bak is left. A file that was already there is never unlinked for a failed write.
+-- A file created with O_CREAT|O_EXCL is ours: if anything fails after that it is removed, or emptied if it can't be;
+-- if neither works the error names it. A file that was already there is never unlinked for a failed write.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop
@@ -150,8 +150,8 @@ describe("cache.backup, a file that was created and then failed", function()
         end)
     end)
 
-    -- The clean-up can fail too (an I/O error on the unlink): the file is emptied first, while still open,
-    -- and an empty file never decodes, so a partial one cannot be recovered from.
+    -- The clean-up can fail too (an I/O error on the unlink): the file is emptied first, while still open;
+    -- an empty file never decodes, so it cannot be recovered from.
     describe("when the clean-up of a file that was created fails as well", function()
         -- A prefix that is itself valid JSON, which is what makes a partial file dangerous.
         local number = "1234567890123456"
@@ -256,7 +256,7 @@ describe("cache.backup, a file that was created and then failed", function()
     end)
 
     -- A failed close leaves no descriptor to empty through: the path is unlinked, else reopened (no create, no
-    -- truncate), checked to be the file that was created, and emptied.
+    -- truncate), checked to be the file that was created, and emptied if it is.
     describe("when the close of a created file fails", function()
         local stash_id = "0123456789abcdef01234567"
 

@@ -73,7 +73,7 @@ end
 --- write look identical to a successful one.
 ---
 --- A failed write keeps the previous cache (see cache.backup): put back in place, or left in the backup if that fails.
---- A cache that cannot be backed up first is not written, and that is reported.
+--- A cache that cannot be backed up first is not written, and the error is returned.
 ---@param path Path
 ---@param data table
 ---@param opts { quiet: boolean? }? `quiet`: log nothing on failure, for a caller that reports it itself

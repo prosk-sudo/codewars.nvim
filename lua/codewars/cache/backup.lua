@@ -1,5 +1,5 @@
 --- Writes a cache file in place, keeping a copy of the old bytes at <file>.bak (Vim's
---- `backupcopy=yes`): put back if the write fails (left in the .bak if that fails too), dropped once it lands.
+--- `backupcopy=yes`): put back if the write fails (else kept in the .bak), removed or emptied once it lands.
 --- An existing cache is never replaced by a temp file and rename, so it keeps its inode, owner, mode, ACLs and
 --- read-only state. It is not written without a backup: a full disk mid-write would destroy the only copy.
 ---
@@ -340,8 +340,8 @@ local function discard_backup(bak)
     return false, ("the new data was written, but a stale backup at %s %s; delete it by hand"):format(bak, detail)
 end
 
---- Remove the backup of a cache being deleted, so the next read does not "recover" it. Unlinks (a symlink goes,
---- its target stays), else empties; `false` only if it can be neither removed nor emptied.
+--- Remove the backup of a cache being deleted, so no stale backup is left beside a cache made later. Unlinks (a
+--- symlink goes, its target stays), else empties; `false` only if it can be neither removed nor emptied.
 ---@param path Path|string
 ---@return boolean ok
 ---@return string? why when not ok, a sentence naming the backup

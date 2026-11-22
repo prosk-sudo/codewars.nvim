@@ -1,5 +1,5 @@
--- A cache write that fails partway must leave the previous cache as it was: the old bytes go to <path>.bak,
--- the file is rewritten in place (keeping its owner, mode and ACLs), and the copy is put back on failure.
+-- A cache write that fails partway puts the previous cache back, or keeps it in <path>.bak if it can't.
+-- The file is rewritten in place, so it keeps its owner, mode and ACLs.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop

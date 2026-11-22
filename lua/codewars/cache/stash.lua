@@ -43,7 +43,7 @@ function M.for_kind(prefix)
     ---@return boolean removed
     function kind.delete(id)
         local path = file(id)
-        -- A backup that cannot be removed is warned about; it cannot bring back an absent stash.
+        -- A backup that cannot be removed is warned about; the deletion goes on.
         backup.drop_or_warn(path)
         if not path:exists() then
             return false
