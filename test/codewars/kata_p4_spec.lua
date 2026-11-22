@@ -51,8 +51,7 @@ describe("kata.is_server_id", function()
         assert.is_false(kata.is_server_id(string.rep("z", 24)))
     end)
 
-    -- The id is used as a file name (`<id>.py`), so "contains 24 hex
-    -- characters" is not enough: the whole string must be them.
+    -- The id becomes a file name, so the whole string must be 24 hex characters, not just contain them.
     it("accepts exactly 24 hex characters, upper or lower case", function()
         assert.is_true(kata.is_server_id(string.rep("a", 24)))
         assert.is_true(kata.is_server_id(string.rep("F", 24)))

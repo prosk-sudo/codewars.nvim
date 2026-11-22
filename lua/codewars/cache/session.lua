@@ -7,10 +7,8 @@ local session = {}
 
 local dir_created = false
 
---- The cache file for one kata in one language, or nil when the slug or the
---- language is not a plain name. Both are joined into the file name and come
---- from a Codewars reply, so `../x` would otherwise write beside the sessions
---- directory instead of in it.
+--- The cache file for a kata and language, or nil when either is not a plain name.
+--- Both come from a Codewars reply, so `../x` would otherwise write outside the sessions directory.
 ---@param slug string
 ---@param lang string
 ---@return Path?

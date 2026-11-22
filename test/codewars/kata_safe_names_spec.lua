@@ -1,9 +1,5 @@
---- A kata slug, a kata id and a picked file name all become part of a path:
---- the solution file in storage.home, the session cache beside it. Each can
---- come from a Codewars reply or from what the user typed, so none may carry
---- a separator or `..` out of those directories. Every assertion about a
---- hostile name also checks the whole sandbox: nothing may be created
---- anywhere, not just inside storage.home.
+--- A kata slug, id and picked file name become path components, so none may carry a separator or `..`.
+--- Hostile-name tests snapshot the whole sandbox: nothing may be created anywhere.
 local P = require("plenary.path")
 local uv = vim.uv or vim.loop
 
@@ -48,8 +44,7 @@ local session_cache = require("codewars.cache.session")
 
 local HEX = "5264d2b162488dc400000001"
 
---- Every path under `dir`, with its kind and size, so a change to a file's
---- contents shows as well as a new or missing file.
+--- Every path under `dir` with its kind and size, so a content change shows as well as a new file.
 ---@param dir string
 ---@param found string[]?
 ---@return string[]
@@ -74,8 +69,7 @@ local function read(path)
     return table.concat(vim.fn.readfile(path), "\n")
 end
 
---- The cache creates its sessions directory on first use; make that happen
---- before a snapshot, so only what the call under test does shows in it.
+--- Create the sessions directory up front, so a snapshot shows only what the call under test does.
 local function warm_up_session_cache()
     session_cache.save("warm-up", "python", {})
     session_cache.delete("warm-up", "python")
@@ -87,8 +81,7 @@ local function write(path, text)
 end
 
 describe("a kata with a slug that cannot name a file", function()
-    -- A slug that was passed but is not a string (`false`, a number, a table)
-    -- was given, and is as invalid as one with a `/` in it.
+    -- A given non-string slug (`false`, a number, a table) is as invalid as one with a `/`.
     local BAD = {
         "../evil", "a/b", "..", "", "a\\b", "a b", "evil.py", "../" .. HEX, HEX .. "/x", "a\nb",
         false, true, 0, 12, {},
@@ -165,8 +158,7 @@ describe("a kata with a slug that cannot name a file", function()
         assert.truthy(errors[1]:find("slug", 1, true), errors[1])
     end)
 
-    -- A reply that names the kata at all is Codewars' answer, so an empty or
-    -- non-string slug is an invalid one, not a missing one.
+    -- A present reply slug is Codewars' answer: "" or a non-string is invalid, not missing.
     for _, sent in ipairs({ "", false, true, 0, 12, { "../evil" } }) do
         it(("is refused when Codewars sends the slug %s"):format(vim.inspect(sent)), function()
             get_reply = { id = HEX, slug = sent, languages = { "python" } }
@@ -187,9 +179,7 @@ describe("a kata with a slug that cannot name a file", function()
         end)
     end
 
-    -- No `slug` field at all means the reply did not name the kata, which is
-    -- not the same as naming it with nothing: the slug asked for, already
-    -- checked, stands.
+    -- No `slug` field: the reply did not name the kata, so the requested slug stands.
     it("keeps the requested slug when Codewars sends none", function()
         get_reply = { id = HEX, languages = { "python" } }
         local before = snapshot()
@@ -265,7 +255,7 @@ describe("the file named after a kata's id", function()
 
     for _, id in ipairs({ "../" .. HEX, HEX .. "/x", "../" .. ("a"):rep(24), ("a"):rep(23), ("a"):rep(25) }) do
         it(("is not looked up for the id %s"):format(vim.inspect(id)), function()
-            -- Where `<id>.py` would land if the id were trusted as a path.
+            -- Where `<id>.py` would land if the id were trusted.
             local outside = vim.fn.fnamemodify(home_dir .. "/" .. id .. ".py", ":p")
             write(outside, "OUTSIDE")
             legacy_n = legacy_n + 1
@@ -293,8 +283,7 @@ describe("a file picked from a list", function()
         return kata
     end
 
-    -- `file` given as `false`, `true`, a number, `""` or a table was given,
-    -- and is refused like a bad string: only an absent one means "not picked".
+    -- A given `false`, `true`, number, `""` or table is refused; only nil means "not picked".
     local BAD_FILES = {
         "../x.py", "a/b.py", "/etc/x.py", "..\\x.py", "a\\b.py", "x..py", "x.y.py", ".py", "x.py/",
         false, true, 0, "", {},
@@ -355,7 +344,6 @@ describe("a file picked from a list", function()
         assert.are.same({}, errors)
     end)
 
-    -- Only a `file` that is absent means "not picked".
     local NOT_GIVEN = {
         function(slug) return Kata:new(slug, "python") end,
         function(slug) return Kata:new(slug, "python", {}) end,
@@ -376,9 +364,7 @@ describe("a file picked from a list", function()
     end
 end)
 
--- The language is joined into the session file name and picks the solution's
--- extension, so it is judged like the slug: as given, nil being the only way
--- to ask for the default.
+-- The language names the session file and the extension, so it is judged like the slug: as given.
 describe("a kata with a language that cannot name a file", function()
     before_each(function()
         errors, get_calls, train_calls, get_reply = {}, 0, 0, nil

@@ -106,15 +106,8 @@ function Kata:retemplate(op)
     return true
 end
 
---- Why this kata cannot name a file, or nil when it can. The slug, the
---- language and a picked file name become path components in storage.home and
---- the session cache, and each can come from a Codewars reply or from what was
---- typed, so each must be a plain name: nothing in it may carry a separator or
---- `..` out of those directories.
----
---- Each is judged as it was given. Only nil means "not given" (the language
---- then defaults, a file is simply not picked); `false`, `""`, a number or a
---- table was given, and is invalid.
+--- Why this kata cannot name a file, or nil when it can. Slug, language and picked file become path
+--- components, so each must be a plain name. Judged as given: only nil means "not given".
 ---@return string?
 function Kata:_unsafe_name()
     if not safe_name.is_slug(self.slug) then
@@ -132,8 +125,7 @@ function Kata:_unsafe_name()
     end
 end
 
---- Refuse this mount when `_unsafe_name` finds a problem: say what it is and
---- give the mount up, so no file is created or opened and no request is made.
+--- Log `_unsafe_name`'s problem and give the mount up, so no file is made and no request sent.
 ---@return boolean refused
 function Kata:_refuse_unsafe_name()
     local problem = self:_unsafe_name()
@@ -155,9 +147,8 @@ function Kata:_picked_file_name(lang)
     return picked
 end
 
---- The file an older version named after the kata's id, when this kata has
---- one in `lang` and none by its slug. Only a real id can name it: the id is
---- joined into a path, so one with a separator in it must not.
+--- The file an older version named after the kata's id, if it exists. Only a real server id may
+--- name it: the id is joined into a path.
 ---@param lang table an entry from config.langs
 ---@return string?
 function Kata:_legacy_file_name(lang)
@@ -186,8 +177,7 @@ end
 --- there is none. The starter goes on record so :CW unfinished can tell work from a look.
 ---@return boolean existed
 function Kata:_open_file()
-    -- The last line of defence: mount() has refused these already, but this is
-    -- where a name becomes a path, and a kata built any other way gets here.
+    -- Guard: a kata built without mount() still gets here, where a name becomes a path.
     local problem = self:_unsafe_name()
     if problem then
         error(problem, 0)
@@ -399,15 +389,11 @@ function Kata:mount()
             return
         end
 
-        -- A reply with no slug field did not name the kata, so the slug asked
-        -- for, which was checked above, stands. A field that is there is
-        -- Codewars' answer, whatever it holds: "" or false is an invalid slug,
-        -- not a missing one, and is refused like any other.
+        -- No slug field: keep the slug asked for. A present one, even "" or false, is refused if invalid.
         if kata_data.slug ~= nil then
             local requested = self.slug
             self.slug = kata_data.slug
-            -- Codewars chose this one, not the user: checked again, for the
-            -- same reason, before it names a file or a session.
+            -- Codewars' slug names a file and a session, so check it too.
             if self:_refuse_unsafe_name() then
                 self.slug = requested
                 return
@@ -449,8 +435,7 @@ function Kata:mount()
             local fallback = kata_data.languages[1]
             local requested_lang = self.lang
             self.lang = fallback
-            -- Codewars chose this language, not the user: it names the session
-            -- file and the solution's extension, so it gets the same check.
+            -- Codewars' language names the session file and extension, so check it too.
             if self:_refuse_unsafe_name() then
                 self.lang = requested_lang
                 return
@@ -819,9 +804,7 @@ end)
 function Kata:new(slug, lang, opts)
     local obj = setmetatable({}, self)
     obj.slug = slug
-    -- Kept as given, not coerced with `or`/`and`: a `false` or `""` that was
-    -- passed on purpose is for _unsafe_name to refuse, not for a default or a
-    -- nil to hide. Only an absent (nil) value falls back or means "not given".
+    -- Kept as given, not coerced: a `false` or `""` is for _unsafe_name to refuse. Only nil falls back.
     obj.lang = lang
     if obj.lang == nil then
         obj.lang = config.lang
