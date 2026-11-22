@@ -106,7 +106,7 @@ local highlights = {
 local colors
 
 --- A `link` override replaces the default spec (merged, it would be both link
---- and color). With style keys it takes the target's fg only, never its bg.
+--- and color). With style keys it takes the target's fg and ctermfg, never its bg.
 ---@param name string a key of `highlights`
 ---@param overrides table the cleaned `theme`
 ---@param seen table<string, true> groups already on the link chain
@@ -135,7 +135,7 @@ end
 
 --- The (fg, ctermfg) `target` has once apply() has run. Links are walked by hand:
 --- apply() sets groups in no fixed order, so Neovim's resolution can be stale.
---- A link cycle has no color; its codewars groups keep only their own style keys.
+--- A link cycle has no color: styled links in it keep only their own style keys.
 ---@param target string
 ---@param overrides table the cleaned `theme`
 ---@param seen table<string, true> groups already on the link chain
@@ -170,7 +170,8 @@ end
 --- `theme` ignores them: an override always applies.
 local IGNORED_KEYS = { "default", "force" }
 
---- A copy of `theme` without the IGNORED_KEYS; warns once per group that had any.
+--- A copy of `theme` for the known groups, minus the IGNORED_KEYS. Warns once
+--- per group that had any.
 ---@param overrides table the user's `theme`
 ---@return table
 local function clean_overrides(overrides)

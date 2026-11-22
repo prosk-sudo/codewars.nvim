@@ -15,7 +15,7 @@ describe("theme highlights", function()
     }
     local theme = require("codewars.theme")
 
-    -- ColorScheme autocmds that exist before setup (the runner's own); filtering
+    -- ColorScheme autocmds that exist before setup (e.g. the runner's); filtering
     -- by id keeps the stacking check independent of the augroup's name.
     local before_setup = {}
     for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "ColorScheme" })) do
@@ -40,7 +40,7 @@ describe("theme highlights", function()
     vim.fn.mkdir(scheme_dir .. "/colors", "p")
     vim.opt.runtimepath:append(scheme_dir)
 
-    -- `aliases` (name -> definition): the colorscheme's own groups.
+    -- `aliases` (name -> definition): more groups the colorscheme sets after Comment.
     local function use_colorscheme(comment_fg, aliases)
         local source = ([[
 vim.cmd("highlight clear")
@@ -59,8 +59,8 @@ end
         vim.api.nvim_set_hl(0, "Comment", { fg = 0x778899, ctermfg = 244 })
     end
 
-    -- A cold start (first setup() or right after `:colorscheme`): none of our
-    -- groups exists yet. `aliases` (name -> definition) are defined before setup().
+    -- A cold start (first setup() or right after `:colorscheme`): clear every group,
+    -- then define `aliases` (name -> definition, ours or not) before setup().
     local function setup_cold(overrides, aliases)
         vim.cmd("highlight clear")
         define_colorscheme_groups()
@@ -279,7 +279,7 @@ end
     end)
 
     -- The result must not depend on which group apply() reaches first. `pairs`
-    -- order roughly follows declaration order, so chains are built both ways.
+    -- order is unspecified, so chains are built in both declaration directions.
     describe("styled links to other codewars groups", function()
         local DECLARED = {
             "codewars_lang_python",
@@ -545,7 +545,7 @@ end
                 assert.is_true(raw("codewars_rank_white").bold)
                 assert.is_nil(raw("codewars_rank_white").fg)
                 assert.is_true(raw("codewars_rank_yellow").italic)
-                -- apply() ran to the end: a group after the cycle is still set
+                -- apply() ran to the end: an unrelated group is still set
                 assert.are.equal(0xb1361e, raw("codewars_header").fg)
             end)
 
