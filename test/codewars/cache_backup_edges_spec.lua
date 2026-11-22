@@ -231,6 +231,155 @@ describe("cache.backup, absent caches, unknown backups and deletions", function(
         end)
     end)
 
+    describe("a new cache beside a stale backup", function()
+        -- The backup goes first. A crash partway through creating the cache then leaves a
+        -- damaged cache next to no backup (or an empty one): nothing to recover the
+        -- deleted data from.
+        local function unlink_fails()
+            uv.fs_unlink = function(path)
+                if path == bak then return nil, "EPERM: operation not permitted: " .. path, "EPERM" end
+                return real_unlink(path)
+            end
+        end
+
+        --- ...and the backup cannot be emptied either: the one open for writing it is not the create.
+        local function empty_fails()
+            uv.fs_open = function(path, flags, mode)
+                if path == bak and is_write_open(flags) then
+                    return nil, "EACCES: permission denied: " .. path, "EACCES"
+                end
+                return real_open(path, flags, mode)
+            end
+        end
+
+        --- A crash right after the file is created: the write fails, and the clean-up
+        --- that would remove the half-written file never runs.
+        local function crash_after_create()
+            uv.fs_write = function(fd, data, offset)
+                if data == payload then
+                    real_write(fd, data:sub(1, 100), offset)
+                    return nil, "ENOSPC: no space left on device"
+                end
+                return real_write(fd, data, offset)
+            end
+            local unlink = uv.fs_unlink
+            uv.fs_unlink = function(path)
+                if path == file then return true end -- the clean-up that a crash does not do
+                return unlink(path)
+            end
+        end
+
+        it("leaves nothing to recover after a crash partway through creating it", function()
+            spit(bak, older)
+            crash_after_create()
+
+            assert.is_false((write({ quiet = true })))
+
+            uv.fs_unlink, uv.fs_write = real_unlink, real_write
+            assert.is_not_nil(uv.fs_lstat(file), "the crash left no half-written cache, so the test proves nothing")
+            assert.is_nil(read(), "a damaged cache was restored from the backup of a deleted one")
+            assert.is_nil(uv.fs_lstat(bak))
+        end)
+
+        it("leaves nothing to recover after such a crash when the backup could only be emptied", function()
+            spit(bak, older)
+            unlink_fails()
+            crash_after_create()
+
+            assert.is_false((write({ quiet = true })))
+
+            uv.fs_unlink, uv.fs_write = real_unlink, real_write
+            assert.is_not_nil(uv.fs_lstat(file))
+            assert.equals(0, uv.fs_stat(bak).size)
+            assert.is_nil(read(), "a damaged cache was restored from an emptied backup")
+        end)
+
+        it("is emptied before the cache is created when it cannot be unlinked, and the write succeeds", function()
+            spit(bak, older)
+            unlink_fails()
+            local seen = {}
+            uv.fs_write = function(fd, data, offset)
+                if data == payload and not seen.size then seen.size = uv.fs_stat(bak).size end
+                return real_write(fd, data, offset)
+            end
+
+            local ok, err = write()
+
+            assert.is_true(ok, tostring(err))
+            assert.equals(0, seen.size, "the backup was still full when the new cache was written")
+            assert.equals(0, uv.fs_stat(bak).size)
+            assert.same(fresh, vim.json.decode(slurp(file)))
+            assert.equals(1, #warnings, vim.inspect(warnings))
+        end)
+
+        it("refuses the write, creating nothing, when it can be neither removed nor emptied", function()
+            spit(bak, older)
+            unlink_fails()
+            empty_fails()
+
+            local ok, err = write()
+
+            uv.fs_open = real_open
+            assert.is_false(ok)
+            assert.matches(vim.pesc(bak), err)
+            assert.matches("delete", err)
+            assert.is_nil(uv.fs_lstat(file), "a cache was created beside a backup that could not be dealt with")
+            assert.equals(older, slurp(bak))
+            assert.equals(1, #errors, vim.inspect(errors))
+        end)
+
+        it("says nothing about refusing when the write is quiet", function()
+            spit(bak, older)
+            unlink_fails()
+            empty_fails()
+
+            assert.is_false((write({ quiet = true })))
+
+            assert.same({}, errors)
+            assert.same({}, warnings)
+        end)
+
+        it("is removed, whatever it holds: undecodable, or empty", function()
+            for _, held in ipairs({ "{ torn", "" }) do
+                spit(bak, held)
+
+                assert.is_true((write()))
+
+                assert.is_nil(uv.fs_lstat(bak))
+                vim.fn.delete(file)
+            end
+        end)
+
+        it("is a directory: not a backup, cannot be removed, so the write is refused and nothing is created", function()
+            vim.fn.mkdir(bak)
+
+            local ok, err = write()
+
+            assert.is_false(ok)
+            assert.matches(vim.pesc(bak), err)
+            assert.is_nil(uv.fs_lstat(file))
+        end)
+
+        it("is not touched when the cache cannot be created at all: a refused link target", function()
+            local middle = tmp .. "/middle.json"
+            uv.fs_symlink(tmp .. "/nowhere.json", middle)
+            uv.fs_symlink(middle, file)
+            spit(bak, older)
+
+            assert.is_false((write()))
+
+            assert.equals(older, slurp(bak), "a backup was discarded though nothing could be written")
+        end)
+
+        it("does not change a plain new cache with no backup beside it", function()
+            assert.is_true((write()))
+
+            assert.same(fresh, vim.json.decode(slurp(file)))
+            assert.is_nil(uv.fs_lstat(bak))
+            assert.same({}, warnings)
+        end)
+    end)
+
     describe("a backup that cannot be examined", function()
         -- Only ENOENT means absent. Anything else is unknown.
         local function bak_lstat_fails(code)

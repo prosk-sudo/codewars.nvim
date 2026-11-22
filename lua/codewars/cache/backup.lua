@@ -14,8 +14,9 @@
 ---    cache is in place, so an interrupted one leaves the cache present and damaged,
 ---    never absent; a cache that is absent was deleted (by the plugin, or by
 ---    hand), and a leftover backup must not bring it back. So a read of an absent
----    cache returns nothing and touches nothing, and the next write creates the
----    cache afresh and discards the stale backup.
+---    cache returns nothing and touches nothing, and the next write discards the
+---    stale backup first and only then creates the cache afresh, so a crash partway
+---    through creating it leaves nothing from the deleted cache to recover.
 ---  * Unknown is not junk. A cache that could not be read at all (permission, an
 ---    I/O error, a descriptor that is not what was checked) is unknown, not
 ---    damaged, and nothing is written over it: a read recovers nothing, a write
@@ -299,6 +300,21 @@ local function inspect_backup(bak, parse)
     return "unusable"
 end
 
+---@param bak string
+---@param kind string what was there instead, from lstat ("link", "directory", ...)
+---@return string
+local function foreign_note(bak, kind)
+    return ("Removed %s: it was a %s, not a backup of the cache beside it."):format(
+        bak, kind == "link" and "symlink" or kind)
+end
+
+---@param bak string
+---@param unlink_err string why it could not be unlinked
+---@return string
+local function emptied_note(bak, unlink_err)
+    return ("Could not remove %s (%s); emptied it instead, so it cannot be recovered from."):format(bak, unlink_err)
+end
+
 --- Copy `original` to a fresh backup, with the original's permission bits (so
 --- a 0600 cache does not leak into a 0644 copy). Whatever is at the name is
 --- unlinked first; the copy is created exclusively, so anything that appears
@@ -316,10 +332,7 @@ local function make_backup(bak, original, mode, state, kind)
     if state ~= "absent" then
         local ok, err = uv.fs_unlink(bak)
         if not ok then return false, ("%s could not be cleared away (%s)"):format(bak, tostring(err)) end
-        if state == "foreign" then
-            note = ("Removed %s: it was a %s, not a backup of the cache beside it."):format(
-                bak, kind == "link" and "symlink" or kind)
-        end
+        if state == "foreign" then note = foreign_note(bak, kind) end
     end
     local ok, err, created = write_file(bak, original, { mode = mode, exact = true, create = "exclusive" })
     if not ok and created then uv.fs_unlink(bak) end
@@ -363,10 +376,7 @@ end
 local function discard_backup(bak)
     local outcome, detail = remove_backup(bak)
     if outcome == "gone" then return true end
-    if outcome == "emptied" then
-        return true, ("Could not remove %s (%s); emptied it instead, so it cannot be recovered from."):format(
-            bak, detail)
-    end
+    if outcome == "emptied" then return true, emptied_note(bak, detail) end
     return false, ("the new data was written, but a stale backup at %s %s; delete it by hand"):format(bak, detail)
 end
 
@@ -438,31 +448,55 @@ local function creation_target(file)
     return target
 end
 
---- Nothing is at `file`: create it exclusively and write it, and take what was
---- written away again if it did not all land (the file that was created, never
---- the symlink that names it). A backup left at the name (the remains of a
---- deletion, or of the cache deleted by hand) is not recovered from, and is stale
---- once the new file has landed, so it goes then. A backup that cannot even be
---- examined may be one that a new cache would make stale: nothing is written.
+--- Nothing is at `file`: deal with a backup beside it, then create it exclusively
+--- and write it, taking what was written away again if it did not all land (the
+--- file that was created, never the symlink that names it).
+---
+--- A backup beside an absent cache is stale: it is what a deletion left, or what
+--- was left when the cache was deleted by hand. It goes BEFORE the new cache is
+--- created (unlinked, or if that fails emptied, whatever it holds), so that a
+--- crash partway through creating the cache leaves a damaged cache next to no
+--- backup, or an empty one, and recovery finds nothing from the deleted cache to
+--- restore. A symlink or other non-regular file there is unlinked too, never
+--- written through. If it can be neither removed nor emptied, or cannot even be
+--- examined, nothing is created: it must be dealt with first.
 local function write_new(file, bytes, parse)
     local bak = M.backup_path(file)
+    local function refused(why)
+        return false, ("could not write %s: %s; nothing was written"):format(file, why)
+    end
+
     local state, detail = inspect_backup(bak, parse)
     if state == "unknown" then
-        return false, ("could not write %s: %s could not be examined (%s); nothing was written"):format(
-            file, bak, tostring(detail))
+        return refused(("its backup %s could not be examined (%s); that must be dealt with before this cache "
+            .. "can be written"):format(bak, tostring(detail)))
     end
     local path, why = creation_target(file)
-    if not path then return false, ("could not create %s: %s; nothing was written"):format(file, why) end
+    if not path then return refused(("it could not be created: %s"):format(why)) end
+
+    local note
+    if state == "foreign" then
+        local unlinked, err = uv.fs_unlink(bak)
+        if not unlinked then
+            return refused(("%s is not a regular file and could not be removed (%s); delete it before this cache "
+                .. "can be written"):format(bak, tostring(err)))
+        end
+        note = foreign_note(bak, detail)
+    elseif state ~= "absent" then
+        local outcome, message = remove_backup(bak)
+        if outcome == "failed" then
+            return refused(("its stale backup %s %s; delete it by hand before this cache can be written"):format(
+                bak, message))
+        end
+        if outcome == "emptied" then note = emptied_note(bak, message) end
+    end
 
     local ok, err, touched = write_file(path, bytes, { create = "exclusive" })
     if not ok then
         if touched then uv.fs_unlink(path) end
-        return false, err
+        return false, err, note
     end
-    if state ~= "good" and state ~= "unreadable" then return true end
-    local gone, message = discard_backup(bak)
-    if not gone then return false, message end
-    return true, nil, message
+    return true, nil, note
 end
 
 ---@param file string

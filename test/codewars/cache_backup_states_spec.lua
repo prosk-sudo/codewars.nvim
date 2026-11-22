@@ -222,18 +222,21 @@ describe("cache.utils write_json, state by state", function()
             assert.equals(good_bak, slurp(bak), "the good copy was removed though the cache was never written")
         end)
 
-        it("is kept for a cache that is not there, and goes when the new cache lands", function()
+        -- A cache that is absent was deleted: its backup is stale, and goes BEFORE the new
+        -- cache is created, so that a crash partway through creating it leaves nothing to
+        -- recover the deleted data from.
+        it("is gone before a cache that is not there is created", function()
             spit(bak, good_bak)
-            local seen = look_during_write(function() return slurp(bak) end)
+            local seen = look_during_write(function() return uv.fs_lstat(bak) == nil and "gone" or "still there" end)
 
             assert.is_true((write()))
 
-            assert.equals(good_bak, seen.at)
+            assert.equals("gone", seen.at)
             assert.same(fresh, vim.json.decode(slurp(file)))
             assert.is_nil(uv.fs_stat(bak))
         end)
 
-        it("is kept for a cache that is not there when the new one fails, which is removed", function()
+        it("is gone when the new cache fails, which is removed too", function()
             spit(bak, good_bak)
             disk_full_on(payload)
 
@@ -241,7 +244,7 @@ describe("cache.utils write_json, state by state", function()
 
             assert.is_false(ok)
             assert.is_nil(uv.fs_stat(file))
-            assert.equals(good_bak, slurp(bak))
+            assert.is_nil(uv.fs_stat(bak))
         end)
 
         it("is used as it is when the directory cannot be written, and emptied since it cannot be removed", function()
@@ -630,14 +633,14 @@ print("RESULT", tostring((backup.write(%s, "{}", parse))))
             assert.is_nil(uv.fs_lstat(bak))
         end)
 
-        it("is left alone, and not followed, when there is no cache to back up", function()
+        it("is unlinked, not followed, before a new cache is created beside it", function()
             uv.fs_symlink(target, bak)
 
             assert.is_true((write()))
 
             assert.same(fresh, vim.json.decode(slurp(file)))
             untouched()
-            assert.equals("link", uv.fs_lstat(bak).type)
+            assert.is_nil(uv.fs_lstat(bak), "the link was left in place")
         end)
 
         it("is said so once, and not at all when the write is quiet", function()
