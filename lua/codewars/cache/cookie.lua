@@ -3,7 +3,7 @@ local cache_utils = require("codewars.cache.utils")
 
 local cached_cookie = nil
 
--- Lua has no octal literals: 384 is 0600 (owner read/write only).
+-- 384 is 0600 (Lua has no octal literals).
 local OWNER_ONLY = 384
 
 ---@class cw.cache.Cookie
@@ -153,17 +153,13 @@ local function tell_menu()
     if ok and menu then pcall(menu.session_changed) end
 end
 
---- Write the cookie so that only its owner can read it (it is a live session).
----
---- It goes into a new exclusive file made private BEFORE the cookie is written,
---- then renamed over the old one. Opening the existing file is wrong: the open
---- mode only applies on creation (minus the umask), so a world-readable file
---- keeps its mode; a read-only file cannot be opened; opening for write empties
---- it before the write can fail; and check-then-open races other processes.
---- With a new file, fchmod ignores the umask and the old cookie stays intact
---- until the new one is complete.
----
---- Raises on failure, leaving the old cookie untouched and the new file removed.
+--- Write the cookie (a live session) readable by its owner only: a new exclusive
+--- file, fchmod'd (immune to the umask) BEFORE any data, then renamed over the old.
+--- The existing file is never opened, because:
+---  - open's mode applies only on creation, so a world-readable file keeps its mode;
+---  - a read-only file cannot be opened, and write mode truncates before a failure;
+---  - check-then-open races other processes.
+--- Raises on failure, with the old cookie intact and the new file removed.
 ---@param path string
 ---@param str string
 local function write_private(path, str)
@@ -172,9 +168,8 @@ local function write_private(path, str)
     local fd = assert(uv.fs_open(tmp, "wx", OWNER_ONLY))
     local ok, err = pcall(function()
         assert(uv.fs_fchmod(fd, OWNER_ONLY))
-        -- fs_write can store fewer bytes than it was given, and renaming a
-        -- partial file over the cookie would lose the session. Loop until it is
-        -- all out; a call that stores nothing is an error, not a retry.
+        -- fs_write can store fewer bytes than given, and a partial file renamed over
+        -- the cookie would lose the session. Loop; a zero-byte write is an error.
         local written = 0
         while written < #str do
             local count = assert(uv.fs_write(fd, str:sub(written + 1), written))

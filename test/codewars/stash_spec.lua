@@ -75,20 +75,18 @@ describe("cache.stash", function()
     end)
 end)
 
---- A stash id becomes part of a file name and comes from unvalidated server
---- replies, so a traversal id must not write outside the cache dir.
+--- A traversal id must not write outside the cache dir.
 local MARKER = "stash-escape-probe"
 
---- The stash on top of the REAL cache utils. minimal_init points the cache dir
---- at a throwaway root, so writing through them is safe here.
+--- The stash on the REAL cache utils (minimal_init uses a throwaway cache root).
 local function load_real_stash()
     package.loaded["codewars.cache.utils"] = nil
     package.loaded["codewars.cache.stash"] = nil
     return require("codewars.cache.stash")
 end
 
---- Files named after the marker anywhere under the throwaway root: a stash that
---- escaped lands outside the cache dir, so searching only inside would miss it.
+--- Files named after the marker anywhere under the throwaway root: an escaped
+--- stash lands outside the cache dir.
 local function files_marked(marker)
     return vim.fn.glob(vim.env.CW_TEST_ROOT .. "/**/*" .. marker .. "*", true, true)
 end
@@ -99,10 +97,8 @@ describe("cache.stash id validation", function()
     it("writes nothing and returns nil for a path-traversal id", function()
         local kumite = load_real_stash().for_kind("kumite-stash-")
         local paths = {}
-        -- The prefix ("kumite-stash-..") swallows one "..", so three reach one
-        -- level above the cache dir, still inside CW_TEST_ROOT (the cache dir is
-        -- three levels under it) where files_marked looks. Fewer ".." would not
-        -- escape at all: the write fails on the missing directory.
+        -- The prefix ("kumite-stash-..") swallows one "..", so three reach one level
+        -- above the cache dir, still inside CW_TEST_ROOT. Fewer would not escape.
         for _, id in ipairs({ "../../../" .. MARKER, "x/../../" .. MARKER, "/../" .. MARKER }) do
             paths[#paths + 1] = kumite.save({ id = id, code = "SECRET" })
         end
@@ -153,8 +149,7 @@ describe("cache.stash id validation", function()
     end)
 
     it("still stashes a kumite that was never saved to the server", function()
-        -- :CW kumite new gives the draft a "local-<ms>" id until its first
-        -- save; a dirty close of it must keep working.
+        -- :CW kumite new gives a draft a "local-<ms>" id; a dirty close must work.
         local stash, written = load_stash(true)
         local path = stash.for_kind("kumite-stash-").save({ id = "local-1234567", code = "x" })
         assert.are.equal("/tmp/kumite-stash-local-1234567.json", path)

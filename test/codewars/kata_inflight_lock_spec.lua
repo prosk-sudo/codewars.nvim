@@ -1,7 +1,5 @@
--- Unpublish and delete are requests in flight like save and publish, so the
--- editor must be locked while they run. A save accepted during an unpublish
--- remembers `published` and restores it on its reply, leaving the editor
--- saying Published while the server holds a draft.
+-- Unpublish and delete lock the editor like save and publish: a save accepted
+-- mid-unpublish would restore `published` while the server holds a draft.
 local kstate = require("codewars.kata.state")
 local KataEditor = require("codewars-ui.kata_editor")
 
@@ -96,13 +94,11 @@ describe("KataEditor while an unpublish or delete is in flight", function()
         log.info = function() end
         log.error = function(msg) errors[#errors + 1] = msg end
 
-        -- Each verb counts its calls and parks the reply, so a test decides when
-        -- the server answers.
+        -- Each verb counts its calls and parks the reply, so a test decides when to answer.
         local function held(verb)
             return function(...)
                 calls[verb] = (calls[verb] or 0) + 1
-                -- publish passes a poll token after its callback, so look
-                -- for the function rather than taking the last argument
+                -- publish passes a poll token after its callback: look for the function
                 for _, arg in ipairs({ ... }) do
                     if type(arg) == "function" then
                         answered[verb] = false
@@ -121,7 +117,6 @@ describe("KataEditor while an unpublish or delete is in flight", function()
             delete = held("delete"),
             default_version = function() return "3.11" end,
         }
-        -- The prompt answers when the test says so, like a user would.
         package.loaded["codewars-ui.popup.confirm"] = {
             open = function(_, on_answer) prompt = on_answer end,
         }
@@ -130,10 +125,8 @@ describe("KataEditor while an unpublish or delete is in flight", function()
     end)
 
     after_each(function()
-        -- The editor records an unpublish or delete in flight per kata id for the
-        -- whole process, so answer whatever a test left out or it would lock that
-        -- id for later tests. Answered as a failure, the outcome with the fewest
-        -- side effects.
+        -- In-flight requests are recorded per kata id process-wide: answer (as a
+        -- failure) any a test left out, or later tests stay locked.
         for _, verb in ipairs({ "unpublish", "delete" }) do
             if replies[verb] and not answered[verb] then
                 replies[verb]({ msg = "test cleanup" })
@@ -246,13 +239,11 @@ describe("KataEditor while an unpublish or delete is in flight", function()
     describe("when the request ends, the other open workspaces of the kata", function()
         local OTHER_ID = "6a63e7e085269ff93dc63330"
 
-        --- Stand-in for the workspaces mount() has registered. The first one
-        --- is left out when it stands for an editor that was closed meanwhile.
+        --- Stand-in for the registered workspaces; the first is left out if it was closed.
         local function open(...)
             _Cw_state.kata_editors = { ... }
         end
 
-        --- Count the times a workspace is told to close its window.
         local function count_closes(ws)
             local counter = { n = 0 }
             ws.close = function() counter.n = counter.n + 1 end
@@ -363,8 +354,8 @@ describe("KataEditor while an unpublish or delete is in flight", function()
                 end
             end)
 
-            --- Give a workspace what mount() gives it: a window in a tab of its
-            --- own and one acwrite buffer per pane, then type into the answer.
+            --- Give a workspace what mount() does (own-tab window, an acwrite buffer
+            --- per pane), then type into the answer.
             local function mount_with_unsaved_edit(ws)
                 vim.cmd("tabnew")
                 ws.winid = vim.api.nvim_get_current_win()
@@ -466,8 +457,7 @@ describe("KataEditor while an unpublish or delete is in flight", function()
 
         it("cannot save while the first one's unpublish is in flight", function()
             local first = workspace(true)
-            -- the first editor is closed and the kata reopened; the page it
-            -- loads still says published because the reply has not landed
+            -- reopened after the first closed: its page still says published
             local second = workspace(true)
             first:unpublish()
 

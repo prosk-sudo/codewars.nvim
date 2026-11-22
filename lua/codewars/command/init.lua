@@ -800,15 +800,12 @@ end
 -- focus pointer itself.
 local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
 
--- Generation guard (like the picker's _kumite_gen): a focus fetch in flight
--- when the account changes is answered from the previous account's queue. Each
--- fetch captures this and drops its reply if forget_focus has bumped it.
+-- Bumped by forget_focus: a fetch in flight when the account changes drops its
+-- reply (like the picker's _kumite_gen).
 local _focus_gen = 0
 
---- A predicate for the trainer: true once forget_focus has run since `gen`.
---- Dropping the final reply is not enough: the trainer chains requests, each
---- sent under whichever account is signed in by then, and the self-heal's pop
---- cannot be undone. So the trainer polls this before each request.
+--- True once forget_focus has run since `gen`. The trainer polls it between
+--- requests, since later ones go out under the new account.
 ---@param gen integer
 ---@return fun(): boolean
 local function focus_cancelled(gen)
@@ -817,8 +814,8 @@ end
 
 --- Forget the remembered focus kata. Called on an identity change: the
 --- queue it came from belongs to the previous account, so a `:CW focus
---- skip` after signing in as someone else must not act on it. A fetch still
---- in flight is dropped too.
+--- skip` after signing in as someone else must not act on it.
+--- A fetch still in flight is dropped too.
 function cmd.forget_focus()
     _focus_gen = _focus_gen + 1
     _last_focus = nil
@@ -890,8 +887,7 @@ end
 local function focus_run(lang, category, on_mounted)
     if LOCAL_CATEGORIES[category] then
         -- No server queue behind this one, so a stale record here can never
-        -- cause a dequeue; resolve it directly. Nothing is in flight, so there
-        -- is no reply for forget_focus to race with.
+        -- cause a dequeue; resolve it directly.
         local kata = open_random_kata(lang, on_mounted)
         if kata then
             _last_focus = { lang = lang, category = category, slug = kata.slug, kata = kata }
@@ -1179,11 +1175,8 @@ function cmd.template_status()
     log.info(table.concat(parts, " "))
 end
 
--- Letters, digits, hyphen and underscore: every Codewars slug is made of these.
--- The slug comes from the server and reaches an OS opener, and cmd.exe acts on
--- & | ^ % and quotes even inside one argv element (vim.ui.open uses it too). A
--- slug outside this set is refused, not escaped, since each shell escapes
--- differently.
+-- Codewars slugs are letters, digits, - and _. The slug reaches an OS opener (cmd.exe
+-- acts on & | ^ % even inside one argv element), so others are refused, not escaped.
 local OPEN_SLUG_PATTERN = "^[A-Za-z0-9_%-]+$"
 
 --- The opener argv for a Neovim without vim.ui.open: cmd.exe on Windows
@@ -1220,7 +1213,7 @@ function cmd.open()
     if vim.ui.open then
         vim.ui.open(url)
     else
-        -- An argv table, never a shell string: the URL is passed as one argument.
+        -- An argv table, never a shell string.
         local open_cmd = opener_argv(url)
         if vim.fn.executable(open_cmd[1]) ~= 1 then
             return log.error(

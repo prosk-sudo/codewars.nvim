@@ -26,8 +26,7 @@ Kumite.__index = Kumite
 
 local INSERT_KEYS = { "i", "I", "a", "A", "o", "O", "c", "C", "s", "S", "R" }
 
--- Tags the read-only guard's mappings so clearing it removes only those. A
--- FileType autocmd may map the same keys, and those are the user's.
+-- Tags the guard's own mappings, so clearing never removes a user's on the same keys.
 local GUARD_DESC = "codewars: read-only kumite"
 
 
@@ -165,9 +164,8 @@ function Kumite:close()
     end
 end
 
---- Apply the read-only insert-key guards for the current state. set_state
---- clears them when the workspace becomes editable. Also binds `q` to close,
---- like the other read-only panels.
+--- Apply the read-only insert-key guards and `q` to close; set_state clears them
+--- when the workspace becomes editable.
 function Kumite:apply_readonly_guard()
     local _, edit_err = kstate.step(self.state, "edit")
     for _, key in ipairs(INSERT_KEYS) do
@@ -203,9 +201,8 @@ function Kumite:set_state(next_state)
     -- publishing were silently dropped on close.
     self:set_buffers_locked(not kstate.is_editable(next_state))
     if kstate.is_editable(next_state) then
-        -- Unpublish and convert hand back an editable draft, so drop the guard
-        -- or i/a/o would warn "read-only" on a modifiable buffer. Safe on every
-        -- editable transition: it removes only the guard's own mappings.
+        -- Unpublish and convert make it editable again; a leftover guard would make
+        -- i/a/o warn "read-only". Removes only the guard's own mappings.
         self:clear_readonly_guard()
     elseif not kstate.is_locked(next_state) then
         -- Entering a read-only resting state (from editing, or from an
@@ -215,12 +212,10 @@ function Kumite:set_state(next_state)
     end
 end
 
---- Remove the guard's mappings, found by GUARD_DESC rather than by key so a
---- user mapping on the same keys survives. This also frees `q` for macros.
+--- Remove only the guard's mappings (found by GUARD_DESC, not by key); frees `q`.
 function Kumite:clear_readonly_guard()
-    -- pcall: an unmounted workspace has no buffer and a closed one has an
-    -- invalid one. Deleting by key without a buffer would hit the user's GLOBAL
-    -- mappings (leap and flash bind s and S), so do nothing.
+    -- Unmounted or closed: deleting by key without a buffer would hit the user's
+    -- GLOBAL mappings (leap and flash bind s and S).
     local ok, maps = pcall(api.nvim_buf_get_keymap, self.bufnr, "n")
     if not ok then
         return
@@ -867,9 +862,8 @@ function Kumite:_unmount()
         end
         if self.fixture_split then
             if rescue_label then
-                -- unmount() would force-delete the fixture buffer, which holds
-                -- typed text too. Hide the window and hand the buffer over like
-                -- the code buffer; pcall so a stuck window cannot stop that.
+                -- unmount() would force-delete the typed fixture text: hide the window
+                -- and hand over the buffer. pcall: a stuck window must not stop it.
                 local fixture_bufnr = self.fixture_split.bufnr
                 pcall(self.fixture_split.hide, self.fixture_split)
                 ui_utils.rescue_or_delete(fixture_bufnr, rescue_label .. " fixture")

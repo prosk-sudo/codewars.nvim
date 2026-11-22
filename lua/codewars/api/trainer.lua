@@ -189,10 +189,8 @@ end
 --- The queue only advances on dequeue, so without this a kata solved in a
 --- previous session stays at the head forever.
 ---
---- `cancelled` is polled before every request this sends, so a caller whose
---- account changed mid-run can stop between requests: later requests go out
---- under the new account and the self-heal's pop is irreversible. A cancelled
---- run finishes with neither kata nor error.
+--- `cancelled` is polled before each request so a caller can stop the run when the
+--- account changes (the self-heal's pop is irreversible). Cancelled: no kata, no error.
 ---@param cancelled? fun(): boolean
 local function resolve_head(category, strategy, language, finish, cancelled)
     local advanced = 0
@@ -283,7 +281,7 @@ end
 ---@param category string plugin-internal key (see picker.focus_categories)
 ---@param language string
 ---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
----@param opts? { cancelled?: fun(): boolean } stops between requests; a cancelled run calls back with neither kata nor error
+---@param opts? { cancelled?: fun(): boolean } stops between requests; calls back with no kata and no error
 function trainer.next_kata(category, language, cb, opts)
     local strategy, serr = strategy_for(category)
     if serr then return cb(nil, serr) end
@@ -305,7 +303,7 @@ end
 ---@param category string
 ---@param language string
 ---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
----@param opts? { cancelled?: fun(): boolean } as for next_kata; polled after the pop lands, before the follow-ups
+---@param opts? { cancelled?: fun(): boolean } as for next_kata; first polled after the pop
 function trainer.skip(category, language, cb, opts)
     local strategy, serr = strategy_for(category)
     if serr then return cb(nil, serr) end
