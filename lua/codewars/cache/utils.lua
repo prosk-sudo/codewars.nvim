@@ -31,7 +31,7 @@ end
 --- write look identical to a successful one.
 ---@param path Path
 ---@param data table
----@param opts { quiet: boolean? }? `quiet`: log nothing on failure, for a caller that reports it itself (and may retry without a line per try)
+---@param opts { quiet: boolean? }? `quiet`: log nothing on failure, for a caller that reports it itself
 ---@return boolean ok
 ---@return string? err
 function M.write_json(path, data, opts)

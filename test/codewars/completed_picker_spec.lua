@@ -1,7 +1,5 @@
--- :CW completed shows the kata it enriched for the account it was opened
--- under. When that account is gone by the time the names are in (the cookie
--- changed, or the cache was cleared), the list belongs to nobody: it is not
--- shown, and the reason is.
+-- :CW completed shows its enriched list only for the account it was opened under;
+-- if that account is gone (cookie changed, cache cleared) it shows the reason instead.
 describe(":CW completed", function()
     local said, shown, enrich_with
 

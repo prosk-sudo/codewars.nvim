@@ -1,8 +1,5 @@
--- :CW unfinished can have more kata the catalogue lacks than the 50 a lookup
--- sends at once (50 keeps a burst well under Codewars' ~60 requests a minute).
--- completed.enrich can carry on past them, paced like the kata-list build and
--- only while its caller still wants the names. Timers and the API are stubbed
--- so that none of this waits or touches the network.
+-- :CW unfinished can need more names than the 50 a lookup sends at once. completed.enrich
+-- carries on past them, paced like the kata-list build. Timers and the API are stubbed.
 local P = require("plenary.path")
 
 describe("completed.enrich past its first 50", function()
@@ -41,8 +38,7 @@ describe("completed.enrich past its first 50", function()
         end
     end
 
-    --- The caller :CW unfinished is: asks for names, wants the rest while its
-    --- picker is open, and is told whenever more names are saved.
+    --- Acts as :CW unfinished: asks for names and wants the rest while its picker is open.
     local function enrich(n, opts)
         local first = 0
         local asked = vim.tbl_extend("force", {
@@ -239,8 +235,7 @@ describe("completed.enrich past its first 50", function()
         assert.equals(119, vim.tbl_count(details()))
     end)
 
-    -- A read-only or full cache directory: names are still looked up, the user
-    -- is told once, and the open picker gets them from memory until a write lands.
+    -- Cache dir read-only or full: names are still looked up, warned once, kept in memory.
     describe("when the details cannot be saved", function()
         local cache_utils = require("codewars.cache.utils")
         local log = require("codewars.logger")
@@ -297,8 +292,7 @@ describe("completed.enrich past its first 50", function()
         end)
     end)
 
-    -- The first batch holds what the cache held when it began while its requests
-    -- are out. It must save what it fetched, added to the cache as it is then.
+    -- The first batch must save only what it fetched, merged into the cache as it is then.
     describe("the first batch, while the cache changes under it", function()
         local calls
 

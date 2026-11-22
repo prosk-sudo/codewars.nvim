@@ -48,9 +48,7 @@ describe("cache.completed", function()
         assert.is_true(stale)
     end)
 
-    -- Whether the disk holds the account's list or only kata marked on this
-    -- machine before any fetch: judged by the stamp a fetch gives and a mark
-    -- does not.
+    -- A disk list counts as fetched only by its stamp: a fetch sets it, a mark does not.
     describe("whether the list on disk was ever fetched", function()
         local function fetched() return (select(3, completed.get())) end
 
@@ -106,8 +104,7 @@ describe("cache.completed", function()
         end)
     end)
 
-    -- A write that did not land is not a save. Reporting it lets the caller
-    -- that fetched the list keep the one in memory instead of reading the disk.
+    -- A write that did not land is not a save; the caller keeps its in-memory list.
     describe("a cache that cannot be written", function()
         local warns
 
@@ -155,8 +152,7 @@ describe("cache.completed", function()
         end)
     end)
 
-    -- Solving a cached kata in a second language must still be recorded, or
-    -- :CW unfinished lists that solution until the next successful refresh.
+    -- A second language of a cached kata must still be recorded, or it lists as unfinished.
     describe("mark on a kata already in the cache", function()
         local function cached(item, timestamp)
             store["mem:completed.json"] = { timestamp = timestamp, items = { item } }
@@ -229,8 +225,7 @@ describe("cache.completed", function()
         assert.is_true(store["mem:completed.json"].timestamp > 0)
     end)
 
-    -- A refresh's reply is a picture of the server from before a submit that
-    -- landed while it was out; a language marked meanwhile must outlive it.
+    -- A reply made before a mid-flight submit must not drop the language marked meanwhile.
     describe("update with a language marked while the refresh was in flight", function()
         local function server_item(languages)
             return { id = "k1", slug = "kata-one", completedLanguages = languages }
@@ -240,8 +235,7 @@ describe("cache.completed", function()
             store["mem:completed.json"] = { timestamp = os.time(), items = { server_item({ "python" }) } }
         end
 
-        --- A refresh whose reply, `languages`, is what the server said when
-        --- it was asked; `during` runs while the request is out.
+        --- A refresh whose reply is `languages`; `during` runs while the request is out.
         local function refresh(languages, during)
             script = function()
                 if during then during() end
@@ -298,8 +292,7 @@ describe("cache.completed", function()
         end)
     end)
 
-    -- One refresh at a time: two replies merged one after the other can race,
-    -- the newer one clearing the marker the older one still needed.
+    -- Single-flight: merged replies can race, the newer clearing a marker the older needed.
     describe("update called while a refresh is in flight", function()
         local requests, results
 
@@ -403,8 +396,7 @@ describe("cache.completed", function()
         end)
     end)
 
-    -- The cache is the signed-in account's: a reply for an account that has
-    -- since signed out, or a cache since cleared, must not be written as its list.
+    -- A reply for a signed-out account or a cleared cache must not be written as the list.
     describe("update whose account changes or whose cache is cleared during the request", function()
         local requests, results
         local FILE = "mem:completed.json"

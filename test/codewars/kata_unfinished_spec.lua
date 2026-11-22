@@ -1,6 +1,5 @@
---- What a kata puts on record so :CW unfinished can tell a kata you are in the
---- middle of from one you only opened: the starter it seeds, a re-seed on
---- :CW reset, and a template toggle that rewrites an untouched starter.
+--- What a kata records so :CW unfinished can tell work from a look: the starter, a
+--- re-seed on :CW reset, and a template toggle of an untouched starter.
 local P = require("plenary.path")
 
 local tmp = vim.fn.tempname()
@@ -88,8 +87,7 @@ describe("Kata and :CW unfinished", function()
         assert.are.equal(-8, entry.rank_id)
     end)
 
-    -- A file from before starters were recorded: opening it is the first
-    -- chance to check it.
+    -- A file from before starters were recorded: opening it is the first chance to check it.
     it("checks a file with nothing on record against the starter when opened", function()
         local _, untouched = open(STUB, STUB .. "\n")
         assert.is_nil(listed(untouched))
@@ -100,8 +98,7 @@ describe("Kata and :CW unfinished", function()
         assert.is_true(entry.checked)
     end)
 
-    -- Codewars can change a starter between visits, and so can the indent
-    -- option; after a reset, the new one is what counts as untouched.
+    -- Codewars or the indent option can change a starter; after a reset the new one counts.
     it("counts a reset as a fresh start", function()
         local kata, file = open(STUB)
         kata.setup_code = "def f(x, y):\n    pass"
@@ -110,8 +107,7 @@ describe("Kata and :CW unfinished", function()
         assert.is_nil(listed(file), "a just-reset kata was listed")
     end)
 
-    -- The buffer is rewritten at once but the file only when it is saved, and
-    -- the list reads the file.
+    -- The buffer is rewritten at once but the file only on save, and the list reads the file.
     describe("a reset the user does not save", function()
         local NEW_STUB = "def f(x, y):\n    pass"
 
@@ -140,8 +136,7 @@ describe("Kata and :CW unfinished", function()
         end)
     end)
 
-    -- Older versions named a file after the kata's id; without this its work
-    -- never shows and a fresh starter is seeded beside it.
+    -- Legacy id-named file: without this its work never shows and a fresh starter is seeded.
     it("opens a file named after the kata's id when there is none by its slug", function()
         n = n + 1
         local slug, id = "unfinished-kata-" .. n, ("%024x"):format(n)
@@ -157,9 +152,7 @@ describe("Kata and :CW unfinished", function()
         assert.is_false(cfg.storage.home:joinpath(slug .. ".py"):exists(), "seeded a second file beside it")
     end)
 
-    -- The picker lists each file, so a row for `id.py` is that file. Opening
-    -- the slug's file instead, because one exists too, shows work the user
-    -- did not pick.
+    -- A row for `id.py` is that file, not the slug's one that also exists.
     describe("when the user picked a file", function()
         local function both_files()
             n = n + 1

@@ -1,13 +1,6 @@
---- Kata you started and never submitted.
----
---- A solution file in storage.home is unfinished when its kata is not completed
---- in that language and the file no longer holds the starter it was seeded
---- with, so a kata you only looked at is not listed.
----
---- The starter is not kept (Codewars sends it with each session and the cached
---- copy expires), so a fingerprint of it is recorded in .seeded.json whenever a
---- solution is seeded. A file seeded before that record existed cannot be
---- checked: it is listed, marked as such, until the kata is opened again.
+--- Kata you started and never submitted: a solution file whose kata is not completed in
+--- that language and which no longer holds its seeded starter. Starters are not kept, so a
+--- fingerprint is recorded in .seeded.json; files without one are listed as unchecked.
 local config = require("codewars.config")
 local cache_utils = require("codewars.cache.utils")
 
@@ -15,13 +8,10 @@ local M = {}
 
 local RECORD = ".seeded.json"
 
---- A fingerprint from the current algorithm starts with this; bare digests are
---- the old kind.
+--- Fingerprints from the current algorithm start with this; bare digests are older.
 local PRINT_V2 = "v2:"
 
---- The old fingerprint (all whitespace removed). It confuses `"hello world"`
---- with `"helloworld"`, so nothing writes it; it stays to compare records
---- already on disk.
+--- Old fingerprint (whitespace stripped); kept only to compare records already on disk.
 ---@param text string
 ---@return string
 local function legacy_fingerprint(text)
@@ -29,10 +19,8 @@ local function legacy_fingerprint(text)
 end
 
 --- Ignores indentation, trailing spaces, blank lines and the final newline, so
---- re-indenting an untouched starter does not make it look started. Each line
---- is kept exactly between its first and last non-blank character, so a space
---- inside a string or between tokens counts. (Re-indenting inside a multi-line
---- string is deliberately not told apart from re-indenting.)
+--- re-indenting a starter does not look like work. Spaces inside a line still count
+--- (indentation inside a multi-line string is ignored too, deliberately).
 ---@param text string
 ---@return string
 function M.fingerprint(text)
@@ -70,8 +58,8 @@ end
 
 ---@class cw.SeededRecord
 ---@field prints string[] fingerprints of the starters that count as untouched
----@field name string? the kata's name, as it was last opened with
----@field rank_id integer? its rank, likewise; the catalogue does not hold every kata
+---@field name string? the kata's name when last opened (the catalogue lacks some kata)
+---@field rank_id integer? its rank, likewise
 
 ---@class cw.KataInfo
 ---@field name string?
@@ -107,8 +95,7 @@ local function with_info(rec, info)
     }
 end
 
---- A file was just written with a freshly seeded starter. REPLACES the
---- starters on record, since the file that held them is gone; the name stays.
+--- A fresh starter was just written to the file: REPLACES the starters on record.
 ---@param file_name string
 ---@param text string
 ---@param info cw.KataInfo?
@@ -119,10 +106,8 @@ function M.seeded(file_name, text, info)
     save(data)
 end
 
---- :CW reset put a fresh starter in the buffer. ADDS it to the starters on
---- record (`seeded` replaces them): the file keeps its old content until the
---- buffer is saved, and an untouched old starter must not look like work.
---- A starter already on record is not added twice.
+--- :CW reset put a fresh starter in the buffer: ADDS it to the starters on record,
+--- since the file keeps its old content until saved and must not then look started.
 ---@param file_name string
 ---@param text string
 ---@param info cw.KataInfo?
@@ -138,11 +123,10 @@ function M.reseeded(file_name, text, info)
     save(data)
 end
 
---- A kata opened its existing file. With nothing on record, today's starter is
---- the best guess: a file that matches it is untouched, and one that does not
---- is listed, which is the safe way to be wrong.
+--- A kata opened its existing file. With no record, today's starter is the best guess;
+--- a file that differs is listed, which is the safe way to be wrong.
 ---@param file_name string
----@param starter string|fun(): string the starter, or how to make it; only made when nothing is on record
+---@param starter string|fun(): string the starter, or a maker called only when nothing is on record
 ---@param info cw.KataInfo?
 function M.opened(file_name, starter, info)
     local data = load()
@@ -156,9 +140,8 @@ function M.opened(file_name, starter, info)
     save(data)
 end
 
---- A template toggle rewrote the buffer from `before` to `after`. When
---- `before` was an untouched starter so is `after`, and the file may yet be
---- saved either way round, so both stay on record.
+--- A template toggle rewrote the buffer from `before` to `after`. If `before` was an
+--- untouched starter, keep both on record: the file may be saved either way round.
 ---@param file_name string
 ---@param before string
 ---@param after string
@@ -189,12 +172,10 @@ local function completed_index(completed)
     return done
 end
 
---- Whether a directory entry is a solution file, and its stat: a regular file
---- or a symlink to one (a kata opens a solution through a link too). A broken
---- link or a link to a directory is not. The stat follows the link, so its
---- time is when the target was last changed.
+--- Whether a directory entry is a solution file (a regular file or a symlink to
+--- one), and its stat. The stat follows links, so its time is the target's.
 ---@param path string
----@param kind string as vim.fs.dir reports it ("file", "link", "directory"...)
+---@param kind string as vim.fs.dir reports it
 ---@return boolean is_solution
 ---@return table? stat
 local function solution_file(path, kind)
@@ -216,9 +197,9 @@ end
 ---@field lang string language slug
 ---@field file string file name in storage.home
 ---@field mtime integer last changed, in seconds since the epoch
----@field mtime_nsec integer the nanoseconds past `mtime`; saves in the same second still sort
+---@field mtime_nsec integer nanoseconds past `mtime`, to order saves within a second
 ---@field checked boolean false when nothing was on record to check it against
----@field name string? the kata's name as it was last opened with, when on record
+---@field name string? the kata's name, when on record
 ---@field rank_id integer? its rank, likewise
 
 --- Unfinished kata, most recently changed first.

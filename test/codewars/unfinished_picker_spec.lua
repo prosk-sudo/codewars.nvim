@@ -1,5 +1,4 @@
--- :CW unfinished picker: newest first, drawn the way the kata list is. What
--- counts as unfinished is codewars.unfinished's business.
+-- The :CW unfinished picker. What counts as unfinished is codewars.unfinished's business.
 describe(":CW unfinished", function()
     local config = require("codewars.config")
     local picker, opened, mounted, said, entries, catalogue, completed, updates, listed_with
@@ -19,8 +18,7 @@ describe(":CW unfinished", function()
         return {
             pickers = {
                 new = function(topts, cfg)
-                    -- Its own record: an update landing after its test has
-                    -- ended must not write into the next one.
+                    -- Own record: a late update must not write into the next test.
                     local mine = { topts = topts, cfg = cfg }
                     opened = mine
                     mine.bufnr = vim.api.nvim_create_buf(false, true)
@@ -175,8 +173,6 @@ describe(":CW unfinished", function()
         assert.are.same({ "not checked", "codewars_warning" }, r[2][7])
     end)
 
-    -- The catalogue does not hold every kata: one opened by :CW train or
-    -- focus may be missing from it, and is named by what it was opened with.
     it("uses the name and rank a kata was opened with when the catalogue lacks it", function()
         catalogue = {}
         entries[1].name, entries[1].rank_id = "Multiply", -8
@@ -199,8 +195,6 @@ describe(":CW unfinished", function()
         assert.is_nil(asked, "looked up a kata it already knew")
     end)
 
-    -- Without waiting on it: the picker opens with what it knows, and fills
-    -- the rest in once Codewars answers.
     it("looks up what nothing else names, filling it in while the picker is open", function()
         catalogue = {}
         picker.unfinished()
@@ -212,8 +206,6 @@ describe(":CW unfinished", function()
         assert.are.equal("Looked Up multiply", text(row[4]))
     end)
 
-    -- :CW recent keeps the name and rank of kata opened lately, so much of
-    -- what the catalogue lacks is there, with no call to Codewars.
     it("names a kata from the recent history when nothing else does", function()
         catalogue = {}
         recent_items = { { slug = "multiply", lang = "python", name = "Multiply Lately", rank = -7, opened_at = NOW } }
@@ -253,8 +245,6 @@ describe(":CW unfinished", function()
         assert.are.same({ "multiply" }, asked)
     end)
 
-    -- kata_details.json written before names were kept holds a rank and tags
-    -- and no name: a rank on its own no longer settles it.
     it("looks a kata up again when its cached details have a rank but no name", function()
         catalogue = {}
         details = { multiply = { rank = { id = -8, name = "8 kyu" }, tags = { "Fundamentals" } } }
@@ -266,11 +256,8 @@ describe(":CW unfinished", function()
         assert.are.equal("Looked Up multiply", text(rows()[1][4]))
     end)
 
-    -- More kata than one lookup sends at once: the rest are looked up in the
-    -- background for as long as the picker is open, and show as they arrive.
     describe("the lookup of names past the first batch", function()
-        --- The first batch finds nothing; what comes later comes through
-        --- on_progress, as completed.enrich calls it.
+        --- The first batch finds nothing; later names come through on_progress.
         local function enrich_that_finds_nothing_at_first()
             package.loaded["codewars.cache.completed"].enrich = function(_, cb, opts)
                 asked_opts = opts
@@ -305,8 +292,7 @@ describe(":CW unfinished", function()
             assert.is_false(asked_opts.keep_going())
         end)
 
-        -- vim.ui.select cannot redraw what is on screen: the names are saved
-        -- as they come and show the next time the list opens.
+        -- vim.ui.select cannot redraw: names are saved as they come and show next open.
         it("keeps looking for the vim.ui.select list too until a row is chosen or it is cancelled", function()
             enrich_that_finds_nothing_at_first()
             provider = "select"
@@ -356,8 +342,7 @@ describe(":CW unfinished", function()
         assert.truthy(entry.ordinal:find("Java", 1, true), entry.ordinal)
     end)
 
-    -- The row is a file: a kata with an old `<id>.py` and a newer `<slug>.py`
-    -- has a row for each, and the one picked is the one that opens.
+    -- Each file is a row (`<id>.py` and `<slug>.py` both), and the picked one opens.
     it("opens the chosen kata in that file's language, and that very file", function()
         picker.unfinished()
         opened.cfg.attach_mappings(1, function() end)
@@ -367,8 +352,6 @@ describe(":CW unfinished", function()
             mounted)
     end)
 
-    -- Without telescope every picker goes through vim.ui.select: the same
-    -- rows as plain text, as the kata list's are.
     it("opens through vim.ui.select when telescope is not the picker", function()
         provider = "select"
         local real_select, shown = vim.ui.select, nil
@@ -402,9 +385,8 @@ describe(":CW unfinished", function()
         assert.are.equal("fetched", listed_with[1].slug)
     end)
 
-    -- The username is only ever detected by the menu. Run :CW unfinished
-    -- first, with no completed list cached, and an empty list would read as
-    -- "you have completed nothing": every solved kata listed as unfinished.
+    -- The username is only detected by the menu. With no completed list cached, an empty
+    -- list would read as "you have completed nothing": every solved kata listed.
     describe("when the account is not known yet", function()
         local saved_user
 
@@ -465,8 +447,6 @@ describe(":CW unfinished", function()
             assert.truthy(warnings()[1].msg:find("network down", 1, true), warnings()[1].msg)
         end)
 
-        -- Offline, or before the menu was ever opened, a list on disk is
-        -- still a list: nothing to detect, nothing to fetch.
         it("opens on the completed list on disk, without detecting anything", function()
             completed, fetched = { { slug = "done", completedLanguages = { "python" } } }, true
             picker.unfinished()
@@ -476,9 +456,8 @@ describe(":CW unfinished", function()
         end)
     end)
 
-    -- The list on disk is trusted only if a full fetch ever completed it, not
-    -- if it merely has items. A kata marked solved before any fetch leaves a
-    -- cache of one kata; a user with nothing completed has a fetched list of none.
+    -- Trusted only if a full fetch ever completed it: a kata marked before any fetch leaves a
+    -- cache of one kata, while a user with nothing completed has a fetched list of none.
     describe("which completed list on disk it trusts", function()
         local saved_user
 
@@ -505,9 +484,7 @@ describe(":CW unfinished", function()
             assert.are.equal("fetched", listed_with[1].slug, "judged by the one kata that was marked")
         end)
 
-        -- The picker judges by the list the fetch produced. The disk may hold
-        -- the old partial cache, or worse, when the new list could not be
-        -- saved (read-only or full cache dir).
+        -- Judged by the fetched list; after a failed save the disk may hold less.
         it("judges by the list the fetch produced, not by what is on disk afterwards", function()
             config.user.username = "me"
             completed, fetched, stale = MARKED, false, true
@@ -608,9 +585,8 @@ describe(":CW unfinished", function()
         end)
     end)
 
-    -- With no completed list every file would look unfinished, solved kata
-    -- included. A failed fetch, or one dropped because the account changed, is
-    -- not "you have completed nothing".
+    -- With no completed list every file would look unfinished: a failed fetch, or one dropped
+    -- because the account changed, must say so instead.
     it("does not open on an empty completed list that could not be fetched, and says why", function()
         local saved_user = config.user.username
         config.user.username = "me"

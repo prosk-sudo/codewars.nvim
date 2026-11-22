@@ -1,19 +1,11 @@
---- Who is signed in.
----
---- `config.user.username` is never configured by hand: it is detected, from
---- the identity cached for this session (cache.profile) or by reading it off
---- /dashboard. The menu does that when it opens, so a command run before the
---- menu finds it empty. The detection pieces live here so that anything else
---- that needs the account shares them.
----
---- Everything is required lazily: cookie.lua clears the profile cache from
---- identity_changed(), so a top-level require here would be a cycle.
+--- Who is signed in. `config.user.username` is detected (cached identity or /dashboard),
+--- never configured; the pieces are shared so commands run before the menu can use them.
+--- Required lazily: cookie.lua clears the profile cache from identity_changed() (a cycle).
 ---@class cw.Identity
 local M = {}
 
---- Only when the user has not chosen one themselves. Auto-detection is never
---- persisted, so it is re-applied on every launch, which is why the cache
---- carries the language and not just the name.
+--- Only if the user chose no language. Detection is never persisted, so this runs
+--- every launch and the cache carries the language.
 ---@param lang any
 function M.apply_lang(lang)
     local config = require("codewars.config")
@@ -24,15 +16,9 @@ function M.apply_lang(lang)
     config.user.lang = lang
 end
 
---- A reply may only write if the identity it was issued under is still the
---- current one.
----
---- profile.save() stamps a record with the cookie live when the reply LANDS,
---- while the request closed over the name it was ISSUED for. Without this,
---- signing into another account while a stats call is in flight would rebind
---- the old name to the new session's fingerprint. The name is checked too: a
---- rename healed mid-flight keeps the cookie, so the fingerprint alone would
---- miss it.
+--- A reply may write only if its identity is still current: profile.save() stamps the
+--- cookie live when the reply LANDS, so a mid-flight account switch would rebind the old
+--- name to the new session. The name is checked too, since a rename keeps the cookie.
 ---@param name string? the username the request was issued for
 ---@return fun(): boolean
 function M.still_current(name)
@@ -53,8 +39,7 @@ function M.still_current(name)
     end
 end
 
---- Take `username`, and the language the dashboard reports, as who is signed
---- in, and remember it for the next launch.
+--- Take `username` and the dashboard's language as who is signed in, and remember it.
 ---@param username string
 ---@param lang string?
 function M.adopt(username, lang)
@@ -67,9 +52,8 @@ function M.adopt(username, lang)
     })
 end
 
---- One /dashboard read: who this cookie belongs to. `on_reply(profile, err)`
---- is called unless the session changed while the request was out; then the
---- reply is dropped and `on_stale` is called instead, if given.
+--- One /dashboard read. `on_reply(profile, err)` is skipped if the session changed
+--- mid-request; `on_stale` is called instead, if given.
 ---@param on_reply fun(profile: table?, err: table?)
 ---@param on_stale fun()?
 function M.scrape(on_reply, on_stale)
@@ -83,11 +67,8 @@ function M.scrape(on_reply, on_stale)
     end)
 end
 
---- Make sure the account is known, then call `cb(username)`; or
---- `cb(nil, err)` when it cannot be: `err.signed_out` with no cookie saved,
---- `err.auth` when Codewars refuses the cookie (it expired), otherwise
---- whatever went wrong. Tries the known name, then this session's cached
---- identity (as the menu does), then the dashboard.
+--- Make sure the account is known, then `cb(username)`; or `cb(nil, err)` with
+--- `err.signed_out` (no cookie), `err.auth` (cookie refused) or whatever failed.
 ---@param cb fun(username: string?, err: table?)
 function M.ensure(cb)
     local config = require("codewars.config")

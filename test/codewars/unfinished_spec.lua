@@ -1,6 +1,5 @@
--- A solution file is unfinished when its kata is not completed in that language
--- and the file no longer holds the starter it was seeded with. A file seeded
--- before starters were recorded cannot be checked, so it is listed and says so.
+-- Unfinished: not completed in that language and no longer holding the seeded starter.
+-- A file seeded before starters were recorded cannot be checked, so it is listed and says so.
 local P = require("plenary.path")
 
 describe("unfinished", function()
@@ -42,15 +41,12 @@ describe("unfinished", function()
             { key = entries[1].key, lang = entries[1].lang, file = entries[1].file, checked = entries[1].checked })
     end)
 
-    -- Re-indenting or a trailing newline is not work on the kata.
     it("passes over a starter left as it was, whitespace aside", function()
         unfinished.seeded("multiply.py", STUB)
         file("multiply.py", "def f(x):\n  pass\n\n")
         assert.are.same({}, listed())
     end)
 
-    -- Indentation, trailing spaces, blank lines and the final newline are not
-    -- work on the kata. Anything else is, down to one space inside a string.
     it("tells a changed space inside a string literal from the starter", function()
         unfinished.seeded("greet.py", 'def f():\n    return "hello world"')
         file("greet.py", 'def f():\n    return "helloworld"')
@@ -82,16 +78,14 @@ describe("unfinished", function()
         assert.are.same({}, listed())
     end)
 
-    -- Records already on disk were made by the old fingerprint, which ignored
-    -- every space; new ones say which they are.
+    -- Records on disk used the old fingerprint (ignores every space); new ones are versioned.
     it("marks the fingerprints it writes with a version", function()
         unfinished.seeded("multiply.py", STUB)
         local record = vim.json.decode(table.concat(vim.fn.readfile(tmp .. "/.seeded.json"), "\n"))
         assert.truthy(record["multiply.py"].prints[1]:find("^v2:"), vim.inspect(record))
     end)
 
-    --- A record as an earlier version wrote it: a bare sha256 of the text with
-    --- every whitespace character removed.
+    --- A record as an earlier version wrote it: a bare sha256 of the text without whitespace.
     local function legacy_record(name, starter)
         local fp = vim.fn.sha256((starter:gsub("%s+", "")))
         vim.fn.writefile({ vim.json.encode({ [name] = { prints = { fp } } }) }, tmp .. "/.seeded.json")
@@ -151,8 +145,6 @@ describe("unfinished", function()
         assert.are.same({ "new.py", "mid.java", "old.py" }, listed())
     end)
 
-    -- Two saves in the same second are still two moments: the order is the
-    -- full modification time, and only a tie on that goes by file name.
     it("orders files saved within the same second by the fraction of it", function()
         file("a-older.py", "a", 1000.25)
         local stat = vim.loop.fs_stat(tmp .. "/a-older.py")
@@ -162,8 +154,7 @@ describe("unfinished", function()
         assert.are.same({ "m-newer-too.py", "z-newer.py", "a-older.py" }, listed())
     end)
 
-    -- A kata opens a solution through a symlink in storage.home, and the work
-    -- done in it is as real as in any other file.
+    -- A kata opens a solution through a symlink in storage.home; work in it is real.
     describe("a solution that is a symlink", function()
         local uv = vim.uv or vim.loop
 
@@ -207,8 +198,6 @@ describe("unfinished", function()
         end)
     end)
 
-    -- :CW reset seeds the kata again: what counts as untouched is the new
-    -- starter, not the first one.
     it("takes a fresh seed over an earlier one", function()
         unfinished.seeded("multiply.py", "first starter")
         unfinished.seeded("multiply.py", STUB)
@@ -283,8 +272,7 @@ describe("unfinished", function()
         assert.is_false(made)
     end)
 
-    -- The catalogue does not hold every kata, so the picker would otherwise
-    -- have nothing but a file name to show for one opened by :CW train.
+    -- The catalogue lacks kata opened by :CW train, which would show only a file name.
     it("remembers the name and rank the kata was opened with", function()
         unfinished.seeded("multiply.py", STUB, { name = "Multiply", rank_id = -8 })
         file("multiply.py", "def f(x):\n    return x * 2")
@@ -311,8 +299,6 @@ describe("unfinished", function()
         assert.are.same({}, listed())
     end)
 
-    -- :CW template on/off rewrites the buffer, and the file may be saved
-    -- either way round afterwards.
     it("keeps an untouched starter untouched through a template toggle, saved or not", function()
         unfinished.seeded("multiply.py", STUB)
         unfinished.retemplated("multiply.py", STUB, "import logging\n\n" .. STUB)

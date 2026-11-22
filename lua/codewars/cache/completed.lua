@@ -8,10 +8,8 @@ local completed = {}
 local function list_file() return cache_utils.cache_file("completed.json") end
 local function details_file() return cache_utils.cache_file("kata_details.json") end
 
---- The completed kata on disk, whether they are stale, and whether they are a
---- list at all: `is_fetched` is true once a full fetch ever completed, even one
---- that found no kata. A cache of only locally marked kata (`mark` stamps 0) is
---- not the account's list, so nothing that judges by the whole list may trust it.
+--- Cached completed kata. `is_fetched` is true only after a full fetch; a cache of
+--- marked-only kata (stamp 0) is not the account's list and must not be trusted as one.
 ---@return table[] items
 ---@return boolean is_stale
 ---@return boolean is_fetched
@@ -26,10 +24,8 @@ function completed.get()
     return raw.items, stale, stamp > 0
 end
 
---- Write the list. A write that did not land (read-only or full cache dir) is
---- reported so the caller can say so once and go on with the list it has in
---- memory: after a failed write the file may hold the old list, less, or be
---- damaged (the write is in place).
+--- A failed write (read-only or full cache dir) is reported, not swallowed: the file may
+--- hold the old list or be damaged, so callers keep the list they have in memory.
 ---@param data table[]
 ---@param timestamp integer? keep an existing stamp instead of "now"
 ---@return boolean saved
@@ -41,13 +37,11 @@ function completed.save(data, timestamp)
     }, { quiet = true })
 end
 
---- Kata details that were looked up but could not be written to disk, kept
---- here so that what reads the details (the open picker) still sees them. Put
---- back on disk with the next write that lands, and dropped by `clear()`.
+--- Details looked up but not saved, so the open picker still sees them; flushed by the next write.
 ---@type table<string, table>
 local unsaved_details = {}
 
---- The kata details: on disk, and any looked up since that could not be written.
+--- The kata details, including any that could not be written.
 ---@return table<string, table>
 function completed.get_details()
     local on_disk = cache_utils.read_json(details_file()) or {}
@@ -55,8 +49,7 @@ function completed.get_details()
     return vim.tbl_extend("force", on_disk, unsaved_details)
 end
 
---- Write `details` as the whole details cache. Lookups save through
---- `merge_details` instead, since this would write back a snapshot.
+--- Replaces the whole cache. Lookups use `merge_details`: this would write back a snapshot.
 ---@param details table<string, table>
 ---@return boolean saved
 ---@return string? err why it did not
@@ -64,18 +57,15 @@ function completed.save_details(details)
     return cache_utils.write_json(details_file(), details, { quiet = true })
 end
 
---- Refreshes in flight, by the account each is for, with the callers waiting
---- on it. A refresh is its own table so that one ended after `clear()` has
---- forgotten it cannot free, or answer, the slot of one begun since.
+--- In-flight refreshes by account, with their waiting callers. Each is its own
+--- table so one ending after `clear()` cannot free a newer refresh's slot.
 ---@type table<string, { callers: function[] }>
 local flights = {}
 
---- Bumped by `clear()`. A refresh begun before it was fetching for a cache
---- that no longer exists, and its reply must not bring that cache back.
+--- Bumped by `clear()`: a reply from a refresh begun earlier must not revive that cache.
 local generation = 0
 
---- What a run began for: the signed-in account and the cache generation. A run
---- may only write the caches while both are unchanged.
+--- What a run began for; it may write the caches only while both are unchanged.
 ---@class cw.Account
 ---@field username string
 ---@field generation integer
@@ -91,11 +81,9 @@ local function is_current(account)
     return config.user.username == account.username and generation == account.generation
 end
 
---- Save kata details a run fetched (`found`, by slug). Every details save goes
---- through here: it adds only what the run fetched to the cache as it is NOW
---- (not the snapshot read at the run's start, which would erase what another
---- lookup saved since), and writes nothing for a gone account or cache. A write
---- that does not land keeps the names in `unsaved_details` and is reported.
+--- Every details save goes through here: it merges only what the run fetched into the
+--- cache as it is NOW (a start-time snapshot would erase newer lookups) and writes nothing
+--- for a gone account. A failed write keeps the names in `unsaved_details`.
 ---@param found table<string, table>
 ---@param account cw.Account what the run began for
 ---@return "saved"|"unsaved"|"gone" outcome "gone": `account` is gone and nothing was kept
@@ -114,8 +102,7 @@ end
 
 --- Remove both caches. The completed list is the signed-in user's, so it
 --- must not outlive their cookie; the kata details are not per-user but
---- are only ever rebuilt from the list, so they go too. A refresh already in
---- flight is for the gone cookie and is dropped when its reply lands.
+--- are only rebuilt from the list, so they go too. In-flight refreshes are dropped.
 function completed.clear()
     generation = generation + 1
     flights = {}
@@ -125,9 +112,7 @@ function completed.clear()
     end
 end
 
---- `item` with the languages `mark` added locally that the server does not
---- list yet. `local_langs` then holds just those: a language leaves it once
---- the server lists it, and with none left the field is gone.
+--- `item` plus languages `mark` added locally that the server has not listed yet (`local_langs`).
 ---@param item table
 ---@param local_langs string[]?
 ---@return table
@@ -143,9 +128,7 @@ local function with_pending_languages(item, local_langs)
     })
 end
 
---- The refreshed list plus what was marked locally while the request was out
---- and so is not in the reply: a whole kata, or a language of one the reply
---- has. Neither is un-completed until the server catches up.
+--- The refreshed list plus kata or languages marked locally while the request was out.
 ---@param fetched table[] the reply's items
 ---@param cached table[] the cache as it is now
 ---@return table[]
@@ -167,16 +150,9 @@ local function merge_local_marks(fetched, cached)
     return merged
 end
 
---- Refresh the list from Codewars, and hand `cb` the kata and any error.
----
---- One refresh runs at a time per account: a call made while one is in flight
---- sends no request and gets that refresh's result, an error included. Two
---- merged replies can race: the newer can clear a marker the older, arriving
---- later, still needed.
----
---- A reply is only merged and saved while the account it began for is still
---- signed in and the cache has not been cleared; otherwise it is dropped and
---- the callers get an error.
+--- Refresh the list from Codewars, handing `cb` the kata and any error. One refresh runs
+--- per account (callers during a flight share its result), since merged replies could race.
+--- A reply is saved only while the account and cache generation are unchanged.
 ---@param cb? function
 function completed.update(cb)
     local api_utils = require("codewars.api.utils")
@@ -206,8 +182,7 @@ function completed.update(cb)
     local page = 0
     local settled = false
 
-    --- The one exit. Frees the slot first, so that whatever a callback does
-    --- starts a fresh refresh, then answers everyone who asked.
+    --- The one exit: frees the slot first so a callback can start a new refresh.
     local function settle(items, err)
         if settled then return end
         settled = true
@@ -218,8 +193,7 @@ function completed.update(cb)
         end
     end
 
-    --- Ends the refresh without saving: the cached list stays and the next
-    --- open retries.
+    --- Ends without saving; the cached list stays and the next open retries.
     local function give_up(err)
         settle((completed.get()), err)
     end
@@ -228,25 +202,21 @@ function completed.update(cb)
 
     local function on_page(res, err)
         if not is_current(account) then
-            -- Checked first, on every page: a refresh for a gone account must
-            -- not overwrite the current cache, merge that account's local
-            -- marks, or keep asking for pages.
+            -- Checked on every page: a gone account's refresh must not write, merge or keep paging.
             return give_up({
                 msg = "The account changed while your completed kata were being fetched; keeping the cached list.",
             })
         end
 
         if err then
-            -- Saving the pages so far would stamp a partial list as fresh and
-            -- overwrite a valid older cache. Hand back whatever is on disk.
+            -- A partial list would overwrite a valid cache as fresh; keep what is on disk.
             log.err(err)
             return give_up(err)
         end
 
         if not (type(res) == "table" and type(res.data) == "table") then
-            -- A 2xx without `data` is not "no completed kata", it is a reply
-            -- we do not understand (interstitial, API drift). Saving would
-            -- overwrite a valid cache with an empty or partial list.
+            -- A 2xx without `data` is an unknown reply (interstitial, API drift), not "no
+            -- completed kata"; saving it would clobber a valid cache.
             local bad = { msg = "Unexpected reply from the completed-kata API; keeping the cached list." }
             log.err(bad)
             return give_up(bad)
@@ -258,15 +228,12 @@ function completed.update(cb)
             return fetch_page()
         end
 
-        -- Keep a kata marked complete locally while this refresh was in flight,
-        -- which the pages do not hold yet. Read the cache now, not when the
-        -- refresh began: kata marked since then are in the cache, not the reply.
+        -- Keep kata marked locally during this refresh. Read the cache now, not at the
+        -- start: later marks are in the cache but not in the reply.
         all = merge_local_marks(all, (completed.get()))
         local saved, save_err = completed.save(all)
         if not saved then
-            -- Callers still get the fetched list from memory; the disk may hold
-            -- something else (old list, marked kata only, damaged file), so say
-            -- that this did not stick.
+            -- Callers still get the fetched list; the disk may differ, so say this did not stick.
             log.warn(("Fetched your completed kata, but could not save them (%s); "
                 .. "using the fetched list for now."):format(tostring(save_err or "the write failed")))
         end
@@ -274,8 +241,7 @@ function completed.update(cb)
         settle(all)
     end
 
-    --- A failure in here (a cache that cannot be written, a request that
-    --- cannot start) must still end the refresh, or no later one could run.
+    --- Any failure in here must still end the refresh, or no later one could run.
     local function guarded(fn, ...)
         local ok, failure = pcall(fn, ...)
         if ok then return end
@@ -294,8 +260,7 @@ function completed.update(cb)
     guarded(fetch_page)
 end
 
---- Save the list `mark` made, telling the user when it did not land: a kata
---- they just solved is then not recorded as completed until the next refresh.
+--- Saves the marked list; warns if that fails, as the solve is unrecorded until a refresh.
 ---@param items table[]
 ---@param timestamp integer
 local function save_marked(items, timestamp)
@@ -318,13 +283,10 @@ function completed.mark(kata_id, slug, lang)
     local items = raw.items or {}
     for i, item in ipairs(items) do
         if item.id == kata_id then
-            -- Already there, but a second language is its own completion:
-            -- without it that solution would show as unfinished until the
-            -- next refresh.
+            -- A second language is its own completion; without it that solution lists as unfinished.
             local langs = item.completedLanguages or {}
             if not lang or vim.tbl_contains(langs, lang) then return end
-            -- Also remembered as added here, for a refresh whose reply
-            -- predates the submit.
+            -- Also remembered as local, for a refresh whose reply predates the submit.
             local updated = vim.tbl_extend("force", item, {
                 completedLanguages = vim.list_extend(vim.list_slice(langs), { lang }),
                 local_langs = vim.list_extend(vim.list_slice(item.local_langs or {}), { lang }),
@@ -346,33 +308,25 @@ function completed.mark(kata_id, slug, lang)
     save_marked(vim.list_extend({ marked }, items), raw.timestamp or 0)
 end
 
---- Kata one call looks up at once. About 60 requests a minute is what
---- Codewars lets through, so more than this in one burst is asking for a 429.
+--- Kata looked up at once; Codewars allows ~60 requests a minute, so more risks a 429.
 local FIRST_BATCH = 50
 
---- Names found past the first batch are saved, and the caller told, this
---- many at a time rather than one write each.
+--- Names found past the first batch are saved this many at a time.
 local REST_SAVE_EVERY = 5
 
 ---@class cw.EnrichOpts
 ---@field names boolean? look a kata up again when its cached details have no name
----@field keep_going (fun(): boolean)? when given, kata past the first batch are looked up too, one at a time at the kata-list pace, while it returns true (checked before every request)
----@field on_progress fun()? called after names found past the first batch are saved, so the caller can show them
+---@field keep_going (fun(): boolean)? also look up kata past the first batch while this returns true (checked before each request)
+---@field on_progress fun()? called after names past the first batch are saved
 
---- Look up `slugs`, the kata an `enrich` call had no room for in its first
---- batch, one at a time, paced and backed off like the kata-list build
---- (problemlist's pace, cooldown and pacer) and saved as they arrive.
----
---- Stops before the next request when `keep_going` turns false, keeping what it
---- has. Saves nothing more once the account changed or the cache was cleared
---- since `account` (what the whole `enrich` call began for).
+--- Looks up `slugs` (what `enrich` had no room for) one at a time, paced like the kata-list
+--- build. Stops when `keep_going` is false; saves nothing once `account` is gone.
 ---@param slugs string[]
 ---@param opts cw.EnrichOpts
 ---@param account cw.Account
----@param warn_unsaved fun(why: string?) tells the user, once for the whole call, that names could not be saved
+---@param warn_unsaved fun(why: string?) warns once per call that names could not be saved
 local function look_up_rest(slugs, opts, account, warn_unsaved)
-    --- Why the run should not go on, if so: "gone" for an account or cache
-    --- that is not the one it began for, "closed" for a caller that is done.
+    --- Why to stop: "gone" (other account or cache) or "closed" (caller is done).
     local function stop_reason()
         if not is_current(account) then return "gone" end
         local ok, wanted = pcall(opts.keep_going)
@@ -397,17 +351,15 @@ local function look_up_rest(slugs, opts, account, warn_unsaved)
         local to_save = pending
         pending = {}
         local outcome, why = merge_details(to_save, account)
-        -- Nothing is written, and nobody told, for an account that is gone.
+        -- Nothing is written or reported for a gone account.
         if outcome == "gone" then return end
-        -- Unsaved names are still in memory for the caller to show.
         if outcome == "unsaved" then warn_unsaved(why) end
         if not opts.on_progress then return end
         local ok, failure = pcall(opts.on_progress)
         if not ok then log.error("Kata name lookup progress callback failed: " .. tostring(failure)) end
     end
 
-    --- The one way out. `outcome`: "done", "limited" (refused too often in a
-    --- row), "broke" (an error of our own), or the stop_reason it stopped for.
+    --- The one exit. `outcome`: "done", "limited", "broke", or a stop_reason.
     local function finish(outcome, failure)
         if finished then return end
         finished = true
@@ -484,23 +436,15 @@ end
 
 --- Enrich completed kata with rank/tag details.
 ---
---- Details cached before names were kept have a rank and tags but no name.
---- :CW completed leaves them be; a caller that names kata (:CW unfinished)
---- passes `names` to look them up again.
----
---- At most FIRST_BATCH kata are looked up at once. A caller that gives
---- `keep_going` has the rest looked up in the background while it stays true;
---- the others get the first batch only.
+--- Details cached before names were kept lack a name; `names` looks those up again.
+--- At most FIRST_BATCH are looked up at once; `keep_going` also does the rest in the background.
 ---@param items table[]
 ---@param cb function callback(enriched_items)
 ---@param opts cw.EnrichOpts?
 function completed.enrich(items, cb, opts)
-    -- What the whole call (first batch and the rest) is for: captured once and
-    -- checked wherever it reads a reply or writes.
+    -- What the whole call is for; checked wherever it reads a reply or writes.
     local account = current_account()
-    -- A snapshot of what is cached now, to tell what is missing and fill
-    -- `items` in. Never written back: only what this run fetches is added
-    -- (merge_details).
+    -- A start-time snapshot: never written back, only what this run fetches (merge_details).
     local details = completed.get_details()
     local need_names = opts and opts.names
     local missing = {}
@@ -544,11 +488,8 @@ function completed.enrich(items, cb, opts)
     local Spinner = require("codewars.logger.spinner")
     local spinner = Spinner:start(("Fetching kata details (0/%d)"):format(total))
 
-    --- The account changed or the cache was cleared while requests were out,
-    --- so what they bring belongs to a cache that is gone. Saves nothing, sends
-    --- no more, skips the rest, and calls back with the given items and an
-    --- error (as update does) so the caller does not show a list for a gone
-    --- account.
+    --- The account changed or the cache was cleared mid-call: save nothing, send no more, and
+    --- call back with an error (as update does) so no list shows for a gone account.
     local function abandon()
         done = true
         spinner:success("Stopped fetching kata details: the account changed")
@@ -571,8 +512,7 @@ function completed.enrich(items, cb, opts)
                 spinner:update(("Fetching kata details (%d/%d)"):format(fetched, total))
 
                 if not err and res then
-                    -- The name too: :CW unfinished lists kata the catalogue
-                    -- does not hold, and has nothing else to call them by.
+                    -- The name too: :CW unfinished lists kata the catalogue lacks.
                     found = vim.tbl_extend("force", found, { [slug] = { rank = res.rank, tags = res.tags, name = res.name } })
                 else
                     failed = failed + 1
@@ -600,8 +540,7 @@ function completed.enrich(items, cb, opts)
                             item.tags = known[s].tags
                         end
                     end
-                    -- Before the callback, so that nothing it does can keep
-                    -- the rest from starting; the first of them waits a pace.
+                    -- Before the callback, so nothing it does can stop the rest from starting.
                     if opts and type(opts.keep_going) == "function" and #missing > FIRST_BATCH then
                         look_up_rest(vim.list_slice(missing, FIRST_BATCH + 1), opts, account, warn_unsaved)
                     end

@@ -1,7 +1,5 @@
--- Who is signed in, for code that needs the account before the menu has run:
--- config.user.username is only filled in by detection. Detection itself (the
--- cached identity bound to the live cookie, the /dashboard scrape, the guard
--- against a reply for a changed session) is the menu's, shared.
+-- Who is signed in, for code that needs the account before the menu has run. Detection
+-- itself (cached identity, /dashboard scrape, stale-session guard) is the menu's, shared.
 describe("identity", function()
     local config = {
         user = { username = "", lang = "python" },

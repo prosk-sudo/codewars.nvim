@@ -22,16 +22,9 @@ local function build_completed_set(items)
     return set
 end
 
---- Run `cb` with the completed kata as cache.completed holds them: fetched
---- first when there are none yet, otherwise served from cache at once while a
---- stale list refreshes in the background. `err` is why a needed fetch did not
---- bring a list (it failed, or the account changed under it); `items` is then
---- whatever is on disk, which says nothing about what this account completed.
----
---- The kata list is content with any kata on disk. `opts.fetched_only` is for
---- a caller that judges by the WHOLE list: a cache holding only locally marked
---- kata is not one, so it is fetched unless a full fetch ever completed. A
---- fetched list is used as it is, empty or not, signed in or not.
+--- Run `cb` with the completed kata, fetched first if none, else cached while a stale list
+--- refreshes. On `err`, `items` is only what is on disk. `opts.fetched_only` fetches unless a
+--- full fetch ever completed, for callers that judge by the WHOLE list.
 ---@param cb fun(items: table[], err: table?)
 ---@param opts { fetched_only: boolean? }?
 local function ensure_completed_items(cb, opts)
@@ -49,9 +42,8 @@ local function ensure_completed_items(cb, opts)
         log.info("Fetching completed kata...")
         return completed_cache.update(function(fetched_items, err)
             picker.invalidate_completed_cache()
-            -- The list the fetch produced, not what the disk holds after it:
-            -- if the save failed (read-only or full cache dir) the disk may
-            -- hold the old list, only the marked kata, or a damaged file.
+            -- The fetched list, not the disk: a failed save may leave the old list
+            -- or a damaged file there.
             vim.schedule(function() cb(fetched_items, err) end)
         end)
     end
@@ -632,8 +624,7 @@ end
 local function show_enriched(data, initial)
     local completed_cache = require("codewars.cache.completed")
     completed_cache.enrich(data, function(enriched, err)
-        -- The account it was opened under is gone (cookie changed, cache
-        -- cleared): these are not that account's kata to show now.
+        -- The account changed or the cache was cleared: do not show this list.
         if err then return log.warn(tostring(err.msg or "Could not fetch kata details")) end
         vim.schedule(function()
             ensure_completed_set(function(completed_set)
@@ -672,8 +663,7 @@ local function lang_icon(slug)
     return icons["lang_" .. slug] or "#"
 end
 
---- Each catalogue kata by slug and by id: a solution file is named after
---- whichever its kata was opened by.
+--- Catalogue kata by slug and by id (a solution file is named after either).
 ---@return table<string, table>
 local function catalogue_index()
     local index = {}
@@ -708,8 +698,7 @@ end
 
 local NOT_CHECKED = "not checked"
 
---- A file's own name made readable, for a kata known by nothing else:
---- "how-old-will-i-be" reads "How old will i be". An id has nothing to read.
+--- A file name made readable ("how-old-will-i-be" -> "How old will i be"); an id stays as is.
 ---@param key string
 ---@return string
 local function readable(key)
@@ -717,8 +706,7 @@ local function readable(key)
     return (key:gsub("-", " "):gsub("^%l", string.upper))
 end
 
---- Each kata in the :CW recent history by slug, newest first. A file named
---- after a kata's id finds nothing here; the catalogue or a lookup names it.
+--- Kata in the :CW recent history by slug, newest first; a file named by id is not found here.
 ---@return table<string, cw.RecentEntry>
 local function recent_index()
     local index = {}
@@ -728,10 +716,8 @@ local function recent_index()
     return index
 end
 
---- Everything that can name a :CW unfinished kata. The catalogue does not
---- hold every kata; what it lacks comes from what the kata was last opened
---- with (its entry, from the solutions record), then the :CW recent history,
---- then kata details looked up before.
+--- What can name a kata the catalogue lacks, in order: its solutions record, the
+--- :CW recent history, then details looked up before.
 ---@class cw.UnfinishedSources
 ---@field catalogue table<string, table>
 ---@field recent table<string, cw.RecentEntry>
@@ -751,7 +737,6 @@ local function known_of(entry, sources)
     }
 end
 
---- What one :CW unfinished row shows.
 ---@param entry cw.UnfinishedEntry
 ---@param sources cw.UnfinishedSources
 ---@param now integer
@@ -772,8 +757,7 @@ local function unfinished_row(entry, sources, now)
     }
 end
 
---- Whether a row would lack a name or a rank: a kata nothing knows, or one
---- known by rank alone (details cached before names were kept).
+--- Whether a row lacks a name or rank: nothing knows the kata, or only its rank.
 ---@param entry cw.UnfinishedEntry
 ---@param sources cw.UnfinishedSources
 local function unnamed(entry, sources)
@@ -781,8 +765,6 @@ local function unnamed(entry, sources)
     return not (known.name and known.rank_id)
 end
 
---- The :CW unfinished picker, laid out as the kata list is: rank, then the
---- kata, then the language and how long ago it was last changed.
 ---@param t table telescope, as picker.dropdown hands it out
 ---@param rows table[] from unfinished_row
 local function open_unfinished(t, rows)
@@ -792,8 +774,7 @@ local function open_unfinished(t, rows)
         lang_w = math.max(lang_w, vim.fn.strdisplaywidth(row.lang_name))
         when_w = math.max(when_w, vim.fn.strdisplaywidth(row.when))
     end
-    -- Rank icon, rank, language icon, the separators between all seven
-    -- columns, and the window's border and padding.
+    -- Rank icon, rank, language icon, separators for the seven columns, window border and padding.
     local fixed = 1 + 5 + 1 + lang_w + when_w + #NOT_CHECKED + 6 + 4
     local displayer = t.entry_display.create({
         separator = " ",
@@ -857,8 +838,7 @@ local function open_unfinished(t, rows)
     end, is_open
 end
 
---- The vim.ui.select variant: the same rows as plain text. An open select
---- cannot be redrawn, so names the background lookup finds show next open.
+--- The vim.ui.select variant; it cannot redraw, so names found later show next open.
 ---@param rows table[]
 ---@return fun(new_rows: table[]) update does nothing: there is no redrawing it
 ---@return fun(): boolean is_open until a row is chosen or it is cancelled
@@ -879,8 +859,7 @@ local function select_unfinished(rows)
     return function() end, function() return open end
 end
 
---- Why :CW unfinished cannot tell which kata are completed, for a user who has
---- to act on it.
+--- Why :CW unfinished cannot tell which kata are completed, for the user to act on.
 ---@param err table? from identity.ensure
 ---@return string
 local function unknown_account_message(err)
@@ -896,15 +875,9 @@ local function unknown_account_message(err)
         tostring(err and err.msg or "unknown error"))
 end
 
---- ensure_completed_items for :CW unfinished, which judges every file by the
---- list. The list on disk is trusted only if a full fetch ever completed it,
---- not if it merely has items: an empty fetched list means "you have completed
---- nothing", while a cache of kata marked before any fetch is no list at all.
---- A fetched list is used as it is, stale or not, signed in or not. Without one
---- the account must be known to fetch it, and config.user.username is only
---- detected by the menu, so it is settled first (identity.ensure); if that
---- fails the user is told why, rather than every solved kata being listed as
---- unfinished.
+--- ensure_completed_items for :CW unfinished, which judges every file by the list.
+--- Only a fully fetched list is trusted (an empty one is real, a marked-only cache
+--- is not). Without one, the account is settled first (identity.ensure) to fetch it.
 ---@param cb fun(items: table[], err: table?)
 local function ensure_known_completed_items(cb)
     local _, _, is_fetched = require("codewars.cache.completed").get()
@@ -917,9 +890,7 @@ local function ensure_known_completed_items(cb)
     end)
 end
 
---- Kata you started and never submitted, most recently changed first, to
---- pick back up. A file from before starters were recorded cannot be told
---- from an untouched one, so it is listed and marked "not checked".
+--- :CW unfinished. A file seeded before starters were recorded is listed as "not checked".
 function picker.unfinished()
     local use_select = dropdown.provider() == "select"
     local t
@@ -928,8 +899,7 @@ function picker.unfinished()
         if not t then return end
     end
     ensure_known_completed_items(function(completed, err)
-        -- With no completed list every file would look unfinished, solved kata
-        -- included: say what went wrong instead.
+        -- With no completed list every file would look unfinished: say what went wrong.
         if err then
             return log.warn(("Could not fetch your completed kata, so :CW unfinished cannot tell which you have "
                 .. "finished: %s. Try again."):format(tostring(err.msg or "request failed")))
@@ -956,11 +926,8 @@ function picker.unfinished()
         end
         local function redraw() vim.schedule(function() update(rows()) end) end
 
-        -- What nothing names yet is looked up as :CW completed does, and
-        -- filled in once Codewars answers rather than waited for. Past the
-        -- first batch the lookup carries on while the list is open, and each
-        -- batch of names it finds is shown. (vim.ui.select cannot redraw: its
-        -- names show next time.)
+        -- Look up unnamed kata and fill them in as Codewars answers, past the first batch too
+        -- while the list is open. (vim.ui.select cannot redraw: names show next open.)
         local known = sources()
         local unknown = {}
         for _, e in ipairs(found) do
