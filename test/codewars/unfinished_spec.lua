@@ -272,7 +272,7 @@ describe("unfinished", function()
         assert.is_false(made)
     end)
 
-    -- The catalogue lacks kata opened by :CW train, which would show only a file name.
+    -- The catalogue lacks some kata, so the name and rank come from what was recorded at open.
     it("remembers the name and rank the kata was opened with", function()
         unfinished.seeded("multiply.py", STUB, { name = "Multiply", rank_id = -8 })
         file("multiply.py", "def f(x):\n    return x * 2")

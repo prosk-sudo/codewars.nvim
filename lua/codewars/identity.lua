@@ -18,7 +18,7 @@ end
 
 --- A reply may write only if its identity is still current: profile.save() stamps the
 --- cookie live when the reply LANDS, so a mid-flight account switch would rebind the old
---- name to the new session. The name is checked too, since a rename keeps the cookie.
+--- name to the new session. The name is checked too: a mid-flight rename keeps the cookie.
 ---@param name string? the username the request was issued for
 ---@return fun(): boolean
 function M.still_current(name)

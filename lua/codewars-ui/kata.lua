@@ -115,7 +115,7 @@ function Kata:_picked_file_name(lang)
     return picked
 end
 
---- The file named after the slug, opened when nothing says which.
+--- The file opened when none is picked: named after the slug, or the id for legacy files.
 ---@param lang table an entry from config.langs
 ---@return string
 function Kata:_default_file_name(lang)
@@ -130,7 +130,7 @@ function Kata:_default_file_name(lang)
 end
 
 --- Point self.file at this kata's solution in self.lang, seeding the starter when
---- there is none. The starter goes on record so :CW unfinished can tell work from a look.
+--- there is none. Either way the starter goes on record, so :CW unfinished can tell work from a look.
 ---@return boolean existed
 function Kata:_open_file()
     local lang = utils.get_lang(self.lang)
