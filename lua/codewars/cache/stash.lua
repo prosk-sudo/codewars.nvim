@@ -11,12 +11,11 @@ local HEX24 = require("codewars.api.utils").HEX24
 ---@class cw.cache.Stash
 local M = {}
 
---- An id becomes part of a file name, and it comes from server replies and
---- scraped pages that nothing validates: one holding "../" would write the
---- user's buffer outside the cache dir. Only two shapes are legitimate, and
---- neither can carry a path separator: a Codewars id (24 hex characters) and
---- the "local-<ms>" id `:CW kumite new` gives a draft until its first save,
---- which a dirty close must still be able to stash.
+--- An id becomes part of a file name and comes from unvalidated server replies
+--- and scraped pages, so one holding "../" would write outside the cache dir.
+--- Only two shapes are allowed, neither with a path separator: a Codewars id
+--- (24 hex characters) and the "local-<ms>" id `:CW kumite new` gives a draft
+--- until its first save, which a dirty close must still be able to stash.
 ---@param id any
 ---@return boolean
 local function is_safe_id(id)
@@ -39,8 +38,7 @@ function M.for_kind(prefix)
     ---@param entry table must carry `id`
     ---@return string? path absolute path written, nil when nothing landed
     function kind.save(entry)
-        -- Refused before anything is touched. The callers treat nil as "not
-        -- stashed" and keep the buffers open, so no work is lost either.
+        -- Callers treat nil as "not stashed" and keep the buffers open.
         if not is_safe_id(entry.id) then
             -- Capped: the id is untrusted text on its way into a notification.
             local shown = vim.inspect(tostring(entry.id):sub(1, 40))

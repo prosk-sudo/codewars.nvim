@@ -1,9 +1,8 @@
--- :CW open hands the kata URL to the system opener. The URL embeds the kata
--- slug, which comes from the server, so two things must hold: the slug is
--- only ever a plain name (cmd.exe, the Windows opener, acts on & | ^ % and
--- quotes even inside one argv element, and vim.ui.open uses it too), and on
--- a Neovim without vim.ui.open (before 0.10) the URL travels through
--- jobstart as one argv element, never as text for a shell. That fallback
+-- :CW open hands the kata URL to the system opener. The slug comes from the
+-- server, so it must only ever be a plain name (cmd.exe acts on & | ^ % even
+-- inside one argv element, and vim.ui.open uses it too), and without
+-- vim.ui.open (before 0.10) the URL must reach jobstart as one argv element,
+-- never as text for a shell. That fallback
 -- picks the opener from the system: cmd.exe on Windows (has("win32")), open on
 -- macOS, xdg-open everywhere else, the BSDs included, and it starts nothing
 -- when the opener is not installed.
@@ -220,11 +219,10 @@ describe(":CW open", function()
     end)
 
     describe("a slug that is not a plain name", function()
-        -- Each of these is something cmd.exe or a POSIX shell would act on,
-        -- or something that would move the URL to another page. Past the
-        -- first two realistic attacks, each slug holds exactly one character
-        -- outside the allowed set, so allowing any one of them back makes
-        -- exactly one of these fail.
+        -- Each of these is something cmd.exe or a POSIX shell would act on, or
+        -- that would move the URL to another page. After the first two, each
+        -- slug has exactly one character outside the allowed set, so allowing
+        -- any one back makes exactly one of these fail.
         for label, bad in pairs({
             ["a quote and a shell command"] = "x'; touch /tmp/pwned #",
             ["an ampersand and a program name"] = "x&calc.exe",

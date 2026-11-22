@@ -1,8 +1,7 @@
--- Unpublish and delete are requests in flight just like save and publish, so
--- the editor has to be locked while they run. Without that, `:CW kata save`
--- was accepted during an unpublish: save() remembers the state it came from
--- (still `published`) and puts it back when its reply lands, so crossing
--- replies left the editor saying Published while the server held a draft.
+-- Unpublish and delete are requests in flight like save and publish, so the
+-- editor must be locked while they run. A save accepted during an unpublish
+-- remembers `published` and restores it on its reply, leaving the editor
+-- saying Published while the server holds a draft.
 local kstate = require("codewars.kata.state")
 local KataEditor = require("codewars-ui.kata_editor")
 
@@ -97,8 +96,8 @@ describe("KataEditor while an unpublish or delete is in flight", function()
         log.info = function() end
         log.error = function(msg) errors[#errors + 1] = msg end
 
-        -- Each verb counts its calls and parks the reply, so a test decides
-        -- when (and whether) the server answers.
+        -- Each verb counts its calls and parks the reply, so a test decides when
+        -- the server answers.
         local function held(verb)
             return function(...)
                 calls[verb] = (calls[verb] or 0) + 1
@@ -131,10 +130,10 @@ describe("KataEditor while an unpublish or delete is in flight", function()
     end)
 
     after_each(function()
-        -- The editor records an unpublish or delete in flight per kata id for
-        -- the whole process. A test that leaves one unanswered would lock the
-        -- same id for every test after it, so answer whatever is still out
-        -- (as a failure, the outcome with the least side effects).
+        -- The editor records an unpublish or delete in flight per kata id for the
+        -- whole process, so answer whatever a test left out or it would lock that
+        -- id for later tests. Answered as a failure, the outcome with the fewest
+        -- side effects.
         for _, verb in ipairs({ "unpublish", "delete" }) do
             if replies[verb] and not answered[verb] then
                 replies[verb]({ msg = "test cleanup" })

@@ -105,8 +105,7 @@ describe("cmd.focus", function()
     -- Same for skip, whose reply is the other path that records a focus.
     local skip_hold = false
     local held_skips = {}
-    -- The options each trainer call was given, so the cancel predicate the
-    -- command hands down can be observed.
+    -- The options each trainer call was given, to observe the cancel predicate.
     local fetch_opts, skip_opts
     package.loaded["codewars.api.trainer"] = {
         STRATEGIES = {
@@ -509,10 +508,9 @@ describe("cmd.focus", function()
         assert.are.equal(0, #skip_calls, "skip acted on a forgotten focus")
     end)
 
-    -- forget_focus runs when the signed-in account changes, and a fetch
-    -- already in flight is answered from the previous account's queue. That
-    -- reply must not become the remembered focus: a skip would dequeue from
-    -- a queue that is no longer the user's.
+    -- A fetch in flight when the account changes (forget_focus) is answered
+    -- from the old account's queue, so its reply must not become the
+    -- remembered focus.
     it("a focus reply that lands after forget_focus is not remembered", function()
         trainer_hold = true
         cmd.focus({ _positional = { "python", "rank_up" } })
@@ -583,10 +581,9 @@ describe("cmd.focus", function()
         assert.are.same({ lang = "go", category = "beta", slug = "served-kata-2" }, cmd.current_focus())
     end)
 
-    -- The trainer chains several requests per focus, and every one after the
-    -- first is sent under whichever account is signed in by then. The command
-    -- hands it a predicate so it can stop between requests, not just have its
-    -- final reply dropped.
+    -- The trainer chains several requests per focus, each after the first sent
+    -- under whichever account is signed in by then, so the command hands it a
+    -- predicate to stop between requests, not just drop the final reply.
     it("a focus fetch is cancellable once forget_focus runs", function()
         trainer_hold = true
         cmd.focus({ _positional = { "python", "rank_up" } })

@@ -26,9 +26,8 @@ Kumite.__index = Kumite
 
 local INSERT_KEYS = { "i", "I", "a", "A", "o", "O", "c", "C", "s", "S", "R" }
 
--- Marks the read-only guard's own mappings, so clearing the guard removes
--- exactly what it installed. A FileType autocmd can map the same keys in an
--- editable buffer, and those mappings are the user's to keep.
+-- Tags the read-only guard's mappings so clearing it removes only those. A
+-- FileType autocmd may map the same keys, and those are the user's.
 local GUARD_DESC = "codewars: read-only kumite"
 
 
@@ -167,9 +166,8 @@ function Kumite:close()
 end
 
 --- Apply the read-only insert-key guards for the current state. set_state
---- clears them again whenever the workspace becomes editable (fork,
---- unpublish, convert). Also binds `q` to close, so a read-only view
---- behaves like the other read-only panels.
+--- clears them when the workspace becomes editable. Also binds `q` to close,
+--- like the other read-only panels.
 function Kumite:apply_readonly_guard()
     local _, edit_err = kstate.step(self.state, "edit")
     for _, key in ipairs(INSERT_KEYS) do
@@ -205,11 +203,9 @@ function Kumite:set_state(next_state)
     -- publishing were silently dropped on close.
     self:set_buffers_locked(not kstate.is_editable(next_state))
     if kstate.is_editable(next_state) then
-        -- The other half of the guard below: unpublish and convert hand a
-        -- published kumite back as an editable draft, and a guard left behind
-        -- made i/a/o warn "read-only" on a buffer that was modifiable.
-        -- Safe on every transition into an editable state, including a failed
-        -- save or publish: it removes only mappings the guard itself made.
+        -- Unpublish and convert hand back an editable draft, so drop the guard
+        -- or i/a/o would warn "read-only" on a modifiable buffer. Safe on every
+        -- editable transition: it removes only the guard's own mappings.
         self:clear_readonly_guard()
     elseif not kstate.is_locked(next_state) then
         -- Entering a read-only resting state (from editing, or from an
@@ -219,14 +215,12 @@ function Kumite:set_state(next_state)
     end
 end
 
---- Remove the guard's mappings, and only those: they are found by GUARD_DESC
---- rather than by key, so a mapping the user made on one of the same keys
---- survives. That also frees `q` for macro recording again.
+--- Remove the guard's mappings, found by GUARD_DESC rather than by key so a
+--- user mapping on the same keys survives. This also frees `q` for macros.
 function Kumite:clear_readonly_guard()
-    -- pcall: a workspace that is not mounted yet has no buffer, and one whose
-    -- window closed mid-request has an invalid one. Without a buffer,
-    -- keymap.del would fall back to the user's GLOBAL mappings of these keys
-    -- (leap and flash bind s and S), so there is nothing safe to do.
+    -- pcall: an unmounted workspace has no buffer and a closed one has an
+    -- invalid one. Deleting by key without a buffer would hit the user's GLOBAL
+    -- mappings (leap and flash bind s and S), so do nothing.
     local ok, maps = pcall(api.nvim_buf_get_keymap, self.bufnr, "n")
     if not ok then
         return
@@ -873,10 +867,9 @@ function Kumite:_unmount()
         end
         if self.fixture_split then
             if rescue_label then
-                -- The fixture is typed text too, and unmount() force-deletes
-                -- its buffer. Hide only closes the window; the buffer is kept
-                -- and handed over like the code buffer. A window that will not
-                -- close must not stop that.
+                -- unmount() would force-delete the fixture buffer, which holds
+                -- typed text too. Hide the window and hand the buffer over like
+                -- the code buffer; pcall so a stuck window cannot stop that.
                 local fixture_bufnr = self.fixture_split.bufnr
                 pcall(self.fixture_split.hide, self.fixture_split)
                 ui_utils.rescue_or_delete(fixture_bufnr, rescue_label .. " fixture")
