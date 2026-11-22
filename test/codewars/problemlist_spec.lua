@@ -256,9 +256,7 @@ describe("cache.problemlist update", function()
         assert.are.equal(1, #items)
     end)
 
-    -- A page that has result blocks but parses to none is the markup
-    -- moving, not a rank running out. It used to read as the end of the rank
-    -- and the short list was cached as complete.
+    -- A page with result blocks that parses to none is the markup moving, not a rank running out.
     describe("when the search markup drifts", function()
         local DRIFT = { drift = true, msg = "30 results, none readable" }
 
@@ -297,11 +295,9 @@ describe("cache.problemlist update", function()
         end)
     end)
 
-    -- Blocks that fail to parse on an otherwise readable page are dropped.
-    -- That is told once at the end of the build, not once per page.
+    -- Dropped blocks on a readable page are reported once, at the end of the build.
     describe("when some result blocks cannot be read", function()
-        --- Every rank is two pages: one kata, then the empty page that ends it.
-        --- `dropped_on` names which calls report dropped blocks, and how many.
+        --- Two pages per rank (one kata, then the empty end); `dropped_on[n]` is call n's dropped count.
         local function with_dropped(dropped_on)
             return function(n)
                 if n % 2 == 1 then
@@ -345,12 +341,9 @@ describe("cache.problemlist update", function()
         end)
     end)
 
-    -- A rank finished by a cut-short run is not fetched again, so what its
-    -- pages dropped has to travel in the checkpoint, or the build that
-    -- completes the list reports success without saying it is missing them.
+    -- A rank finished by a cut-short run is not fetched again, so its dropped count must travel
+    -- in the checkpoint, or the finished build would report success without it.
     describe("when a build is resumed from a checkpoint", function()
-        --- Every rank is two pages: one kata, then the empty page that ends it.
-        --- `dropped_on` names which calls report dropped blocks, and how many.
         local function with_dropped(dropped_on)
             return function(n)
                 if n % 2 == 1 then
@@ -360,7 +353,6 @@ describe("cache.problemlist update", function()
             end
         end
 
-        --- What the most recent checkpoint write left on disk.
         local function last_checkpoint()
             local cps = writes_to(CHECKPOINT)
             return vim.deepcopy(cps[#cps].data)
@@ -405,8 +397,7 @@ describe("cache.problemlist update", function()
         end)
 
         it("does not count a rank it is about to fetch again", function()
-            -- 8 kyu is checkpointed with 2 dropped; 7 kyu is not, and its
-            -- earlier partial drops were never saved.
+            -- 8 kyu is checkpointed with 2 dropped; 7 kyu is not, and its earlier drops were never saved.
             stored[CHECKPOINT] = {
                 timestamp = os.time() - 60,
                 ranks = { ["-8"] = { { slug = "eight" } } },
@@ -429,7 +420,6 @@ describe("cache.problemlist update", function()
             assert.are.equal(-6, requested[1].rank)
             assert.are.equal("eight", items[1].slug)
             assert.are.same({}, warned)
-            -- And the checkpoint it goes on to write has the field.
             assert.is_table(last_checkpoint().dropped)
         end)
 
@@ -760,9 +750,8 @@ describe("cache.problemlist daily check", function()
         return vim.tbl_filter(function(s) return s.level == "warn" end, said)
     end
 
-    -- A page of results that parses to nothing is the markup moving, not a
-    -- quiet day. The look stops, says so, and merges nothing -- not even the
-    -- kata an earlier page read.
+    -- A page of results that parses to nothing is the markup moving. The look stops, says so,
+    -- and merges nothing, not even what an earlier page read.
     it("stops with a warning, and merges nothing, when a page's markup drifted", function()
         stored[LIST] = list_of({ kata("a") }, 2 * DAY)
         page_script = function(page)
@@ -819,9 +808,7 @@ describe("cache.problemlist daily check", function()
         assert.equals(0, #warnings())
     end)
 
-    -- "Nothing new on this page" only holds for a page that was read whole.
-    -- Blocks the parser dropped could be the new kata, and the page after
-    -- them may hold more that can be read.
+    -- "Nothing new" only holds for a page read whole: dropped blocks could be the new kata.
     describe("when a page left blocks out", function()
         local CHECKED = 2 * DAY -- how long ago the list was last looked at
 
@@ -909,8 +896,7 @@ describe("cache.problemlist daily check", function()
         end)
     end)
 
-    -- The other side of it: a page read whole, with nothing new on it, is
-    -- still the end of the look, and the look is recorded.
+    -- A page read whole with nothing new is still the end of the look, and is recorded.
     it("still stops at a clean page with nothing new, and records the look", function()
         stored[LIST] = list_of({ kata("a") }, 10 * DAY, 2 * DAY)
         page_script = function() return { kata("a") }, true, nil, 0 end

@@ -12,8 +12,7 @@ local ENTITIES = {
     ["&#x27;"] = "'",
     ["&#x2F;"] = "/",
     ["&nbsp;"] = " ",
-    -- The named forms of the characters a link or a class is made of, which
-    -- an attribute value can spell as references (`href="&sol;kata&sol;..."`).
+    -- Characters a link is made of, which an attribute can spell as references.
     ["&apos;"] = "'",
     ["&sol;"] = "/",
     ["&quest;"] = "?",
@@ -22,10 +21,9 @@ local ENTITIES = {
     ["&colon;"] = ":",
 }
 
---- Decode the common HTML entities found in scraped Codewars pages:
---- the named ones in the table above, and every numeric one (decimal or hex).
---- Single-pass table gsub: unknown entities pass through unchanged, and what
---- a reference decodes to is not decoded again (`&amp;#47;` is `&#47;`).
+--- Decode the common HTML entities found in scraped Codewars pages, numeric ones included.
+--- Single-pass table gsub: unknown entities pass through unchanged, and a decoded result is
+--- not decoded again (`&amp;#47;` is `&#47;`).
 ---@param s string
 ---@return string
 function page.unescape(s)
@@ -119,7 +117,7 @@ function page.status_err(status, retry_after)
     if status == 429 then
         return {
             status = 429, rate_limited = true,
-            -- The same reader the JSON transport uses: seconds or an HTTP-date.
+            -- Seconds or an HTTP-date, as the JSON transport reads it.
             retry_after = require("codewars.api.utils").parse_retry_after(retry_after),
             retry_after_raw = retry_after,
             msg = "Codewars is rate limiting requests. Wait a minute and try again.",

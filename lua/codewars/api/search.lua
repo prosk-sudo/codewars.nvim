@@ -6,11 +6,8 @@ local search = {}
 
 --- Fetch a single page of kata search results.
 ---
---- `has_more` is false for a page with no result blocks at all: the end of
---- the results. A page that HAS result blocks and parses to none is not
---- that -- the markup moved -- so it comes back as `err` with `err.drift`
---- set, like any other failure to read the page. A page that parses in part
---- keeps what it parsed and says how many blocks it left out in `dropped`.
+--- `has_more` is false for a page with no result blocks. A page with blocks that parses to none
+--- is `err` with `err.drift`; a partial parse keeps its results and reports `dropped`.
 ---@param opts table { language?, query?, rank?, order?, cancelled?: fun(): boolean, retry_rate_limited?: boolean }
 ---@param page integer
 ---@param cb function callback(results[], has_more, err?, dropped?: integer)
@@ -130,22 +127,16 @@ function search.kata(opts, cb)
     fetch_next()
 end
 
---- A result block: the tags from its opening tag (`first`) to its closing tag
---- (`last`) in a page's tag list, and the page text they index into, which is
---- the page with what is not markup blanked out (see api.htmltags). Everything
---- read about a result is read from these tags and their parsed attributes, or
---- from the text between them, never by pattern over the text of a tag.
+--- A result block: tags `first` to `last` of a page's tag list, and the page text they index
+--- into (see api.htmltags). Read from parsed tags and attributes, never by pattern over a tag.
 ---@class cw.SearchBlock
 ---@field tags cw.HtmlTag[]
 ---@field text string
 ---@field first integer
 ---@field last integer
 
---- The kata a title link's href points at: `/kata/<id>`, optionally followed
---- by a query or fragment, and nothing deeper. `id` must be a whole 24-hex id,
---- so a slug or a longer or shorter run of hex is not one. A link with a path
---- after the id (`/kata/<id>/train/python`) is a button, not the title, and
---- is not the kata's name.
+--- The kata a title link's href points at: `/kata/<id>` with an optional query or fragment,
+--- nothing deeper. `id` must be a whole 24-hex id; `/kata/<id>/train/python` is a button.
 ---@param href string?
 ---@return string? id
 local function title_id(href)
@@ -155,7 +146,6 @@ local function title_id(href)
     return id
 end
 
---- The first tag after `from`, up to `last`, named `name` (opening or closing).
 ---@param tags cw.HtmlTag[]
 ---@param from integer
 ---@param last integer
@@ -167,8 +157,7 @@ local function next_named(tags, from, last, name)
     end
 end
 
---- The text between the opening tag `tags[from]` and the later tag `tags[to]`,
---- as it shows: what lies between the tags in them, with the tags left out.
+--- The text between `tags[from]` and the later `tags[to]`, with the tags left out.
 ---@param block cw.SearchBlock
 ---@param from integer
 ---@param to integer
@@ -184,9 +173,7 @@ local function visible_text(block, from, to)
     return table.concat(parts)
 end
 
---- The text of the element opened by `tags[i]`, up to the closing tag of its
---- own name that follows, entities decoded and the ends trimmed. nil when it
---- is never closed within the block.
+--- The text of the element opened by `tags[i]`, decoded and trimmed; nil when never closed.
 ---@param block cw.SearchBlock
 ---@param i integer
 ---@return string?
@@ -197,13 +184,8 @@ local function element_text(block, i)
     return (unescape(visible_text(block, i, close)):match("^%s*(.-)%s*$"))
 end
 
---- The id and name of a result block's own title link: the first real `<a>`
---- whose parsed href is a plain `/kata/<id>` and that has text in it. The name
---- is that text, up to the link's own closing tag: tags inside it
---- (`<a ...><span>Title</span></a>`) are left out, entities decoded and the
---- ends trimmed. Links with no text, the language icons among them, are passed
---- over, and so is one never closed. A block with no such link has no kata in
---- it that we can name, and is left out.
+--- The id and name of a block's title link: the first `<a>` with a plain `/kata/<id>` href and
+--- some text (language icons have none). nil when there is none; the block is then dropped.
 ---@param block cw.SearchBlock
 ---@return string? id
 ---@return string? name
@@ -218,8 +200,7 @@ local function read_title_link(block)
     end
 end
 
---- A result's kyu or dan, `8 kyu`: the text of the first span that holds
---- nothing else.
+--- A result's rank, `8 kyu`: the text of the first span that holds nothing else.
 ---@param block cw.SearchBlock
 ---@return string?
 local function read_rank(block)
@@ -232,7 +213,6 @@ local function read_rank(block)
     end
 end
 
---- The languages a result is offered in: the `data-language` of its tags.
 ---@param block cw.SearchBlock
 ---@return string[]
 local function read_languages(block)
@@ -244,12 +224,9 @@ local function read_languages(block)
     return languages
 end
 
---- The class that marks a result's element.
 local BLOCK_CLASS = "list-item-kata"
 
---- Whether `tag` opens a result: a real opening tag with `list-item-kata` as
---- a whole class name, not as part of another (`not-list-item-kata`), and not
---- in some other attribute.
+--- Whether `tag` opens a result: `list-item-kata` as a whole class name, not `not-list-item-kata`.
 ---@param tag cw.HtmlTag
 ---@return boolean
 local function opens_block(tag)
@@ -257,10 +234,8 @@ local function opens_block(tag)
     return class and (" " .. class .. " "):find("%s" .. BLOCK_CLASS:gsub("%-", "%%-") .. "%s") ~= nil
 end
 
---- Which tag closes the element opened by `tags[first]`: the one that brings
---- the count of that name's open and close tags back to zero. Void elements
---- and `<name/>` have no closing tag, and do not count. nil when the page
---- ends first.
+--- The tag that closes the element opened by `tags[first]`: where the open/close count of its
+--- name returns to zero (void and `<name/>` tags do not count). nil when the page ends first.
 ---@param tags cw.HtmlTag[]
 ---@param first integer
 ---@return integer?
@@ -275,24 +250,12 @@ local function closing_tag_of(tags, first)
     end
 end
 
---- Cut a results page into its result blocks. A block is the element whose
---- opening tag carries the `list-item-kata` class, from that tag to its own
---- closing tag: not up to the next result, and not a fixed number of
---- characters on, either of which can run past the block into a footer or a
---- related-kata section, whose links would then be read as the result's own.
---- Only real tags count (see api.htmltags): the text of a comment, a script, a
---- template or a quoted attribute value neither opens a block, nor closes
---- one, nor changes how deep it is. The text a block is read from has that
---- text blanked out, so nothing in it is read as a title or a language.
----
---- A block whose closing tag is missing (a cut-off page, broken markup) has no
---- end we could trust, and is left out, never guessed at. Nothing after it
---- can be bounded either, so each block after it is counted as left out
---- without being looked for a close: the tags are read once. Returns the blocks and
---- how many were left out.
+--- Cut a results page into result blocks: each runs from its `list-item-kata` tag to its own
+--- closing tag, never to the next result or a fixed length, which could swallow a footer's links.
+--- A block with no closing tag is left out, and so is each one after it.
 ---@param html string
 ---@return cw.SearchBlock[] blocks
----@return integer unclosed
+---@return integer unclosed blocks left out
 local function split_blocks(html)
     local tags, text = require("codewars.api.htmltags").scan(html)
     local blocks, unclosed, broken = {}, 0, false
@@ -322,23 +285,13 @@ end
 
 --- Parse the search results HTML to extract kata entries.
 ---
---- Scope. This reads Codewars' kata-search markup: real tags, attributes with
---- character references decoded, comments, and the elements whose contents
---- are text (see api.htmltags). It is not a general HTML5 parser. Whatever it
---- cannot read is not guessed at: a result it cannot read counts as dropped,
---- and a page of results it cannot read at all is drift, so that a change in
---- Codewars' markup shows up as a warning or an error, never as a silently
---- wrong list. HTML5 corner cases outside that markup are deliberately out of
---- scope, and fail the same loud way.
----
---- Returns the entries it could read, an error when the page has result
---- blocks and NONE of them could be read (`err.drift` is true: the markup
---- changed, which is not the same as a page with no results), and how many
---- blocks it left out. A page with no result blocks at all is simply empty.
+--- Scope: reads Codewars' kata-search markup (see api.htmltags), not general HTML5. A result it
+--- cannot read counts as dropped, and a page where none can be read is drift, so a markup
+--- change is a warning or an error, never a silently wrong list.
 ---@param html string
 ---@return table[] results
----@return cw.err? err
----@return integer dropped
+---@return cw.err? err `err.drift` when result blocks exist but none could be read
+---@return integer dropped result blocks left out
 function search.parse_html(html)
     local results = {}
 
@@ -365,22 +318,19 @@ function search.parse_html(html)
         if slug and name then
             entry.id = slug
             entry.slug = slug
-            -- Already decoded by read_title_link: "Python&#39;s" is how an
-            -- apostrophe arrives in the scraped HTML.
+            -- Already entity-decoded by read_title_link.
             entry.name = name
         end
 
-        -- Satisfaction from tooltip: 'Satisfaction Rating: 89% of users...'.
-        -- A phrase in the block's own text (where the tooltip's attribute
-        -- value sits), with what is not markup blanked: no tag structure is
-        -- read from it.
+        -- Satisfaction from tooltip: 'Satisfaction Rating: 89% of users...'
+        -- Read from the block's own text, markup blanked.
         local first, last = block.tags[block.first], block.tags[block.last]
         local sat_pct = block.text:sub(first.start, last.finish):match("Satisfaction Rating: (%d+)%%")
         if sat_pct then
             entry.satisfaction = tonumber(sat_pct)
         end
 
-        -- Supported languages from the data-language attribute of its tags
+        -- Supported languages from data-language attributes
         local languages = read_languages(block)
         if #languages > 0 then
             entry.languages = languages

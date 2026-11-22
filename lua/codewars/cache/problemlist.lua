@@ -136,8 +136,7 @@ local function differs(old, new)
     return false
 end
 
---- Said once when a run is over, not once per page: result blocks the
---- search parser could not read are left out of what the run collected.
+--- Warn once when a run is over about result blocks the search parser could not read.
 ---@param count integer
 local function warn_dropped(count)
     if count <= 0 then return end
@@ -154,9 +153,9 @@ local checking = false
 ---
 --- A full build is ~290 pages under a rate limit -- minutes -- to pick up
 --- what is usually a handful of new kata. Codewars' "Newest" listing puts
---- them first, so this reads it until a page, read whole, brings nothing the
---- list does not already have. Kept to CHECK_MAX_PAGES; the full rebuild
---- every `cache.update_interval` still catches anything this misses.
+--- them first, so this reads it until a page, read whole, brings nothing the list does
+--- not already have. Kept to CHECK_MAX_PAGES; the full rebuild every
+--- `cache.update_interval` still catches anything this misses.
 ---@return boolean started false when not due, already running, or there is no list
 function problemlist.check_for_new()
     if build or checking then return false end
@@ -177,9 +176,7 @@ function problemlist.check_for_new()
     local added, updated, dropped = 0, 0, 0
 
     --- Only a look that finished is recorded: a failed one leaves
-    --- checked_at alone, so the next open tries again. So does one that
-    --- left blocks out: it merges what it could read, but it has not seen
-    --- all of "Newest", and is not a look that found nothing more.
+    --- checked_at alone, so the next open tries again. So does one that dropped blocks.
     local function finish(ok)
         checking = false
         warn_dropped(dropped)
@@ -208,8 +205,7 @@ function problemlist.check_for_new()
         }, page, function(results, has_more, err, page_dropped)
             if err then
                 log.debug("kata list check failed: " .. tostring(err.msg))
-                -- Not a failure to retry quietly: the markup moved, so
-                -- every look will fail the same way until it is fixed.
+                -- Warn: the markup moved, so every look fails until it is fixed.
                 if err.drift then
                     log.warn("Kata list check stopped: the search results could not be read"
                         .. " — the site markup may have changed. Nothing was merged.")
@@ -230,9 +226,8 @@ function problemlist.check_for_new()
                     updated, changes = updated + 1, changes + 1
                 end
             end
-            -- "Nothing new here" ends the look only for a page that was read
-            -- whole. One that left blocks out may have dropped the new kata,
-            -- and the next page may hold more that can be read.
+            -- "Nothing new" ends the look only for a page read whole: one that dropped
+            -- blocks may have dropped the new kata.
             local nothing_new = changes == 0 and (page_dropped or 0) == 0
             if nothing_new or not has_more or page + 1 >= problemlist.CHECK_MAX_PAGES then
                 return finish(true)
@@ -310,14 +305,11 @@ function problemlist.update(opts, cb)
     local checkpoint = load_checkpoint()
     local resumed = checkpoint ~= nil
     checkpoint = checkpoint or { timestamp = os.time(), ranks = {} }
-    -- What each checkpointed rank's pages dropped, by rank, saved next to its
-    -- items: a rank a resume skips is never fetched again, so this is the only
-    -- record of what it left out. A checkpoint from before this was kept has
-    -- none, and counts as nothing dropped.
+    -- Dropped-block count per checkpointed rank. A resume skips fetched ranks, so this is the
+    -- only record of what they left out; an older checkpoint has none.
     if type(checkpoint.dropped) ~= "table" then checkpoint.dropped = {} end
 
-    -- Result blocks the parser could not read, over every page of the list
-    -- this run is building: the ranks taken from the checkpoint included.
+    -- Unreadable result blocks over the whole run, checkpointed ranks included.
     local dropped = 0
 
     ---@type table<integer, table[]>
@@ -341,7 +333,6 @@ function problemlist.update(opts, cb)
     -- by_rank until it finishes (by_rank is what resumes skip), but an
     -- aborted run still hands these to the caller.
     local current_rank, current_items = nil, nil ---@type integer?, table[]?
-    -- What the rank being fetched has dropped so far; saved with it.
     local current_dropped = 0
 
     local function collected()
@@ -383,11 +374,8 @@ function problemlist.update(opts, cb)
             end
         end
 
-        -- Every page being empty is not "Codewars has no kata": it is an
-        -- interstitial page that returned 200, or a markup change that left
-        -- no result blocks to notice. A page whose blocks fail to parse is
-        -- reported by fetch_page as drift and aborts before getting here, so
-        -- this is the backstop for the rest.
+        -- Every page empty is not "Codewars has no kata": it is an interstitial 200, or markup
+        -- that left no result blocks. Blocks that fail to parse abort earlier as drift.
         if not partial and #unique == 0 then
             spinner:error("No kata found on any search page — the site markup may have changed; cache left as is.")
             partial = true
@@ -490,9 +478,8 @@ function problemlist.update(opts, cb)
                 end
 
                 if err and err.drift then
-                    -- The page has result blocks and none could be read. It
-                    -- is not the end of this rank, and retrying the same
-                    -- markup cannot help: stop, and leave the cache as it is.
+                    -- Blocks present but none readable: not the end of the rank, and
+                    -- retrying cannot help.
                     return abort(("Search results could not be read after %d kata — the site markup may have changed; cache left as is."):format(this.found))
                 end
 

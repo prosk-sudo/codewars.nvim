@@ -1,52 +1,9 @@
---- A small HTML tag tokenizer, for telling real tags from text that only looks
---- like them.
+--- A small HTML tag tokenizer for Codewars' kata-search markup, not a general HTML5 parser.
+--- It builds no tree and repairs nothing. Whatever it cannot read is for the caller to count as
+--- a dropped block or as drift, so a markup change never gives a silently wrong list.
 ---
---- Scope. This reads Codewars' kata-search markup: real tags, their
---- attributes with character references decoded, comments, and the elements
---- whose contents are text. It is not a general HTML5 parser, and does not try
---- to be: it does not build a tree, repair misnested or unclosed elements, or
---- know the corner cases of foreign (SVG, MathML) content, `--!>` comment
---- ends, or the Windows-1252 remapping of numeric references. What it cannot
---- read is not guessed at: whoever builds on it counts it as a dropped block,
---- or as drift for a whole page, so that a markup change shows up as a warning
---- or an error and never as a silently wrong list.
----
---- A page's markup is not what a pattern for `<div` finds: `<!-- <div> -->`,
---- a `<script>` holding an HTML template, a `title="a > b <div>"` attribute
---- are all text. One forward pass reads the page the way a browser would
---- split it and yields only the tags that are really there, so that what is
---- built on it -- finding an element's end by counting its open and close
---- tags, say -- counts nothing else.
----
---- What is not a tag:
----   * `<!-- ... -->`, skipped whole; one never closed runs to the end of the
----     page. `<!-->` and `<!--->` are whole comments, as in HTML.
----   * `<!DOCTYPE ...>`, `<![CDATA[ ... >`, `<? ... >` and `</ ... >` with no
----     name: skipped to the next `>`, as the bogus comments they are.
----   * `<script>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`
----     and `<noscript>` (raw text; `noscript` as it is read when scripts run),
----     `<textarea>` and `<title>` (escapable raw text): what is between the
----     tags is text. The element is skipped whole, up to the first closing tag
----     of its name (any case); nothing inside is a tag. One never closed runs
----     to the end of the page. `<plaintext>` has no closing tag: it and
----     everything after it is text.
----   * `<template>`: its contents are inert (a browser keeps them out of the
----     page). The element is skipped whole up to its matching `</template>`,
----     counting nested templates; comments and scripts inside are read as
----     such, so a `</template>` in a script does not end it. One never closed
----     runs to the end of the page.
----
---- Inside a tag, a quoted attribute value (`"..."` or `'...'`, which can only
---- start right after an `=`) is skipped, so a `>` or a `<div` in it neither
---- ends the tag nor counts as one. The same walk reads the attributes: each
---- tag's `attrs` maps the lower-cased names to their values (quoted or not,
---- `""` for a bare name), the first of a repeated name winning, as in a
---- browser. Text in one attribute's value is never read as another attribute.
---- Values are decoded as a browser decodes them: `&#47;`, `&#x2F;` and
---- `&sol;` are all `/` (see api.page's `unescape`; a reference it does not
---- know is left as written, and a decoded value is not decoded again).
---- The page is read once, front to back, with no backtracking: every `find`
---- starts where the last one stopped.
+--- Text that only looks like a tag is skipped: comments, raw-text elements, `<plaintext>` and
+--- `<template>`. One never closed runs to the end of the page. Attribute values are decoded.
 ---@class cw.Api.HtmlTags
 local htmltags = {}
 
@@ -63,13 +20,11 @@ local VOID = {
     input = true, link = true, meta = true, param = true, source = true, track = true, wbr = true,
 }
 
---- A pattern for `name` in any case: `[sS][cC]...`.
 local function any_case(name)
     return (name:gsub("%a", function(c) return "[" .. c:lower() .. c:upper() .. "]" end))
 end
 
---- Raw-text and escapable raw text elements, and where each one's text ends:
---- its closing tag.
+--- Raw-text elements and the pattern ending each (`noscript` as read when scripts run).
 local RAW_TEXT_END = {}
 for _, name in ipairs({
     "script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title",
@@ -77,7 +32,6 @@ for _, name in ipairs({
     RAW_TEXT_END[name] = "</" .. any_case(name) .. "[%s/>]"
 end
 
---- The text of an attribute value, character references decoded.
 ---@param value string
 ---@return string
 local function decode(value)
@@ -85,8 +39,8 @@ local function decode(value)
     return require("codewars.api.page").unescape(value)
 end
 
---- Read the attributes of the tag whose name ends just before `i`, up to its
---- `>`. A quote opens a value only straight after an `=`.
+--- Read the attributes from `i` (just after the tag name) to the closing `>`. A quote opens a
+--- value only right after `=`; the first of a repeated name wins, as in a browser.
 ---@param html string
 ---@param i integer
 ---@return integer? gt position of the closing `>`; nil when the page ends first
@@ -123,8 +77,7 @@ local function scan_attributes(html, i)
     end
 end
 
---- Read the tag that starts at `lt`, which is `<` and a letter, or `</` and
---- a letter.
+--- Read the tag at `lt` (`<` or `</`, then a letter).
 ---@param html string
 ---@param lt integer
 ---@return cw.HtmlTag? tag nil when the page ends inside it
@@ -142,8 +95,7 @@ local function read_tag(html, lt)
     }
 end
 
---- Where a `<` that is not a tag ends, or nil when it starts a tag (or is
---- plain text).
+--- Where a `<` that is not a tag ends, or nil when it starts a tag or is plain text.
 ---@param html string
 ---@param lt integer
 ---@return integer? last position of the comment-like run
@@ -152,7 +104,7 @@ local function comment_end(html, lt)
     local close
     if byte == 33 then -- "<!"
         if html:find("^<!%-%-", lt) then
-            -- From the first dash, so that `<!-->` and `<!--->` end at once.
+            -- From the first dash: `<!-->` and `<!--->` are whole comments.
             close = html:find("-->", lt + 2, true)
             return close and close + 2 or #html
         end
@@ -163,8 +115,7 @@ local function comment_end(html, lt)
     return close or #html
 end
 
---- Blank out `ranges` (pairs of first and last position) in `html`, keeping
---- every position where it was.
+--- Blank out `ranges` (first, last pairs) with spaces, keeping every position.
 local function mask(html, ranges)
     if #ranges == 0 then return html end
     local parts, copied = {}, 0
@@ -178,12 +129,8 @@ local function mask(html, ranges)
     return table.concat(parts)
 end
 
---- Read a page's tags.
----
---- Returns them in order, and the page with everything that is not markup
---- (the comments, scripts, styles and templates above) blanked out with spaces:
---- the same length, so a tag's positions are positions in it too. Text read
---- from between tags there is the text a browser would show.
+--- Read a page's tags in order, and the page with everything that is not markup blanked out.
+--- The text is the same length, so a tag's positions are positions in it too.
 ---@param html string
 ---@return cw.HtmlTag[] tags
 ---@return string text
@@ -193,7 +140,7 @@ function htmltags.scan(html)
     local pos = 1
     local templates, template_start = 0, nil
 
-    --- Outside a template; inside one the template is blanked as a whole.
+    --- Blank only outside a template; a template is blanked whole.
     local function blank(from, to)
         if templates == 0 then
             blanks[#blanks + 1], blanks[#blanks + 2] = from, to

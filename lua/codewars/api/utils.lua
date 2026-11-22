@@ -77,9 +77,8 @@ function utils.header_value(hdrs, name)
     return nil
 end
 
---- Seconds to wait before retrying, from a `Retry-After` header value. The
---- header is either a number of seconds or an HTTP-date (RFC 9110 section
---- 10.2.3); a date is counted from `now`, and one already past is 0.
+--- Seconds to wait, from a `Retry-After` value: seconds or an HTTP-date (RFC 9110 10.2.3).
+--- A date is counted from `now`; one already past is 0.
 ---@param raw string? the header value
 ---@param now? integer epoch seconds, default os.time()
 ---@return number? seconds nil when the value is neither form
@@ -123,8 +122,7 @@ function utils.retry_delay_ms(err, attempt)
         utils.MAX_EXP_BACKOFF_MS
     )
 
-    -- The server sent Retry-After in a form we could not read (neither
-    -- seconds nor an HTTP-date). It asked for a wait, so start from the
+    -- Retry-After was unreadable but asked for a wait, so start from the
     -- longest backoff rather than the shortest.
     if err and err.retry_after_raw and not after then
         base = utils.MAX_EXP_BACKOFF_MS
@@ -292,9 +290,7 @@ function utils.handle_res(out)
             status = 429,
             rate_limited = true,
             retry_after = utils.parse_retry_after(retry_after),
-            -- Kept even when unparseable, so the backoff can tell "server
-            -- asked for a wait we could not read" apart from "server said
-            -- nothing".
+            -- Kept even when unparseable: the backoff tells an unreadable wait from none.
             retry_after_raw = retry_after,
             -- This text is only ever SEEN once retrying is over (budget
             -- exhausted, or a mutating request that does not retry), so it

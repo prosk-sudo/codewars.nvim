@@ -171,8 +171,7 @@ describe("page.unescape", function()
         assert.equals("&bogus; &#; &#55296;", page.unescape("&bogus; &#; &#55296;"))
     end)
 
-    -- The characters of a URL, which an attribute value can spell as
-    -- references: `href="&#47;kata&#47;..."` is the same link to a browser.
+    -- Characters a link is made of, which an attribute can spell as references.
     it("decodes the numeric and named forms of the characters a link is made of", function()
         assert.equals("/kata/a1?x=1#top", page.unescape("&#47;kata&#x2F;a1&quest;x&equals;1&num;top"))
         assert.equals("/kata/a1", page.unescape("&sol;kata&sol;a1"))

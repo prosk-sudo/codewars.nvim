@@ -1,9 +1,7 @@
 --- HTTP-date parsing (RFC 9110 section 5.6.7), for `Retry-After`.
 ---
---- Pure Lua on purpose. `vim.fn.strptime` follows the locale and the C
---- library's idea of a time zone, and does not exist on Windows; `os.time`
---- on a table reads its fields as LOCAL time, so it is wrong by the zone's
---- offset. The epoch here is counted from the calendar date instead.
+--- Pure Lua on purpose: `vim.fn.strptime` follows the locale and is missing on Windows, and
+--- `os.time` on a table reads LOCAL time. The epoch is counted from the calendar date.
 ---@class cw.Api.HttpDate
 local httpdate = {}
 
@@ -18,8 +16,7 @@ local LONG_DAYS = {
 }
 local MONTH_LENGTHS = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 local SECONDS_PER_DAY = 86400
---- RFC 9110: a two-digit year that puts the timestamp more than this many
---- years after now is really the previous century.
+--- RFC 9110: a two-digit year more than this many years after now is the previous century.
 local MAX_YEARS_AHEAD = 50
 
 ---@param year integer
@@ -36,10 +33,7 @@ local function days_in_month(year, month)
     return MONTH_LENGTHS[month]
 end
 
---- Days from 1970-01-01 to the given proleptic Gregorian date (negative
---- before it). Howard Hinnant's days-from-civil: years run March to
---- February so the leap day is the last day of its year, and every 400 years
---- (146097 days) repeat exactly.
+--- Days from 1970-01-01 to a proleptic Gregorian date (Hinnant's days-from-civil; the year starts in March).
 ---@param year integer
 ---@param month integer 1-12
 ---@param day integer 1-31
@@ -55,21 +49,14 @@ local function days_from_civil(year, month, day)
     return era * 146097 + day_of_era - 719468
 end
 
---- A number that orders calendar moments the way time does, so two dates
---- compare without an epoch for either (the limit below can be a 29 February
---- in a year that has none). Each field stays under its multiplier.
+--- Orders calendar moments like time does, with no epoch (the limit can be a 29 February that
+--- does not exist). Each field must stay under its multiplier.
 local function moment_key(year, month, day, hour, min, sec)
     return ((((year * 13 + month) * 32 + day) * 24 + hour) * 60 + min) * 61 + sec
 end
 
---- The year a two-digit RFC 850 year means (RFC 9110 section 5.6.7): of the
---- years ending in `yy` a century apart, the latest whose timestamp is no
---- more than MAX_YEARS_AHEAD years after `now`. Anything further ahead is the
---- previous century, and a date just past a century boundary resolves
---- forward: on 2099-12-15, 01-Jan-00 is 2100, not 2000. The whole date and
---- time is held against the limit, not the year alone -- on 2026-11-22,
---- 01-Dec-76 is past it and 21-Nov-76 is not -- and a timestamp exactly that
---- far ahead is not MORE than that far ahead, so it stays in the future.
+--- The year a two-digit RFC 850 year means, per MAX_YEARS_AHEAD. The whole date and time is
+--- held against the limit, not the year alone; exactly that far ahead still counts as ahead.
 ---@param yy integer 0-99
 ---@param now integer epoch seconds
 ---@return integer
@@ -80,9 +67,7 @@ local function expand_year(yy, month, day, hour, min, sec, now)
     for _, year in ipairs({ this_century + 100, this_century }) do
         if moment_key(year, month, day, hour, min, sec) <= limit then return year end
     end
-    -- The previous century is always the last candidate: it is behind this
-    -- year (this_century is at most 99 years past the century's start), so
-    -- it can never be too far ahead.
+    -- The previous century is behind this year, so it is never too far ahead.
     return this_century - 100
 end
 
@@ -112,19 +97,15 @@ local function read_asctime(text)
     return tonumber(year), MONTHS[month], tonumber(day), tonumber(hour), tonumber(min), tonumber(sec)
 end
 
---- Whether the fields name a moment that exists. A 60th second is allowed
---- (a leap second); it simply lands on the next minute.
+--- Whether the fields name a real moment. A 60th second (leap second) is allowed.
 local function is_valid(year, month, day, hour, min, sec)
     if not (year and month and day and hour and min and sec) then return false end
     return day >= 1 and day <= days_in_month(year, month)
         and hour <= 23 and min <= 59 and sec <= 60
 end
 
---- Read an HTTP-date as a UTC epoch. Takes the preferred IMF-fixdate form
---- (`Wed, 21 Oct 2026 07:28:00 GMT`) and the two obsolete forms a recipient
---- must still accept: RFC 850 (`Sunday, 06-Nov-94 08:49:37 GMT`) and
---- asctime (`Sun Nov  6 08:49:37 1994`). Names are case-insensitive. The
---- weekday must be a real one but is not checked against the date.
+--- Read an HTTP-date as a UTC epoch: IMF-fixdate (`Wed, 21 Oct 2026 07:28:00 GMT`) or the
+--- obsolete RFC 850 and asctime forms. Names are case-insensitive; the weekday is not checked.
 ---@param text any
 ---@param now? integer epoch seconds, to place a two-digit year; default os.time()
 ---@return integer? epoch nil when `text` is not a valid HTTP-date

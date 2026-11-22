@@ -41,7 +41,6 @@ describe("api.search", function()
     local function block(inner)
         return ([[<div class="list-item-kata bg-ui-section" id="%s"><div><span>6 kyu</span>%s</div></div>]]):format(SLUG, inner)
     end
-    --- A block whose title link parses.
     local function readable(name)
         return block(('<a class="ml-2" href="/kata/%s">%s</a>'):format(SLUG, name or "Braces"))
     end
@@ -231,11 +230,8 @@ describe("api.search", function()
         end)
     end)
 
-    -- Result links used to be matched as exactly `href="/kata/<hex>">`, so
-    -- any drift from that -- a class after the href, single quotes, a title
-    -- wrapped in a tag -- dropped the kata without a word. Only the plain
-    -- title link names a kata: a train link (`/kata/<hex>/train/python`) is a
-    -- button, and never stands in for a title that cannot be read.
+    -- Only the plain title link names a kata. A train link (`/kata/<hex>/train/python`) is a
+    -- button and never stands in for a title that cannot be read.
     describe("parse_html result links", function()
         local function parse_link(anchor)
             return search.parse_html(block(anchor))
@@ -295,8 +291,7 @@ describe("api.search", function()
             assert.are.equal("Python's <b> & Co", results[1].name)
         end)
 
-        -- The reported case: a train button ahead of a title the parser used
-        -- to be unable to read, which then named the kata "Train".
+        -- The reported case: a train button ahead of an unreadable title named the kata "Train".
         it("names a span-wrapped title from the title link, not from a train link", function()
             local train = ('<a href="/kata/%s/train/python">Train</a>'):format(SLUG)
             local title = ('<a href="/kata/%s"><span>Valid Braces</span></a>'):format(SLUG)
@@ -363,9 +358,8 @@ describe("api.search", function()
         end)
     end)
 
-    -- A page with result blocks that parses to nothing is not a rank that
-    -- ran out: the markup moved. Reported as an error, it stops a cache
-    -- build instead of ending the rank early and caching the short list.
+    -- A page with result blocks that parses to nothing is the markup moving, not a rank that ran
+    -- out: reported as an error, it stops a cache build instead of caching the short list.
     describe("parse_html markup drift", function()
         it("is not an error when the page has no result blocks", function()
             local results, err, dropped = search.parse_html("<html><body>No kata found</body></html>")
@@ -398,18 +392,13 @@ describe("api.search", function()
         end)
     end)
 
-    -- A result is the element that carries `list-item-kata`, from its opening
-    -- tag to its own closing tag. Anything outside it -- the next result, a
-    -- footer, a "related kata" section -- is not part of it, whatever its
-    -- distance, and a link out there must never be taken for its title.
+    -- A result is the element carrying `list-item-kata`, to its own closing tag. A link outside
+    -- it (next result, footer, related kata) is never its title, at any distance.
     describe("parse_html block bounds", function()
         local function hex(n) return ("%024x"):format(n) end
 
-        --- A result block laid out as the real page does (nested divs, a title
-        --- link, a train link per language icon), `languages` icons long.
-        --- `opts.title_href` moves the title link off /kata/<id>; `opts.tag`
-        --- is the block's element; `opts.extra` is markup inside the block;
-        --- `opts.open_attrs` is more attributes on its opening tag.
+        --- A result block as the real page lays it out, `languages` icons long. `opts`: `title_href`
+        --- moves the title link, `tag` is the element, `extra` is inner markup, `open_attrs` more attrs.
         local function result(n, name, languages, opts)
             opts = opts or {}
             local tag = opts.tag or "div"
@@ -463,7 +452,6 @@ describe("api.search", function()
             end
         end)
 
-        -- The last block used to be cut 3000 characters after its marker.
         it("keeps every language of a long last block", function()
             local last = result(2, "Two", 40)
             assert.is_true(#last > 6000, "the fixture should be longer than the old cut")
@@ -559,19 +547,14 @@ describe("api.search", function()
             assert.are.equal(1, dropped)
         end)
 
-        -- Tag-shaped text is not markup. Comments, scripts, styles and
-        -- templates hold text that merely looks like tags, and so do quoted
-        -- attribute values; none of it may open a block, close one, or change
-        -- how deep one is.
+        -- Tag-shaped text in comments, scripts, styles, templates and quoted attribute values is
+        -- not markup: it may not open a block, close one, or change its depth.
         describe("tag-shaped text", function()
             local TEMPLATE_COPY = '<template><div class="list-item-kata"><a href="/kata/%s">Template Kata</a></div></template>'
 
             local function assert_bounded(inside)
-                -- An unreadable last block whose inside holds `inside`, then a
-                -- footer and the close of the results container around them
-                -- all: a block counted one element too deep would end at that
-                -- close and take the footer in, so the footer's link must not
-                -- name it, whatever `inside` says.
+                -- Unreadable last block holding `inside`, then a footer: a block counted one element
+                -- too deep would take the footer in, and its link must not name the block.
                 local results, err, dropped = search.parse_html(
                     '<div id="results">' .. result(1, "One", 2)
                         .. unreadable_title(2, "Two", 2, { extra = inside }) .. footer(10) .. "</div>"
@@ -581,8 +564,7 @@ describe("api.search", function()
                 assert.are.equal(1, dropped, inside)
             end
 
-            --- A readable last block with `inside` in it is still read whole, and
-            --- the footer after it is still outside.
+            --- A readable last block with `inside` is still read whole; the footer stays outside.
             local function assert_reads(inside)
                 local results, err, dropped = search.parse_html(
                     '<div id="results">' .. result(1, "One", 2, { extra = inside }) .. footer(10) .. "</div>"
@@ -773,10 +755,8 @@ describe("api.search", function()
             end)
         end)
 
-        -- A title link is a real `<a>` whose parsed href is /kata/<id>, and
-        -- its name is its text up to its own closing tag. Attributes are read
-        -- by walking the tag, not by pattern over its text, so a `>` or an
-        -- `href=` inside one attribute's quoted value is only that value.
+        -- A title link is a real `<a>` with a parsed href of /kata/<id>, named by its text.
+        -- Attributes are walked, not pattern-matched: a `>` or `href=` in a quoted value is a value.
         describe("title links and attributes", function()
             local function parse_link(anchor) return search.parse_html(block(anchor)) end
 
@@ -852,8 +832,7 @@ describe("api.search", function()
             end)
         end)
 
-        -- RCDATA: what is between <textarea> or <title> and its closing tag is
-        -- text, however much it looks like markup.
+        -- RCDATA: the contents of <textarea> or <title> are text, whatever they look like.
         describe("textarea and title", function()
             it("does not take a block in a textarea or a title for a result", function()
                 local copy = result(3, "Textarea Kata", 2)
@@ -901,8 +880,7 @@ describe("api.search", function()
             end)
         end)
 
-        -- Attribute values are read as a browser reads them, character
-        -- references decoded: `href="&#47;kata&#47;<id>"` is the same link.
+        -- Values are decoded as a browser does: `href="&#47;kata&#47;<id>"` is the same link.
         describe("character references in attributes", function()
             local function parse_link(anchor) return search.parse_html(block(anchor)) end
 
@@ -968,8 +946,7 @@ describe("api.search", function()
             end)
         end)
 
-        -- The rest of HTML's raw text elements: nothing between the tags is
-        -- markup. `noscript` is read as it is when scripts run.
+        -- The other raw text elements. `noscript` is read as it is when scripts run.
         describe("xmp, iframe, noembed, noframes, noscript and plaintext", function()
             local ELEMENTS = { "xmp", "iframe", "noembed", "noframes", "noscript" }
 
@@ -1038,9 +1015,7 @@ describe("api.search", function()
             end)
         end)
 
-        -- One pass over the page: a block is scanned once, and a block that
-        -- never closes does not send every block after it back over the rest
-        -- of the page. A generous bound, only to catch a rescan per block.
+        -- One pass: a block that never closes must not send every later block back over the page.
         it("reads a large page, closed or not, in a single pass", function()
             local uv = vim.uv or vim.loop
             local html = {}

@@ -75,8 +75,7 @@ describe("api.utils", function()
             end
         end)
 
-        -- A Retry-After we cannot read at all. The server still asked for a
-        -- wait, so start long rather than short.
+        -- Unreadable Retry-After: the server still asked for a wait, so start long.
         it("starts at the longest backoff when Retry-After was unparseable", function()
             local unparseable = { retry_after_raw = "next Tuesday, probably" }
             for _ = 1, 20 do
@@ -175,8 +174,6 @@ describe("api.utils", function()
         end)
     end)
 
-    -- Retry-After may also be an HTTP-date. It used to fall through to the
-    -- longest exponential backoff, which is not what the server asked for.
     describe("Retry-After as an HTTP-date", function()
         local DAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
         local FULL_DAYS = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" }
@@ -206,8 +203,7 @@ describe("api.utils", function()
             return err
         end
 
-        -- The clock ticks between building the header and reading it, so
-        -- allow the second boundary to fall either side.
+        -- The clock ticks between building and reading, so allow either side of a second boundary.
         local function assert_waits(err, seconds)
             assert.is_not_nil(err.retry_after, "the date was not read")
             assert.is_true(err.retry_after >= seconds - 2 and err.retry_after <= seconds, err.retry_after)
@@ -243,8 +239,7 @@ describe("api.utils", function()
         it("never waits a negative time for a date already past", function()
             local err = limited(imf(os.time() - 3600))
             assert.are.equal(0, err.retry_after)
-            -- Like "Retry-After: 0": nothing to honor, so the ordinary
-            -- backoff, not the longest one and not a negative wait.
+            -- Like "Retry-After: 0": nothing to honor, so the ordinary backoff.
             for _ = 1, 20 do
                 local ms = api_utils.retry_delay_ms(err, 0)
                 assert.is_true(ms > 0 and ms <= api_utils.BASE_BACKOFF_MS * 1.25, ms)

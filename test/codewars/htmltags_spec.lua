@@ -1,6 +1,4 @@
--- The tokenizer yields real tags only: what a browser would split the page
--- into, so that counting an element's opens and closes counts nothing that
--- merely looks like a tag.
+-- The tokenizer yields real tags only, never text that merely looks like one.
 describe("api.htmltags", function()
     local htmltags = require("codewars.api.htmltags")
 
@@ -29,8 +27,7 @@ describe("api.htmltags", function()
         assert.are.equal("div", tags[2].name)
     end)
 
-    -- Attributes are read by walking the tag once, so text in one attribute's
-    -- value is never read as another attribute.
+    -- Attributes are read in one walk, so one value's text is never read as another attribute.
     describe("attributes", function()
         local function attrs(html) return htmltags.scan(html)[1].attrs end
 
@@ -62,8 +59,6 @@ describe("api.htmltags", function()
             assert.are.same({ b = "it's" }, attrs("<a b=it's>"))
         end)
 
-        -- A browser reads character references in a value; a parser that does
-        -- not reads `href="&#47;kata..."` as a different link.
         it("decodes character references in values: named, decimal and hex", function()
             assert.are.same(
                 { href = "/kata/a?b=1&c", class = "x y", title = "A > B" },
@@ -123,8 +118,7 @@ describe("api.htmltags", function()
         assert.are.same({ "p" }, names("<p><title><div>never closed</p>"))
     end)
 
-    -- The rest of HTML's raw text and escapable raw text elements. `noscript`
-    -- is read as it is when scripts run.
+    -- `noscript` is read as it is when scripts run.
     it("skips xmp, iframe, noembed, noframes and noscript as raw text", function()
         for _, element in ipairs({ "xmp", "iframe", "noembed", "noframes", "noscript" }) do
             local open, close = "<" .. element .. ">", "</" .. element .. ">"

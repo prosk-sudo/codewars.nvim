@@ -7,8 +7,7 @@ describe("api.page", function()
     package.loaded["codewars.api.headers"] = { get = function() return {} end }
     package.loaded["codewars.api.page"] = nil
     local page = require("codewars.api.page")
-    -- The fetch tests below stub this out to keep the waits short; keep the
-    -- real one to ask what the retry would have waited.
+    -- The fetch tests stub this out to keep waits short; keep the real one to read the wait.
     local real_retry_delay_ms = require("codewars.api.utils").retry_delay_ms
 
     local DAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
@@ -58,8 +57,7 @@ describe("api.page", function()
             assert.are.equal("next Tuesday, probably", d.retry_after_raw)
         end)
 
-        -- The same header api.utils reads for the JSON transport: a date is
-        -- seconds from now, and the raw value is still carried.
+        -- Same header as the JSON transport: a date is seconds from now; the raw value is kept.
         it("reads a Retry-After given as an HTTP-date, as seconds from now", function()
             local raw = http_date(os.time() + 30)
             local e = page.status_err(429, raw)
@@ -150,8 +148,7 @@ describe("api.page", function()
             assert.are.equal(3, runs)
         end)
 
-        -- The delay is what the retry is scheduled with; nothing sleeps, so
-        -- this asserts the computed wait rather than elapsed time.
+        -- Nothing sleeps: this asserts the computed delay, not elapsed time.
         it("waits as long as an HTTP-date Retry-After says before retrying a 429", function()
             local delays = {}
             require("codewars.api.utils").retry_delay_ms = function(err, attempt)
@@ -169,7 +166,6 @@ describe("api.page", function()
             assert.is_nil(err)
             assert.are.equal("<html>ok</html>", body)
             assert.are.equal(1, #delays)
-            -- Not the 8s longest backoff, which is what an unread date got.
             assert.is_true(delays[1] >= 28000 and delays[1] <= 30000, delays[1])
         end)
 

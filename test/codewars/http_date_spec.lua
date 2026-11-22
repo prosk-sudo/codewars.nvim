@@ -1,7 +1,4 @@
--- Retry-After is either seconds or an HTTP-date (RFC 9110 section 10.2.3).
--- The date form used to fall through to the longest backoff; it is read in
--- pure Lua because vim.fn.strptime is locale-dependent and missing on
--- Windows, and os.time on a table treats the fields as LOCAL time.
+-- Retry-After is seconds or an HTTP-date (RFC 9110 section 10.2.3), read in pure Lua.
 describe("api.httpdate", function()
     local httpdate = require("codewars.api.httpdate")
 
@@ -72,12 +69,8 @@ describe("api.httpdate", function()
         end)
     end)
 
-    -- RFC 9110 section 5.6.7: a two-digit year that puts the timestamp more
-    -- than 50 years ahead means the most recent past year with those digits.
-    -- The whole timestamp -- date and time of day, not just the year -- is
-    -- held against the line, and the line slides with the clock: of the
-    -- candidates a century apart, the latest one no more than 50 years ahead
-    -- is the year, so a date just past a century boundary resolves forward.
+    -- RFC 9110 section 5.6.7: a two-digit year more than 50 years ahead is the previous century.
+    -- The whole timestamp is held against that line, which slides with the clock.
     describe("RFC 850 two-digit years", function()
         local NOW_2026 = 1795305600 -- 2026-11-22 00:00:00 UTC
         local NOON_2026 = 1795348800 -- 2026-11-22 12:00:00 UTC
@@ -102,8 +95,7 @@ describe("api.httpdate", function()
             assert.are.equal(2000, year_of(0))
         end)
 
-        -- 50 years after 2026-11-22 is 2076-11-22, and the year alone cannot
-        -- tell the two sides of it apart.
+        -- The line is 2076-11-22; the year alone cannot tell its two sides apart.
         it("decides the 50th year by the full date, not by the year", function()
             -- 9 days past the line: more than 50 years ahead, so 1976.
             assert.are.equal(218246400, resolved("01-Dec-76 00:00:00", NOW_2026))
@@ -111,8 +103,7 @@ describe("api.httpdate", function()
             assert.are.equal(3373142400, resolved("21-Nov-76 00:00:00", NOW_2026))
         end)
 
-        -- "More than 50 years" is strict: a timestamp exactly 50 years ahead
-        -- is not more than 50 years ahead, so it stays in the future.
+        -- "More than 50 years" is strict: exactly 50 years ahead stays in the future.
         it("keeps a timestamp exactly 50 years ahead, and moves one second past it back", function()
             assert.are.equal(3373228800, resolved("22-Nov-76 00:00:00", NOW_2026)) -- 2076-11-22 00:00:00
             assert.are.equal(217468801, resolved("22-Nov-76 00:00:01", NOW_2026)) -- 1976-11-22 00:00:01
@@ -132,7 +123,6 @@ describe("api.httpdate", function()
         it("lets a date just past a century boundary resolve forward", function()
             local dec_2099 = 4100976000 -- 2099-12-15 00:00:00 UTC
             assert.are.equal(4102444800, resolved("01-Jan-00 00:00:00", dec_2099)) -- 2100-01-01
-            -- Not the 2000 a current-century reading gives, a 99-year-old date.
             assert.are_not.equal(946684800, resolved("01-Jan-00 00:00:00", dec_2099))
 
             local year_2090 = 3786912000 -- 2090-01-01 00:00:00 UTC
