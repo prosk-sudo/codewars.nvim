@@ -1,5 +1,5 @@
--- A file that an open with O_CREAT|O_EXCL created is ours: if anything fails after that it is removed, so no empty
--- cache, link target or .bak is left. A file that was already there is never unlinked because a write to it failed.
+-- A file created with O_CREAT|O_EXCL is ours: if anything fails after that it is removed, or emptied if it can't be,
+-- so no partial cache, link target or .bak is left. A file that was already there is never unlinked for a failed write.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop

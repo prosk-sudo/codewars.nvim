@@ -24,7 +24,7 @@ local function parse(text)
     return ok and data or nil
 end
 
--- What was already reported, so each warning is said once (a failed write-back would repeat on every read).
+-- What was already reported, so a warning is not repeated (a failed write-back would repeat on every read).
 local reported = {}
 
 ---@param key string
@@ -36,7 +36,7 @@ local function warn_once(key, message)
 end
 
 --- `file` was read in full and is empty or undecodable: write a good backup back into it and return its data.
---- The backup stays: only a writer removes one, as a writer may be between making it and rewriting the cache.
+--- The backup stays: a reader never removes one, as a writer may be between making it and rewriting the cache.
 ---@param file string
 ---@param main_stat table the descriptor's stat when `file` was read
 ---@return table? data the backup's, when it was recovered
@@ -72,7 +72,7 @@ end
 --- the difference between "saved" and "lost". Swallowing this made a failed
 --- write look identical to a successful one.
 ---
---- A failed write keeps the previous cache (see cache.backup): it is rewritten in place and put back on failure.
+--- A failed write keeps the previous cache (see cache.backup): put back in place, or left in the backup if that fails.
 --- A cache that cannot be backed up first is not written, and that is reported.
 ---@param path Path
 ---@param data table

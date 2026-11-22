@@ -1,5 +1,5 @@
 -- The cache file as the backup logic meets it: recovery only over a present cache that is empty or undecodable;
--- every open for writing is non-blocking and fstat-checked; a backup that cannot be removed is emptied.
+-- opens are non-blocking (where luv has O_NONBLOCK) and fstat-checked; a backup that cannot be removed is emptied.
 local P = require("plenary.path")
 
 local uv = vim.uv or vim.loop

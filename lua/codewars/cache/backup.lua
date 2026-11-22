@@ -1,15 +1,20 @@
 --- Writes a cache file in place, keeping a copy of the old bytes at <file>.bak (Vim's
---- `backupcopy=yes`): restored if the write fails, dropped once it lands. In place, never replaced by a temp
---- file and rename, so the file keeps its inode, owner, mode, ACLs and read-only state.
---- No backup, no write: a full disk mid-write would otherwise destroy the only copy.
+--- `backupcopy=yes`): put back if the write fails (left in the .bak if that fails too), dropped once it lands.
+--- An existing cache is never replaced by a temp file and rename, so it keeps its inode, owner, mode, ACLs and
+--- read-only state. It is not written without a backup: a full disk mid-write would destroy the only copy.
 ---
 --- Rules:
----  * Recover only a present cache that is empty or undecodable: an interrupted in-place write leaves one.
+---  * Recover only a present cache that is empty or undecodable: an interrupted in-place write can leave one.
 ---  * Never recover an absent cache (it was deleted) or an unreadable one (unknown, not damaged).
----  * A backup is trusted only if its `CWBAK1 <length> <sha256>` header matches: a crash can leave a valid-JSON prefix.
----  * A stale backup is discarded before a new cache is created, so a crash mid-create has nothing to recover.
----  * Every open is non-blocking (a pipe cannot hang it) and fstat-checked (a regular file, the one that was read).
----  * A created file that fails is removed, or emptied if it can't be, so no partial cache is left.
+---  * A backup is trusted only if its `CWBAK1 <length> <sha256>` header, length and checksum match and it decodes:
+---    a crash can leave a valid-JSON prefix.
+---  * A stale backup is discarded (removed, else emptied, else the write is refused) before a new cache is created,
+---    so a crash mid-create has nothing to recover.
+---  * Opens are non-blocking where luv exposes O_NONBLOCK, so a swapped-in pipe cannot hang them; the by-name
+---    fallback without `uv.constants` can block.
+---  * Every open is fstat-checked: a regular file, and the same inode as the earlier stat where there is one.
+---  * A created file that fails is removed, or emptied if it can't be; if neither works the error names the
+---    path to delete by hand.
 ---
 --- Threat model: protects against failed or partial writes, crashes, transient read
 --- errors and stale backups. Assumes the cache directory is the user's own. Out of
@@ -24,8 +29,8 @@ local DEFAULT_MODE = 438 -- 0666: what a new file is created with, before the um
 local PERMISSION_BITS = 511 -- 0777
 local READ_CHUNK = 65536
 
--- O_NONBLOCK keeps an open from hanging on a file swapped for a pipe. O_NOFOLLOW is used only where luv has it;
--- without `constants` files open by name ("r", "wx"), which can block but has the same checks.
+-- O_NONBLOCK and O_NOFOLLOW are used only where luv has them; O_NONBLOCK stops an open hanging on a swapped-in pipe.
+-- Without `constants` the open can block (plain read, or "r+"/"wx" by name); the descriptor is still fstat-checked.
 local constants = uv.constants or {}
 local READ_FLAGS = bit.bor(constants.O_RDONLY or 0, constants.O_NONBLOCK or 0)
 local READ_BACKUP_FLAGS = bit.bor(READ_FLAGS, constants.O_NOFOLLOW or 0)
@@ -70,7 +75,7 @@ function M.backup_path(file)
     return file .. SUFFIX
 end
 
---- Whether a directory entry is a cache backup; scans skip these.
+--- Whether a directory entry is a cache backup, for scans that must skip them.
 ---@param name string
 ---@return boolean
 function M.is_backup(name)
@@ -134,8 +139,9 @@ end
 ---@field create boolean? create exclusively (O_CREAT|O_EXCL): once opened it is ours
 ---@field identity table? stat the descriptor must match (inode and device)
 
---- Opens `path` without blocking or truncating, checks the descriptor, then truncates, writes, fsyncs and closes.
---- A file `create` made is removed if anything fails, or emptied if it can't be; an existing file is never unlinked.
+--- Opens `path` without truncating (non-blocking where luv allows), checks the descriptor, then truncates, writes,
+--- fsyncs and closes. A file `create` made is removed if anything fails, or emptied if it can't be; if neither works
+--- the error names the path to delete by hand. A file it did not create is never unlinked.
 ---@param path string
 ---@param data string
 ---@param opts cw.cache.WriteOpts?
@@ -229,7 +235,7 @@ function M.read_main(file)
     return "unreadable", tostring(stat_or_err)
 end
 
---- What is at the backup's name, by lstat (never through a symlink); `detail` is the bytes for "read", else why.
+--- What is at the backup's name, by lstat (a symlink is not read through); `detail` is the bytes for "read", else why.
 --- "unknown" (lstat error besides ENOENT) and "unreadable" (not read in full) may be the one good copy: not junk.
 ---@param bak string
 ---@return "absent"|"unknown"|"foreign"|"unreadable"|"read" state
@@ -298,8 +304,8 @@ local function make_backup(bak, original, mode, state, kind)
     return ok, err, note
 end
 
---- Unlink a backup that must not be recovered from again; if that fails, empty it (an empty file never decodes).
---- Only ENOENT means gone; one that cannot be examined is neither emptied (no identity to check) nor called removed.
+--- Unlink a backup that must not be recovered from again; if that fails, empty it if it is a regular file (an empty
+--- file never decodes). Only ENOENT means gone; one that cannot be examined is neither emptied nor called removed.
 ---@param bak string
 ---@return "gone"|"emptied"|"failed" outcome
 ---@return string? detail why the unlink failed when emptied; why it could neither be removed nor emptied when failed
@@ -335,7 +341,7 @@ local function discard_backup(bak)
 end
 
 --- Remove the backup of a cache being deleted, so the next read does not "recover" it. Unlinks (a symlink goes,
---- its target stays), else empties; `false` only if both fail.
+--- its target stays), else empties; `false` only if it can be neither removed nor emptied.
 ---@param path Path|string
 ---@return boolean ok
 ---@return string? why when not ok, a sentence naming the backup
@@ -427,7 +433,7 @@ local function write_new(file, bytes, parse)
         if outcome == "emptied" then note = emptied_note(bak, message) end
     end
 
-    -- write_file removes a created file that failed: a dangling link's target, never the link.
+    -- write_file cleans up a created file that failed: a dangling link's target, never the link.
     local ok, err = write_file(path, bytes, { create = true })
     if not ok then return false, err, note end
     return true, nil, note
@@ -457,8 +463,8 @@ local function write_over(file, bytes, original, identity, parse)
             bak, tostring(kept)))
     end
 
-    -- A good copy beside a cache that does not decode IS the backup: keep it, restore from it,
-    -- and remove it only once the new bytes land. Anything else there is replaced.
+    -- A good copy beside a cache that does not decode IS the backup: keep it, restore from it, and remove it
+    -- only once the new bytes land or the file is restored from it. Anything else there is replaced.
     local kind = state == "foreign" and kept or nil
     local restore_from, note = original, nil
     if state == "good" and not decodes() then
@@ -491,7 +497,7 @@ local function write_over(file, bytes, original, identity, parse)
         tostring(err), tostring(restore_err), bak), note
 end
 
---- Write `bytes` to `file`, keeping the previous contents if that fails.
+--- Write `bytes` to `file`; if that fails the previous contents are put back, or else kept in the backup.
 ---@param file string absolute path
 ---@param bytes string
 ---@param parse fun(text: string): any? the data in `text`, nil when it is not usable
@@ -507,7 +513,7 @@ function M.write(file, bytes, parse)
 end
 
 --- `file` was read in full and is empty or undecodable: write a good backup's payload back in place. The backup
---- stays: only a writer removes one, as a writer may be between making it and rewriting the cache.
+--- stays: a reader never removes one, as a writer may be between making it and rewriting the cache.
 ---@param file string
 ---@param parse fun(text: string): any? the data in `text`, nil when it is not usable
 ---@param main_stat table the descriptor's stat when `file` was read; nil (absent) recovers nothing
@@ -515,7 +521,7 @@ end
 ---@return string? err why it could not be written back into `file`
 function M.settle(file, parse, main_stat)
     local bak = M.backup_path(file)
-    -- Not read in full from a regular file (absent, foreign, unreadable): unknown, so nothing is touched.
+    -- Not read in full from a regular file (absent or unreadable): nothing is touched.
     if not main_stat then return nil end
     local state, text = read_backup(bak)
     if state ~= "read" then return nil end
