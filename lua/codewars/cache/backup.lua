@@ -1,13 +1,15 @@
 --- Writes a cache file in place, keeping a copy of the old bytes at <file>.bak (Vim's
---- `backupcopy=yes`): restored if the write fails, dropped once it lands. No backup, no write.
+--- `backupcopy=yes`): restored if the write fails, dropped once it lands. In place, never replaced by a temp
+--- file and rename, so the file keeps its inode, owner, mode, ACLs and read-only state.
+--- No backup, no write: a full disk mid-write would otherwise destroy the only copy.
 ---
 --- Rules:
----  * Recover only a cache that is present and empty or undecodable.
----  * Never recover an absent or unreadable cache: that is unknown, not damaged.
----  * A backup is trusted only if its `CWBAK1 <length> <sha256>` header matches.
----  * A stale backup is discarded before a new cache is created.
----  * Every open is non-blocking and fstat-checked.
----  * A created file that fails is emptied and removed.
+---  * Recover only a present cache that is empty or undecodable: an interrupted in-place write leaves one.
+---  * Never recover an absent cache (it was deleted) or an unreadable one (unknown, not damaged).
+---  * A backup is trusted only if its `CWBAK1 <length> <sha256>` header matches: a crash can leave a valid-JSON prefix.
+---  * A stale backup is discarded before a new cache is created, so a crash mid-create has nothing to recover.
+---  * Every open is non-blocking (a pipe cannot hang it) and fstat-checked (a regular file, the one that was read).
+---  * A created file that fails is removed, or emptied if it can't be, so no partial cache is left.
 ---
 --- Threat model: protects against failed or partial writes, crashes, transient read
 --- errors and stale backups. Assumes the cache directory is the user's own. Out of
@@ -133,7 +135,7 @@ end
 ---@field identity table? stat the descriptor must match (inode and device)
 
 --- Opens `path` without blocking or truncating, checks the descriptor, then truncates, writes, fsyncs and closes.
---- A file that `create` made is emptied, then unlinked, if anything fails; a pre-existing file is never unlinked.
+--- A file `create` made is removed if anything fails, or emptied if it can't be; an existing file is never unlinked.
 ---@param path string
 ---@param data string
 ---@param opts cw.cache.WriteOpts?
@@ -159,11 +161,12 @@ local function write_file(path, data, opts)
         if ok then ok, err = uv.fs_fsync(fd) end
     end
 
-    -- Failed and ours: empty it while it is still open.
+    -- Failed and ours: empty it while it is still open (an empty file never decodes, so it cannot be recovered from).
     local emptied
     if not ok and opts.create and touched then
         emptied = uv.fs_ftruncate(fd, 0) and uv.fs_fsync(fd) or false
     end
+    -- A full or failing disk often says so only at fsync or close, so both are checked.
     local closed, close_err = uv.fs_close(fd)
     if ok and not closed then ok, err = false, close_err end
     if not ok and opts.create then
@@ -171,6 +174,7 @@ local function write_file(path, data, opts)
         if not removed and name ~= "ENOENT" then
             -- Not emptied via the descriptor: empty it by path, if it is still the file that was created.
             if touched and not emptied then emptied = write_file(path, "", { identity = stat }) end
+            -- Unlink failed: the error names the path and whether it was emptied, else says to delete it by hand.
             local state = "it is empty"
             if touched then
                 state = emptied and "was emptied" or "could not be emptied; delete it by hand"
@@ -213,7 +217,7 @@ local function read_file(path, expect)
 end
 
 --- The cache file as a read finds it: "absent" (ENOENT or a dangling link), "read" (a regular file read in full;
---- `detail` its bytes, `stat` its descriptor's) or "unreadable" (`detail` says why): unknown, never written over.
+--- `detail` its bytes, `stat` its descriptor's, which a write must match) or "unreadable" (unknown, never overwritten).
 ---@param file string absolute path
 ---@return "absent"|"read"|"unreadable" state
 ---@return string? detail
@@ -226,7 +230,7 @@ function M.read_main(file)
 end
 
 --- What is at the backup's name, by lstat (never through a symlink); `detail` is the bytes for "read", else why.
---- "unknown" (lstat failed) and "unreadable" (not read in full) may hide the one good copy, so they are not junk.
+--- "unknown" (lstat error besides ENOENT) and "unreadable" (not read in full) may be the one good copy: not junk.
 ---@param bak string
 ---@return "absent"|"unknown"|"foreign"|"unreadable"|"read" state
 ---@return string? detail
@@ -319,6 +323,7 @@ local function remove_backup(bak)
 end
 
 --- The write landed, so the backup is stale: remove it, or a later damaged cache would "recover" the old contents.
+--- If it can be neither removed nor emptied, the write is reported as failed.
 ---@param bak string
 ---@return boolean ok
 ---@return string? message a note when it had to be emptied, why it could not be when not ok
@@ -405,6 +410,7 @@ local function write_new(file, bytes, parse)
     if not path then return refused(("it could not be created: %s"):format(why)) end
 
     local note
+    -- A symlink or other non-regular file is unlinked, never written through.
     if state == "foreign" then
         local unlinked, err = uv.fs_unlink(bak)
         if not unlinked then
@@ -435,6 +441,7 @@ local function not_backed_up(file, err)
 end
 
 --- `file` exists and was read as `original` (stat `identity`): back it up, write in place, restore on failure.
+--- In place, never via a temp file and rename: that would lose its owner, mode, ACLs and read-only state.
 local function write_over(file, bytes, original, identity, parse)
     local bak = M.backup_path(file)
     local function decodes() return parse(original) ~= nil end
@@ -499,8 +506,8 @@ function M.write(file, bytes, parse)
     return write_over(file, bytes, detail, stat, parse)
 end
 
---- `file` was read in full and is empty or undecodable: write a good backup's payload back in place.
---- The backup stays (only a writer removes one). Never recovers an absent file.
+--- `file` was read in full and is empty or undecodable: write a good backup's payload back in place. The backup
+--- stays: only a writer removes one, as a writer may be between making it and rewriting the cache.
 ---@param file string
 ---@param parse fun(text: string): any? the data in `text`, nil when it is not usable
 ---@param main_stat table the descriptor's stat when `file` was read; nil (absent) recovers nothing

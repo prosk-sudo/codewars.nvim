@@ -36,7 +36,7 @@ local function warn_once(key, message)
 end
 
 --- `file` was read in full and is empty or undecodable: write a good backup back into it and return its data.
---- The backup stays (only a writer removes one).
+--- The backup stays: only a writer removes one, as a writer may be between making it and rewriting the cache.
 ---@param file string
 ---@param main_stat table the descriptor's stat when `file` was read
 ---@return table? data the backup's, when it was recovered
