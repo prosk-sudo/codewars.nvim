@@ -96,15 +96,12 @@ local READ_FLAGS = bit.bor(constants.O_RDONLY or 0, constants.O_NONBLOCK or 0)
 local READ_BACKUP_FLAGS = bit.bor(READ_FLAGS, constants.O_NOFOLLOW or 0)
 
 --- How a file is opened for writing: where it is, nothing is truncated by the open.
----@param create "create"|"exclusive"|nil create it if it is not there; and, when exclusive, only then
+---@param create boolean? create it, exclusively: it is not there, and is ours once the open has succeeded
 ---@return integer|string
 local function write_flags(create)
-    if not constants.O_WRONLY then
-        return create == "exclusive" and "wx" or create and "w" or "r+"
-    end
+    if not constants.O_WRONLY then return create and "wx" or "r+" end
     local flags = bit.bor(constants.O_WRONLY, constants.O_NONBLOCK or 0)
-    if create then flags = bit.bor(flags, constants.O_CREAT or 0) end
-    if create == "exclusive" then flags = bit.bor(flags, constants.O_EXCL or 0) end
+    if create then flags = bit.bor(flags, constants.O_CREAT or 0, constants.O_EXCL or 0) end
     return flags
 end
 
@@ -179,35 +176,46 @@ end
 ---@class cw.cache.WriteOpts
 ---@field mode integer? permission bits a new file is created with
 ---@field exact boolean? also set the file to exactly `mode`, whatever the umask took off
----@field create "create"|"exclusive"|nil create the file if it is not there, or only if it is not
+---@field create boolean? create the file exclusively (O_CREAT|O_EXCL): once opened it is ours
 ---@field identity table? a stat the descriptor must match (inode and device): the file that was read
 
 --- Open `path` for writing without blocking and without truncating, check the
 --- descriptor, and only then truncate it, write all of `data`, flush it and close
 --- it. A disk that is full or gone often says so only when flushed or closed.
+---
+--- A file that the open created (`create`) is ours from the moment it succeeds:
+--- whatever fails after that (the descriptor check, ftruncate, fchmod, a write,
+--- fsync, close) closes the descriptor and unlinks that path, so no empty or
+--- partial file is left behind. A file that was already there is never unlinked
+--- because a write to it failed.
 ---@param path string
 ---@param data string
 ---@param opts cw.cache.WriteOpts?
 ---@return boolean ok
 ---@return string? err
----@return boolean touched whether the file was created or truncated, so whether it may need putting back
+---@return boolean touched whether an existing file was truncated, so whether it may need putting back
 local function write_file(path, data, opts)
     opts = opts or {}
     local fd, err = uv.fs_open(path, write_flags(opts.create), opts.mode or DEFAULT_MODE)
     if not fd then return false, err, false end
-    local problem = unfit(uv.fs_fstat(fd), opts.identity)
-    if problem then
-        uv.fs_close(fd)
-        return false, problem, false
-    end
+
     local ok
-    ok, err = uv.fs_ftruncate(fd, 0)
-    if ok and opts.exact then ok, err = uv.fs_fchmod(fd, opts.mode) end
-    if ok then ok, err = write_all(fd, data) end
-    if ok then ok, err = uv.fs_fsync(fd) end
+    local touched = false
+    local stat, stat_err = uv.fs_fstat(fd)
+    local problem = unfit(stat, opts.identity)
+    if problem then
+        ok, err = false, stat and problem or ("%s: %s"):format(problem, tostring(stat_err))
+    else
+        touched = true
+        ok, err = uv.fs_ftruncate(fd, 0)
+        if ok and opts.exact then ok, err = uv.fs_fchmod(fd, opts.mode) end
+        if ok then ok, err = write_all(fd, data) end
+        if ok then ok, err = uv.fs_fsync(fd) end
+    end
     local closed, close_err = uv.fs_close(fd)
     if ok and not closed then ok, err = false, close_err end
-    return ok == true, err, true
+    if not ok and opts.create then uv.fs_unlink(path) end
+    return ok == true, err, touched
 end
 
 --- The bytes of a regular file. The open cannot block, and the descriptor is
@@ -334,8 +342,7 @@ local function make_backup(bak, original, mode, state, kind)
         if not ok then return false, ("%s could not be cleared away (%s)"):format(bak, tostring(err)) end
         if state == "foreign" then note = foreign_note(bak, kind) end
     end
-    local ok, err, created = write_file(bak, original, { mode = mode, exact = true, create = "exclusive" })
-    if not ok and created then uv.fs_unlink(bak) end
+    local ok, err = write_file(bak, original, { mode = mode, exact = true, create = true })
     return ok, err, note
 end
 
@@ -491,11 +498,10 @@ local function write_new(file, bytes, parse)
         if outcome == "emptied" then note = emptied_note(bak, message) end
     end
 
-    local ok, err, touched = write_file(path, bytes, { create = "exclusive" })
-    if not ok then
-        if touched then uv.fs_unlink(path) end
-        return false, err, note
-    end
+    -- A file that was created and then failed is already removed by write_file: the
+    -- one that was created (a dangling link's target), never the link that names it.
+    local ok, err = write_file(path, bytes, { create = true })
+    if not ok then return false, err, note end
     return true, nil, note
 end
 
