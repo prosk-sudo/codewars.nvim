@@ -1,0 +1,626 @@
+-- The :CW unfinished picker. What counts as unfinished is codewars.unfinished's business.
+describe(":CW unfinished", function()
+    local config = require("codewars.config")
+    local picker, opened, mounted, said, entries, catalogue, completed, updates, listed_with
+    local details, asked, asked_opts, provider, recent_items, order, detect
+    local fetched, stale -- what the completed cache says of the list on disk
+    local saved = {}
+    local STUBBED = {
+        "codewars.picker", "codewars.picker.dropdown", "codewars.cache.completed",
+        "codewars.cache.problemlist", "codewars.cache.recent", "codewars.unfinished", "codewars-ui.kata",
+        "codewars.logger", "codewars.identity",
+    }
+    local NOW = os.time()
+    local DAY = 86400
+
+    --- Telescope as picker.dropdown hands it out, recording what is asked of it.
+    local function fake_telescope()
+        return {
+            pickers = {
+                new = function(topts, cfg)
+                    -- Own record: a late update must not write into the next test.
+                    local mine = { topts = topts, cfg = cfg }
+                    opened = mine
+                    mine.bufnr = vim.api.nvim_create_buf(false, true)
+                    return {
+                        prompt_bufnr = mine.bufnr,
+                        find = function() mine.found = true end,
+                        refresh = function(_, finder) mine.cfg.finder = finder; mine.refreshed = true end,
+                    }
+                end,
+            },
+            finders = { new_table = function(args) return args end },
+            conf = { generic_sorter = function() return "SORTER" end },
+            actions = {
+                select_default = { replace = function(_, fn) opened.select = fn end },
+                close = function() end,
+            },
+            action_state = { get_selected_entry = function() return opened.selected end },
+            entry_display = { create = function() return function(segments) return segments end end },
+            themes = { get_dropdown = function(o) return o end },
+        }
+    end
+
+    before_each(function()
+        for _, m in ipairs(STUBBED) do saved[m] = package.loaded[m] end
+        opened, mounted, said, updates, listed_with = nil, nil, {}, 0, nil
+        details, asked, asked_opts, provider, recent_items = {}, nil, nil, "telescope", {}
+        order = {}
+        fetched, stale = true, false
+        -- Who is signed in: known already unless a test says it is not.
+        detect = function(cb)
+            if config.user.username ~= "" then return cb(config.user.username) end
+            cb(nil, { msg = "not detected" })
+        end
+        completed = { { slug = "done", completedLanguages = { "python" } } }
+        catalogue = {
+            { slug = "multiply", id = "id-multiply", name = "Multiply", rank_id = -8, rank_name = "8 kyu" },
+            { slug = "sum-them", id = "5264d2b162488dc400000001", name = "Sum Them", rank_id = -6, rank_name = "6 kyu" },
+        }
+        entries = {
+            { key = "multiply", lang = "python", file = "multiply.py", mtime = NOW, checked = true },
+            { key = "5264d2b162488dc400000001", lang = "java", file = "5264d2b162488dc400000001.java",
+                mtime = NOW - DAY, checked = true },
+        }
+
+        package.loaded["codewars.logger"] = setmetatable({}, {
+            __index = function(_, level)
+                return function(m) said[#said + 1] = { level = level, msg = tostring(m) } end
+            end,
+        })
+        local t = fake_telescope()
+        package.loaded["codewars.picker.dropdown"] = {
+            provider = function() return provider end,
+            open = function() end,
+            telescope = function() return t end,
+            _reset = function() end,
+        }
+        package.loaded["codewars.cache.completed"] = {
+            get = function() return completed, stale, fetched end,
+            update = function(cb)
+                updates = updates + 1
+                order[#order + 1] = "fetch"
+                completed = { { slug = "fetched", completedLanguages = { "python" } } }
+                fetched = true
+                cb(completed)
+            end,
+            mark = function() end,
+            get_details = function() return details end,
+            -- As the real one does: looks the kata up, caches what it found.
+            enrich = function(items, cb, opts)
+                asked = vim.tbl_map(function(i) return i.slug end, items)
+                asked_opts = opts
+                for _, i in ipairs(items) do
+                    details[i.slug] = { rank = { id = -5, name = "5 kyu" }, name = "Looked Up " .. i.slug }
+                end
+                cb(items)
+            end,
+        }
+        package.loaded["codewars.identity"] = {
+            ensure = function(cb)
+                order[#order + 1] = "detect"
+                detect(cb)
+            end,
+        }
+        package.loaded["codewars.cache.problemlist"] = { get = function() return catalogue end }
+        package.loaded["codewars.cache.recent"] = { get = function() return recent_items end }
+        package.loaded["codewars.unfinished"] = {
+            list = function(c) listed_with = c; return entries end,
+        }
+        package.loaded["codewars-ui.kata"] = {
+            new = function(_, key, lang, opts)
+                return { mount = function() mounted = { key = key, lang = lang, file = opts and opts.file } end }
+            end,
+        }
+        package.loaded["codewars.picker"] = nil
+        picker = require("codewars.picker")
+    end)
+
+    after_each(function()
+        for _, m in ipairs(STUBBED) do package.loaded[m] = saved[m] end
+    end)
+
+    --- Every row as telescope would draw it: a list of { text, highlight }.
+    local function rows()
+        local finder = opened.cfg.finder
+        return vim.tbl_map(function(r) return finder.entry_maker(r).display() end, finder.results)
+    end
+
+    local function text(segment)
+        return type(segment) == "table" and segment[1] or segment
+    end
+
+    it("draws each kata as the kata list does: its rank, then its language and name", function()
+        picker.unfinished()
+        assert.is_true(opened.found, "no picker opened")
+        local row = rows()[1]
+        assert.truthy(text(row[2]):find("8 kyu", 1, true), vim.inspect(row))
+        assert.truthy(row[2][2]:find("^codewars_rank"), "rank not in its colour: " .. vim.inspect(row[2]))
+        assert.are.equal(row[2][2], row[1][2], "rank icon and rank in different colours")
+        assert.are.equal("codewars_lang_python", row[3][2])
+        assert.are.equal("Multiply", text(row[4]))
+        assert.are.same({ "Python", "codewars_ref" }, row[5])
+    end)
+
+    it("opens in the same window as the kata list", function()
+        picker.unfinished()
+        assert.are.equal(100, opened.topts.layout_config.width)
+    end)
+
+    it("lists the most recently changed first, finding a kata named by its id", function()
+        picker.unfinished()
+        local second = rows()[2]
+        assert.are.equal("Sum Them", text(second[4]))
+        assert.truthy(text(second[2]):find("6 kyu", 1, true))
+        assert.are.equal("Java", text(second[5]))
+    end)
+
+    it("says when you last changed it the way a person would", function()
+        local ago = { 0, 1, 3, 15, 60 }
+        entries = vim.tbl_map(function(days)
+            return { key = "k" .. days, lang = "python", file = "k" .. days .. ".py", mtime = NOW - days * DAY, checked = true }
+        end, ago)
+        picker.unfinished()
+        local said_when = vim.tbl_map(function(row) return text(row[6]) end, rows())
+        assert.are.same({ "today", "yesterday", "3 days ago", "2 weeks ago", os.date("%Y-%m-%d", NOW - 60 * DAY) }, said_when)
+    end)
+
+    it("marks a kata it had nothing on record to check", function()
+        entries[2].checked = false
+        picker.unfinished()
+        local r = rows()
+        assert.are.equal("", text(r[1][7]))
+        assert.are.same({ "not checked", "codewars_warning" }, r[2][7])
+    end)
+
+    it("uses the name and rank a kata was opened with when the catalogue lacks it", function()
+        catalogue = {}
+        entries[1].name, entries[1].rank_id = "Multiply", -8
+        entries[2].name, entries[2].rank_id = "Sum Them", 2
+        picker.unfinished()
+        local r = rows()
+        assert.are.equal("Multiply", text(r[1][4]))
+        assert.truthy(text(r[1][2]):find("8 kyu", 1, true), vim.inspect(r[1][2]))
+        assert.truthy(text(r[2][2]):find("2 dan", 1, true), vim.inspect(r[2][2]))
+    end)
+
+    it("shows the rank and name looked up before for a kata the catalogue lacks", function()
+        catalogue = {}
+        details = { multiply = { rank = { id = -8, name = "8 kyu" }, name = "Multiply" } }
+        entries = { entries[1] }
+        picker.unfinished()
+        local row = rows()[1]
+        assert.truthy(text(row[2]):find("8 kyu", 1, true), vim.inspect(row[2]))
+        assert.are.equal("Multiply", text(row[4]))
+        assert.is_nil(asked, "looked up a kata it already knew")
+    end)
+
+    it("looks up what nothing else names, filling it in while the picker is open", function()
+        catalogue = {}
+        picker.unfinished()
+        assert.are.same({ "multiply", "5264d2b162488dc400000001" }, asked)
+        vim.wait(200, function() return opened.refreshed end)
+        assert.is_true(opened.refreshed, "the open picker was not updated")
+        local row = rows()[1]
+        assert.truthy(text(row[2]):find("5 kyu", 1, true), vim.inspect(row[2]))
+        assert.are.equal("Looked Up multiply", text(row[4]))
+    end)
+
+    it("names a kata from the recent history when nothing else does", function()
+        catalogue = {}
+        recent_items = { { slug = "multiply", lang = "python", name = "Multiply Lately", rank = -7, opened_at = NOW } }
+        entries = { entries[1] }
+        picker.unfinished()
+        local row = rows()[1]
+        assert.are.equal("Multiply Lately", text(row[4]))
+        assert.truthy(text(row[2]):find("7 kyu", 1, true), vim.inspect(row[2]))
+        assert.is_nil(asked, "looked up a kata the recent history names")
+    end)
+
+    it("takes a name from the catalogue, then the kata's own record, then recent history, then cached details", function()
+        entries = { entries[1] }
+        local function name_shown()
+            picker.unfinished()
+            return text(rows()[1][4])
+        end
+        entries[1].name = "From Record"
+        recent_items = { { slug = "multiply", lang = "python", name = "From Recent", rank = -7, opened_at = NOW } }
+        details = { multiply = { rank = { id = -6, name = "6 kyu" }, name = "From Details" } }
+        catalogue = { { slug = "multiply", name = "From Catalogue", rank_id = -8, rank_name = "8 kyu" } }
+        assert.are.equal("From Catalogue", name_shown())
+        catalogue = {}
+        assert.are.equal("From Record", name_shown())
+        entries[1].name = nil
+        assert.are.equal("From Recent", name_shown())
+        recent_items = {}
+        assert.are.equal("From Details", name_shown())
+    end)
+
+    it("does not take another kata's name from the recent history", function()
+        catalogue = {}
+        recent_items = { { slug = "something-else", lang = "python", name = "Something Else", rank = -7, opened_at = NOW } }
+        entries = { entries[1] }
+        picker.unfinished()
+        assert.are.equal("Multiply", text(rows()[1][4])) -- the file's own name, made readable
+        assert.are.same({ "multiply" }, asked)
+    end)
+
+    it("looks a kata up again when its cached details have a rank but no name", function()
+        catalogue = {}
+        details = { multiply = { rank = { id = -8, name = "8 kyu" }, tags = { "Fundamentals" } } }
+        entries = { entries[1] }
+        picker.unfinished()
+        assert.are.same({ "multiply" }, asked)
+        assert.is_true(asked_opts.names, "the cache would have kept the nameless entry")
+        vim.wait(200, function() return opened.refreshed end)
+        assert.are.equal("Looked Up multiply", text(rows()[1][4]))
+    end)
+
+    describe("the lookup of names past the first batch", function()
+        --- The first batch finds nothing; later names come through on_progress.
+        local function enrich_that_finds_nothing_at_first()
+            package.loaded["codewars.cache.completed"].enrich = function(_, cb, opts)
+                asked_opts = opts
+                cb({})
+            end
+        end
+
+        it("shows a name that arrives after the picker opened, without reopening it", function()
+            enrich_that_finds_nothing_at_first()
+            catalogue = {}
+            picker.unfinished()
+            assert.is_function(asked_opts.on_progress, "the lookup has no way to tell the picker")
+            vim.wait(200, function() return opened.refreshed end)
+            opened.refreshed = false
+            assert.are.equal("Multiply", text(rows()[1][4])) -- the file's own name, made readable
+
+            details.multiply = { rank = { id = -3, name = "3 kyu" }, name = "Found Late" }
+            asked_opts.on_progress()
+            vim.wait(200, function() return opened.refreshed end)
+            assert.is_true(opened.refreshed, "the open picker was not updated")
+            assert.are.equal("Found Late", text(rows()[1][4]))
+            assert.truthy(text(rows()[1][2]):find("3 kyu", 1, true), vim.inspect(rows()[1][2]))
+        end)
+
+        it("goes on looking while the picker is open, and stops once it is closed", function()
+            enrich_that_finds_nothing_at_first()
+            catalogue = {}
+            picker.unfinished()
+            assert.is_function(asked_opts.keep_going, "the lookup does not stop for anything")
+            assert.is_true(asked_opts.keep_going())
+            vim.api.nvim_buf_delete(opened.bufnr, { force = true })
+            assert.is_false(asked_opts.keep_going())
+        end)
+
+        -- vim.ui.select cannot redraw: names are saved as they come and show next open.
+        it("keeps looking for the vim.ui.select list too until a row is chosen or it is cancelled", function()
+            enrich_that_finds_nothing_at_first()
+            provider = "select"
+            catalogue = {}
+            local real_select, shown = vim.ui.select, nil
+            vim.ui.select = function(items, opts, cb) shown = { items = items, cb = cb } end
+            picker.unfinished()
+            vim.ui.select = real_select
+            assert.is_true(asked_opts.keep_going())
+            assert.has_no.errors(function() asked_opts.on_progress() end)
+            vim.wait(50)
+            shown.cb(nil)
+            assert.is_false(asked_opts.keep_going())
+        end)
+
+        it("stops looking for the vim.ui.select list once a row is chosen", function()
+            enrich_that_finds_nothing_at_first()
+            provider = "select"
+            catalogue = {}
+            local real_select, shown = vim.ui.select, nil
+            vim.ui.select = function(items, opts, cb) shown = { items = items, cb = cb } end
+            picker.unfinished()
+            vim.ui.select = real_select
+            shown.cb(shown.items[1])
+            assert.is_false(asked_opts.keep_going())
+        end)
+    end)
+
+    it("looks up nothing the catalogue or the kata's own record already names", function()
+        entries[1].name, entries[1].rank_id = "Multiply", -8
+        catalogue = { catalogue[2] }
+        picker.unfinished()
+        assert.is_nil(asked)
+    end)
+
+    it("makes the file's own name readable as a last resort", function()
+        catalogue = {}
+        entries[1].key = "how-old-will-i-be-in-2099"
+        picker.unfinished()
+        assert.are.equal("How old will i be in 2099", text(rows()[1][4]))
+    end)
+
+    it("finds a kata by its name or language as you type", function()
+        picker.unfinished()
+        local entry = opened.cfg.finder.entry_maker(opened.cfg.finder.results[2])
+        assert.truthy(entry.ordinal:find("Sum Them", 1, true), entry.ordinal)
+        assert.truthy(entry.ordinal:find("Java", 1, true), entry.ordinal)
+    end)
+
+    -- Each file is a row (`<id>.py` and `<slug>.py` both), and the picked one opens.
+    it("opens the chosen kata in that file's language, and that very file", function()
+        picker.unfinished()
+        opened.cfg.attach_mappings(1, function() end)
+        opened.selected = opened.cfg.finder.entry_maker(opened.cfg.finder.results[2])
+        opened.select()
+        assert.are.same({ key = "5264d2b162488dc400000001", lang = "java", file = "5264d2b162488dc400000001.java" },
+            mounted)
+    end)
+
+    it("opens through vim.ui.select when telescope is not the picker", function()
+        provider = "select"
+        local real_select, shown = vim.ui.select, nil
+        vim.ui.select = function(items, opts, cb) shown = { items = items, opts = opts, cb = cb } end
+        picker.unfinished()
+        vim.ui.select = real_select
+        assert.is_nil(opened, "opened telescope")
+        assert.is_not_nil(shown, "did not use vim.ui.select")
+        local first = shown.opts.format_item(shown.items[1])
+        for _, part in ipairs({ "8 kyu", "Multiply", "Python", "today" }) do
+            assert.truthy(first:find(part, 1, true), first)
+        end
+        shown.cb(shown.items[2])
+        assert.are.same({ key = "5264d2b162488dc400000001", lang = "java", file = "5264d2b162488dc400000001.java" },
+            mounted)
+    end)
+
+    it("leaves out what you completed, judged on your completed list", function()
+        picker.unfinished()
+        assert.are.same(completed, listed_with)
+    end)
+
+    it("fetches your completed list first when there is none yet", function()
+        local saved_user = config.user.username
+        config.user.username = "me"
+        completed, fetched = {}, false
+        picker.unfinished()
+        vim.wait(100, function() return opened ~= nil end)
+        config.user.username = saved_user
+        assert.are.equal(1, updates)
+        assert.are.equal("fetched", listed_with[1].slug)
+    end)
+
+    -- The username is only detected by the menu. With no completed list cached, an empty
+    -- list would read as "you have completed nothing": every solved kata listed.
+    describe("when the account is not known yet", function()
+        local saved_user
+
+        before_each(function()
+            saved_user = config.user.username
+            config.user.username = ""
+            completed, fetched = {}, false
+        end)
+
+        after_each(function()
+            config.user.username = saved_user
+        end)
+
+        local function warnings()
+            return vim.tbl_filter(function(s) return s.level == "warn" end, said)
+        end
+
+        it("detects it first, then fetches the completed list, and judges by that", function()
+            detect = function(cb)
+                config.user.username = "me"
+                cb("me")
+            end
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.are.same({ "detect", "fetch" }, order)
+            assert.are.equal("fetched", listed_with[1].slug, "judged by a list that was not the fetched one")
+            assert.is_not_nil(opened)
+        end)
+
+        it("asks you to sign in, and does not open, with no cookie saved", function()
+            detect = function(cb) cb(nil, { signed_out = true, msg = "not signed in" }) end
+            picker.unfinished()
+            vim.wait(50)
+            assert.is_nil(opened, "opened a list judged against nothing")
+            assert.is_nil(listed_with)
+            assert.are.same({ "detect" }, order, "fetched a list with no account")
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find(":CW cookie", 1, true), warnings()[1].msg)
+        end)
+
+        it("says the session has expired, and does not open, when the dashboard refuses the cookie", function()
+            detect = function(cb) cb(nil, { auth = true, msg = "session expired" }) end
+            picker.unfinished()
+            vim.wait(50)
+            assert.is_nil(opened)
+            assert.is_nil(listed_with)
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find("expired", 1, true), warnings()[1].msg)
+            assert.truthy(warnings()[1].msg:find(":CW cookie", 1, true), warnings()[1].msg)
+        end)
+
+        it("gives the reason, and does not open, when the username cannot be detected", function()
+            detect = function(cb) cb(nil, { msg = "network down" }) end
+            picker.unfinished()
+            vim.wait(50)
+            assert.is_nil(opened)
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find("network down", 1, true), warnings()[1].msg)
+        end)
+
+        it("opens on the completed list on disk, without detecting anything", function()
+            completed, fetched = { { slug = "done", completedLanguages = { "python" } } }, true
+            picker.unfinished()
+            assert.is_not_nil(opened)
+            assert.are.same({}, order)
+            assert.are.equal("done", listed_with[1].slug)
+        end)
+    end)
+
+    -- Trusted only if a full fetch ever completed it: a kata marked before any fetch leaves a
+    -- cache of one kata, while a user with nothing completed has a fetched list of none.
+    describe("which completed list on disk it trusts", function()
+        local saved_user
+
+        before_each(function()
+            saved_user = config.user.username
+        end)
+
+        after_each(function()
+            config.user.username = saved_user
+        end)
+
+        local function warnings()
+            return vim.tbl_filter(function(s) return s.level == "warn" end, said)
+        end
+
+        local MARKED = { { slug = "just-marked", completedLanguages = { "python" }, local_mark = true } }
+
+        it("does not trust a cache of kata marked locally, and fetches the list first", function()
+            config.user.username = "me"
+            completed, fetched, stale = MARKED, false, true
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.are.same({ "detect", "fetch" }, order)
+            assert.are.equal("fetched", listed_with[1].slug, "judged by the one kata that was marked")
+        end)
+
+        -- Judged by the fetched list; after a failed save the disk may hold less.
+        it("judges by the list the fetch produced, not by what is on disk afterwards", function()
+            config.user.username = "me"
+            completed, fetched, stale = MARKED, false, true
+            package.loaded["codewars.cache.completed"].update = function(cb)
+                order[#order + 1] = "fetch"
+                -- The save failed: the disk holds only the marked kata (or worse).
+                cb({ { slug = "fetched", completedLanguages = { "python" } } })
+            end
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.is_not_nil(opened)
+            assert.are.equal("fetched", listed_with[1].slug, "judged by the partial cache on disk")
+            assert.are.equal(1, #listed_with)
+        end)
+
+        it("asks to sign in, and opens nothing, for a cache of kata marked locally with no cookie", function()
+            config.user.username = ""
+            completed, fetched, stale = MARKED, false, true
+            detect = function(cb) cb(nil, { signed_out = true, msg = "not signed in" }) end
+            picker.unfinished()
+            vim.wait(50)
+            assert.is_nil(opened, "opened a list judged against one kata")
+            assert.is_nil(listed_with)
+            assert.are.same({ "detect" }, order)
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find(":CW cookie", 1, true), warnings()[1].msg)
+        end)
+
+        it("refuses, rather than fall back on the kata marked locally, when the fetch then fails", function()
+            config.user.username = "me"
+            completed, fetched, stale = MARKED, false, true
+            package.loaded["codewars.cache.completed"].update = function(cb)
+                order[#order + 1] = "fetch"
+                cb({}, { msg = "network down" })
+            end
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.is_nil(opened, "opened a list judged against one kata")
+            assert.is_nil(listed_with)
+            assert.are.equal(1, #warnings(), vim.inspect(said))
+            assert.truthy(warnings()[1].msg:find("network down", 1, true), warnings()[1].msg)
+        end)
+
+        it("refuses when the account was settled but the list then could not be fetched", function()
+            config.user.username = ""
+            completed, fetched, stale = {}, false, true
+            detect = function(cb)
+                config.user.username = "me"
+                cb("me")
+            end
+            package.loaded["codewars.cache.completed"].update = function(cb)
+                order[#order + 1] = "fetch"
+                cb({}, { msg = "HTTP 500" })
+            end
+            picker.unfinished()
+            vim.wait(100, function() return opened ~= nil end)
+            assert.are.same({ "detect", "fetch" }, order)
+            assert.is_nil(opened)
+            assert.truthy(warnings()[1] and warnings()[1].msg:find("HTTP 500", 1, true), vim.inspect(said))
+        end)
+
+        it("opens on a fetched list with nothing in it, with no cookie and no account", function()
+            config.user.username = ""
+            completed, fetched, stale = {}, true, true
+            detect = function(cb) cb(nil, { signed_out = true, msg = "not signed in" }) end
+            picker.unfinished()
+            assert.is_not_nil(opened, "asked a user with nothing completed to sign in")
+            assert.are.same({}, order, "detected or fetched with a list on disk")
+            assert.are.same({}, warnings())
+            assert.are.same({}, listed_with)
+            assert.are.equal(2, #opened.cfg.finder.results)
+        end)
+
+        it("opens on a fetched list with nothing in it as it is when signed in, without fetching", function()
+            config.user.username = "me"
+            completed, fetched, stale = {}, true, false
+            picker.unfinished()
+            assert.is_not_nil(opened)
+            assert.are.same({}, order)
+            assert.are.equal(0, updates)
+        end)
+
+        it("opens at once on a stale fetched list, and refreshes it behind the picker", function()
+            config.user.username = "me"
+            completed, fetched, stale = { { slug = "done", completedLanguages = { "python" } } }, true, true
+            picker.unfinished()
+            assert.is_not_nil(opened)
+            assert.are.equal("done", listed_with[1].slug)
+            assert.are.same({ "fetch" }, order, "detected first, or did not refresh the stale list")
+        end)
+
+        it("opens on a stale fetched list with no account, without refreshing it", function()
+            config.user.username = ""
+            completed, fetched, stale = { { slug = "done", completedLanguages = { "python" } } }, true, true
+            picker.unfinished()
+            assert.is_not_nil(opened)
+            assert.are.same({}, order)
+        end)
+    end)
+
+    -- With no completed list every file would look unfinished: a failed fetch, or one dropped
+    -- because the account changed, must say so instead.
+    it("does not open on an empty completed list that could not be fetched, and says why", function()
+        local saved_user = config.user.username
+        config.user.username = "me"
+        completed, fetched = {}, false
+        package.loaded["codewars.cache.completed"].update = function(cb)
+            cb({}, { msg = "The account changed while your completed kata were being fetched." })
+        end
+        picker.unfinished()
+        vim.wait(100, function() return opened ~= nil end)
+        config.user.username = saved_user
+        assert.is_nil(opened, "opened a list judged against nothing")
+        assert.is_nil(listed_with)
+        local warned = vim.tbl_filter(function(s) return s.level == "warn" end, said)
+        assert.are.equal(1, #warned, vim.inspect(said))
+        assert.truthy(warned[1].msg:find("account changed", 1, true), warned[1].msg)
+    end)
+
+    it("says so when nothing is unfinished, and opens no picker", function()
+        entries = {}
+        picker.unfinished()
+        assert.is_nil(opened)
+        local msg = said[#said] and said[#said].msg or ""
+        assert.truthy(msg:find("unfinished", 1, true), msg)
+    end)
+
+    it("is a :CW subcommand listed in :CW help", function()
+        package.loaded["codewars.command"] = nil
+        local cmd = require("codewars.command")
+        assert.are.equal(cmd.unfinished, cmd.commands.unfinished[1])
+        local found = false
+        for _, row in ipairs(cmd._help_lines()) do
+            if vim.inspect(row):find("unfinished", 1, true) then found = true end
+        end
+        package.loaded["codewars.command"] = nil
+        assert.is_true(found, "not in :CW help")
+    end)
+end)

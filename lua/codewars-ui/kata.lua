@@ -23,6 +23,7 @@ local session_cache = require("codewars.cache.session")
 ---@field bufnr integer?
 ---@field winid integer?
 ---@field file Path?
+---@field _picked_file string? solution file the user chose, to open instead of the slug's
 ---@field description cw.ui.Description
 ---@field console cw.ui.Console
 ---@field last_attempt_success boolean
@@ -86,13 +87,17 @@ function Kata:retemplate(op)
     local templates = require("codewars.templates")
     local apply = op == "wrap" and templates.wrap or templates.strip
 
-    local text, reason = apply(self.lang, self:_buffer_text(), self:_template_ctx())
+    local before = self:_buffer_text()
+    local text, reason = apply(self.lang, before, self:_template_ctx())
     if not text then
         log.info(reason)
         return false
     end
 
     self:_set_code(text)
+    if self._file_name then
+        require("codewars.unfinished").retemplated(self._file_name, before, text)
+    end
     -- Forced: the rewrite moved the user's code, so wherever the cursor was
     -- describes a buffer that no longer exists. Both directions end up at the
     -- same question -- where is the code now -- and the buffer answers it.
@@ -100,23 +105,66 @@ function Kata:retemplate(op)
     return true
 end
 
----@return string path, boolean existed
-function Kata:path()
+--- The file the user chose from a list, if it still exists and is for `lang`.
+---@param lang table an entry from config.langs
+---@return string?
+function Kata:_picked_file_name(lang)
+    local picked = self._picked_file
+    if not picked or vim.fn.fnamemodify(picked, ":e") ~= lang.ft then return nil end
+    if not config.storage.home:joinpath(picked):exists() then return nil end
+    return picked
+end
+
+--- The file opened when none is picked: named after the slug, or the id for legacy files.
+---@param lang table an entry from config.langs
+---@return string
+function Kata:_default_file_name(lang)
+    local by_slug = ("%s.%s"):format(self.slug, lang.ft)
+    -- Older versions named the file after the kata's id; find it, or its work never shows.
+    local by_id = self.kata_id and self.kata_id ~= self.slug and ("%s.%s"):format(self.kata_id, lang.ft)
+    if by_id and not config.storage.home:joinpath(by_slug):exists()
+        and config.storage.home:joinpath(by_id):exists() then
+        return by_id
+    end
+    return by_slug
+end
+
+--- Point self.file at this kata's solution in self.lang, seeding the starter when there
+--- is none. A new file's starter goes on record, an existing file's only if none is yet.
+---@return boolean existed
+function Kata:_open_file()
     local lang = utils.get_lang(self.lang)
     assert(lang, "Unsupported language: " .. self.lang)
-    local fn = ("%s.%s"):format(self.slug, lang.ft)
+    self._file_name = self:_picked_file_name(lang) or self:_default_file_name(lang)
+    self.file = config.storage.home:joinpath(self._file_name)
 
-    self.file = config.storage.home:joinpath(fn)
-    local existed = self.file:exists()
+    local unfinished = require("codewars.unfinished")
+    if self.file:exists() then
+        unfinished.opened(self._file_name, function() return self:_starter_code() end, self:_info())
+        return true
+    end
+    local starter = self:_starter_code()
+    self.file:write(starter, "w")
+    unfinished.seeded(self._file_name, starter, self:_info())
+    return false
+end
+
+--- What :CW unfinished records: name and rank (the catalogue lacks some kata).
+---@return cw.KataInfo
+function Kata:_info()
+    return { name = self.name, rank_id = self.rank }
+end
+
+---@return string path, boolean existed
+function Kata:path()
+    local existed = self:_open_file()
 
     local templates = require("codewars.templates")
-    if not existed then
-        self.file:write(self:_starter_code(), "w")
-    elseif templates.is_enabled() and templates.is_configured(self.lang) then
+    if existed and templates.is_enabled() and templates.is_configured(self.lang) then
         -- Seeding is guarded so it can never overwrite work in progress, which
         -- means a configured template silently does nothing on a kata you have
         -- opened before. Say so, rather than letting it read as a broken feature.
-        log.info(("%s already exists — :CW reset to apply your %s template."):format(fn, self.lang))
+        log.info(("%s already exists — :CW reset to apply your %s template."):format(self._file_name, self.lang))
     end
 
     return self.file:absolute(), existed
@@ -257,6 +305,23 @@ function Kata:_abandon_mount()
     self._on_mounted = nil
 end
 
+--- The kata is already open in a tab (one per kata and language), so a second mount goes
+--- there. A picked file that differs from the open one (`<id>.py` vs `<slug>.py`, which only
+--- legacy files cause) is not opened: the warning says so. Close the tab and pick again.
+---@param tabp integer
+---@param open cw.ui.Kata? the instance open in that tab
+function Kata:_go_to_open_tab(tabp, open)
+    pcall(vim.api.nvim_set_current_tabpage, tabp)
+    local lang = utils.get_lang(self.lang)
+    local picked, open_file = self._picked_file, open and open._file_name
+    if picked and open_file and lang and picked ~= open_file
+        and vim.fn.fnamemodify(picked, ":e") == lang.ft then
+        log.warn(("%s is already open in this kata's tab, and you picked %s. "
+            .. "Close the open one to open the other."):format(open_file, picked))
+    end
+    self:_abandon_mount()
+end
+
 function Kata:mount()
     log.info(("Loading kata %s..."):format(self.slug))
 
@@ -276,10 +341,9 @@ function Kata:mount()
             self.slug = kata_data.slug
         end
 
-        local tabp = utils.detect_duplicate_kata(self.slug, self.lang)
+        local tabp, open = utils.detect_duplicate_kata(self.slug, self.lang)
         if tabp then
-            pcall(vim.api.nvim_set_current_tabpage, tabp)
-            self:_abandon_mount()
+            self:_go_to_open_tab(tabp, open)
             return
         end
 
@@ -315,10 +379,9 @@ function Kata:mount()
 
             -- The duplicate check above ran with the REQUESTED language; the
             -- kata may already be open in the one we just fell back to.
-            local dup = utils.detect_duplicate_kata(self.slug, self.lang)
+            local dup, dup_open = utils.detect_duplicate_kata(self.slug, self.lang)
             if dup then
-                pcall(vim.api.nvim_set_current_tabpage, dup)
-                self:_abandon_mount()
+                self:_go_to_open_tab(dup, dup_open)
                 return
             end
         end
@@ -537,7 +600,13 @@ end
 
 function Kata:reset_code()
     if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
-        self:_set_code(self:_starter_code())
+        local starter = self:_starter_code()
+        self:_set_code(starter)
+        -- This starter counts as untouched too, and the earlier ones stay on record:
+        -- the file the list reads keeps its old content until the buffer is saved.
+        if self._file_name then
+            require("codewars.unfinished").reseeded(self._file_name, starter, self:_info())
+        end
         -- Forced: the rewrite moved the user's code out from under wherever
         -- they were standing, so the old position is not a claim on anything.
         self:_cursor_to_end(true)
@@ -587,7 +656,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
             local SESSION_FIELDS = {
                 "lang", "bufnr", "project_id", "solution_id", "setup_code", "example_fixture",
                 "fixture", "package", "test_framework", "language_version", "last_attempt_success",
-                "finalized", "file", "_notify_pending", "_submit_queued",
+                "finalized", "file", "_file_name", "_notify_pending", "_submit_queued",
             }
             local before = {}
             for _, k in ipairs(SESSION_FIELDS) do before[k] = self[k] end
@@ -609,15 +678,7 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 self._notify_pending = 0
                 self._submit_queued = nil
 
-                local lang_info = utils.get_lang(new_lang)
-                assert(lang_info, "Unsupported language: " .. new_lang)
-                local fn = ("%s.%s"):format(self.slug, lang_info.ft)
-                self.file = config.storage.home:joinpath(fn)
-                require("codewars.cache.recent").record(self)
-
-                if not self.file:exists() then
-                    self.file:write(self:_starter_code(), "w")
-                end
+                self:_open_file()
 
                 local path = self.file:absolute()
                 self.bufnr = vim.fn.bufadd(path)
@@ -642,7 +703,11 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
                 log.info(("Switched to %s"):format(new_lang))
             end)
 
-            if not ok then
+            -- Only a switch that went through is where the user now is; a
+            -- rolled-back one leaves them in their old language for :CW recent.
+            if ok then
+                require("codewars.cache.recent").record(self)
+            else
                 log.error("Failed to change language\n" .. tostring(change_err))
                 -- The target buffer may already exist; track it so unmount
                 -- deletes it instead of leaving a listed stray.
@@ -664,13 +729,18 @@ Kata.change_lang = vim.schedule_wrap(function(self, new_lang)
     end)
 end)
 
+---@class cw.ui.KataOpts
+---@field file string? a solution file in storage.home to open, when the kata has several
+
 ---@param slug string
 ---@param lang? string
+---@param opts? cw.ui.KataOpts
 ---@return cw.ui.Kata
-function Kata:new(slug, lang)
+function Kata:new(slug, lang, opts)
     local obj = setmetatable({}, self)
     obj.slug = slug
     obj.lang = lang or config.lang
+    obj._picked_file = opts and opts.file or nil
     obj.last_attempt_success = false
     obj.finalized = false
     return obj

@@ -11,6 +11,35 @@ All notable changes to codewars.nvim are documented here.
   page with nothing new — usually one or two requests instead of the ~290
   of a full build. The full rebuild every `cache.update_interval` remains
   as a safety net. `cache.check_interval` sets how often it looks.
+- `:CW unfinished` lists the kata you started and never submitted, most
+  recently changed first, and opens the one you pick in the language you were
+  writing it in, in the very file you picked: a kata with an older `<id>.py`
+  and a `<slug>.py` is two rows, and each opens its own. A kata is open in
+  one tab per language, so if the other file is already open there you land
+  on that tab and a warning names both files; close the open one to open the
+  other. A kata counts once its solution file no longer holds the starter it
+  was seeded with — one you only opened is left out. Indentation, trailing
+  spaces, blank lines and the final newline do not count as work on it;
+  anything else does, down to a space inside a string. A kata completed in
+  that language is left out too. A solution that is a symlink counts like
+  any other, by the file it points at. To know the starter, the plugin now
+  records a fingerprint of it in `.seeded.json` beside your solutions
+  whenever it seeds one, resets one or toggles a template on an untouched
+  one. A reset adds the new starter and keeps the earlier ones, since the
+  file on disk holds what it held until you save, and an untouched file must not turn up
+  in the list because you reset and then discarded the buffer. Files from
+  before that cannot be checked yet: they are listed, marked
+  `not checked`, until you next open the kata. Rows read like the kata
+  list's: rank in its colour, the kata's name, its language and how long ago
+  you last changed it. A kata the cached catalogue does not hold is named
+  from when you last opened it, then from `:CW recent`, or looked up as
+  `:CW completed` does, in the background so the picker opens at once and
+  fills the rest in. Kata details cached before names were kept have a rank
+  and no name; those are looked up again for this list too. Names past the
+  first 50 keep filling in while the picker is open, one request about every
+  second to stay under Codewars' rate limit and waiting out a refusal before
+  asking again; the `vim.ui.select` list cannot redraw, so those show the
+  next time it opens.
 - `indent` option: one indentation style per language, set in `setup()` the
   way templates are — `indent = { python = 4, c = 4, go = "tabs" }`. Codewars'
   starter code is not consistently indented; the same language arrives with
@@ -68,6 +97,37 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- A language switch that fails and is rolled back no longer puts the language
+  it failed to switch to at the top of `:CW recent`; the history is recorded
+  once the switch has gone through, so it says what the kata is open in.
+- Submitting a kata you had already solved in another language now records
+  the new language as completed straight away. Only a kata missing from the
+  completed cache was recorded, so the solution you had just submitted kept
+  showing in `:CW unfinished` (and `:CW focus` could still treat the kata as
+  unsolved in that language) until the next successful refresh. A refresh
+  already under way when you submit no longer undoes it either: the language
+  stays until Codewars' own list includes it, and the completed list now
+  refreshes one request at a time: asking for it again while a refresh is
+  running waits for that one instead of starting another. A refresh that
+  lands after you signed in as someone else, or after the cache was cleared
+  by a cookie change, is dropped rather than written over the cache that is
+  there now. Looking up kata details (the names and ranks in `:CW completed`
+  and `:CW unfinished`) follows the same rule, and adds what it found to the
+  cache as it is when it finishes instead of writing back what it read when
+  it started, so two lookups running at once no longer erase each other's
+  names. `:CW unfinished` with no completed list to judge by says so instead
+  of listing the kata you have solved: when fetching the list failed, and
+  when it does not know who you are yet. Your username is only detected when
+  `:CW menu` opens, so run first it now detects it the way the menu does; with
+  no cookie saved, or one Codewars no longer accepts, it asks you to sign in
+  with `:CW cookie`. A completed list that was ever fetched in full is used as
+  it is, stale or with no kata in it, signed in or not; the kata a submit
+  marks before any list was fetched are not a list, so it fetches first. If
+  the cache directory cannot be written (read-only, or full), the list that
+  was fetched is still the one used and a warning says it could not be
+  saved, instead of reading back what was on disk; the same for the kata
+  names looked up, which stay in memory for the open picker, with one
+  warning for the whole lookup, and are written once a write lands.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

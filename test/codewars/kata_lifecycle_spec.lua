@@ -11,9 +11,10 @@ describe("Kata mount lifecycle", function()
         user = { keys = { toggle = { "q" } }, testcase = { open_on_enter = false } },
         lang = "python",
     }
+    local warnings = {}
     package.loaded["codewars.logger"] = {
         info = function() end,
-        warn = function() end,
+        warn = function(msg) warnings[#warnings + 1] = tostring(msg) end,
         error = function() end,
         err = function() end,
         debug = function() end,
@@ -31,10 +32,10 @@ describe("Kata mount lifecycle", function()
         buf_set_lines = function() end,
     }
 
-    local duplicate_tabpage = nil
+    local duplicate_tabpage, duplicate_kata = nil, nil
     package.loaded["codewars.utils"] = {
         get_lang = function(slug) return { slug = slug, ft = "py" } end,
-        detect_duplicate_kata = function() return duplicate_tabpage end,
+        detect_duplicate_kata = function() return duplicate_tabpage, duplicate_kata end,
         exec_hooks = function() end,
     }
 
@@ -58,7 +59,8 @@ describe("Kata mount lifecycle", function()
     local Kata = require("codewars-ui.kata")
 
     before_each(function()
-        duplicate_tabpage = nil
+        duplicate_tabpage, duplicate_kata = nil, nil
+        warnings = {}
         kata_response = { data = { id = "abc", slug = "valid-braces", languages = { "python" } } }
         train_response = { err = { msg = "train failed" } }
     end)
@@ -134,5 +136,55 @@ describe("Kata mount lifecycle", function()
         kata_response = { err = { status = 404 } }
         local k = Kata:new("valid-braces", "python")
         assert.has_no.errors(function() k:mount() end)
+    end)
+
+    -- One tab per kata and language: picking another of its files from :CW unfinished
+    -- opens no second tab, and must not look as if it opened that file.
+    describe("mounted onto the tab the kata is already open in", function()
+        local open_tab, tabs_before
+
+        before_each(function()
+            vim.cmd("tabnew")
+            open_tab = vim.api.nvim_get_current_tabpage()
+            vim.cmd("tabfirst")
+            tabs_before = #vim.api.nvim_list_tabpages()
+            duplicate_tabpage = open_tab
+            duplicate_kata = { slug = "valid-braces", lang = "python", _file_name = "valid-braces.py" }
+        end)
+
+        after_each(function()
+            pcall(vim.cmd, "silent! tabonly!")
+        end)
+
+        it("warns, naming both files, when the picked file is not the one open", function()
+            local k = Kata:new("valid-braces", "python", { file = "5264d2b162488dc400000001.py" })
+            k:mount()
+            assert.are.equal(open_tab, vim.api.nvim_get_current_tabpage())
+            assert.are.equal(tabs_before, #vim.api.nvim_list_tabpages(), "opened a second tab")
+            assert.are.equal(1, #warnings, vim.inspect(warnings))
+            assert.truthy(warnings[1]:find("valid-braces.py", 1, true), warnings[1])
+            assert.truthy(warnings[1]:find("5264d2b162488dc400000001.py", 1, true), warnings[1])
+            assert.truthy(warnings[1]:lower():find("close", 1, true), warnings[1])
+        end)
+
+        it("says nothing when the picked file is the one open", function()
+            local k = Kata:new("valid-braces", "python", { file = "valid-braces.py" })
+            k:mount()
+            assert.are.equal(open_tab, vim.api.nvim_get_current_tabpage())
+            assert.are.same({}, warnings)
+        end)
+
+        it("says nothing when no file was picked", function()
+            local k = Kata:new("valid-braces", "python")
+            k:mount()
+            assert.are.equal(open_tab, vim.api.nvim_get_current_tabpage())
+            assert.are.same({}, warnings)
+        end)
+
+        it("says nothing about a picked file that is not for this language", function()
+            local k = Kata:new("valid-braces", "python", { file = "valid-braces.js" })
+            k:mount()
+            assert.are.same({}, warnings)
+        end)
     end)
 end)

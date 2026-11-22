@@ -52,6 +52,8 @@ end
 local function fetch_user_data(menu, cb, opts)
     local user_api = require("codewars.api.user")
     local profile_cache = require("codewars.cache.profile")
+    -- Shared with whatever needs the account before the menu runs (:CW unfinished).
+    local identity = require("codewars.identity")
 
     -- cb redraws, so calling it per update is how progressively better data
     -- reaches the screen.
@@ -59,42 +61,8 @@ local function fetch_user_data(menu, cb, opts)
         if cb then vim.schedule(cb) end
     end
 
-    --- Only when the user has not chosen one themselves. Auto-detection is
-    --- never persisted, so it has to be re-applied on every launch -- which
-    --- is why the cache carries the language and not just the name.
-    local function apply_lang(lang)
-        if config.lang_persisted or type(lang) ~= "string" or lang == "" then
-            return
-        end
-        config.lang = lang
-        config.user.lang = lang
-    end
-
-    --- A reply is only allowed to write if the identity it was issued under is
-    --- still the current one.
-    ---
-    --- profile.save() stamps a record with whatever cookie is live when the
-    --- reply LANDS, while the request closed over the name it was ISSUED for.
-    --- Without this, signing into another account while a stats call is in
-    --- flight rebinds the old name to the new session's fingerprint -- the
-    --- ccb634e hazard, reached through the one path the fingerprint cannot
-    --- see. The name is checked too: a rename healed mid-flight keeps the
-    --- cookie, so the fingerprint alone would not notice.
-    ---@param name string? the username the request was issued for
-    local function still_current(name)
-        local at_issue = profile_cache.fingerprint()
-        return function()
-            if profile_cache.fingerprint() ~= at_issue then
-                log.debug("dropping a reply from a previous session")
-                return false
-            end
-            if name and config.user.username ~= name then
-                log.debug("dropping a reply for a name that is no longer ours")
-                return false
-            end
-            return true
-        end
-    end
+    local apply_lang = identity.apply_lang
+    local still_current = identity.still_current
 
     local detect
 
@@ -115,11 +83,11 @@ local function fetch_user_data(menu, cb, opts)
             return false
         end
         scraping = true
-        local ours = still_current()
-        user_api.get_current(function(profile, err)
+        identity.scrape(function(profile, err)
             scraping = false
-            if not ours() then return end
             on_reply(profile, err)
+        end, function()
+            scraping = false
         end)
         return true
     end
@@ -172,12 +140,7 @@ local function fetch_user_data(menu, cb, opts)
                 end
                 return done()
             end
-            config.user.username = profile.username
-            apply_lang(profile.current_language)
-            profile_cache.update({
-                username = profile.username,
-                lang = profile.current_language,
-            })
+            identity.adopt(profile.username, profile.current_language)
             fetch_stats(profile.username, false)
         end)
     end
@@ -243,12 +206,7 @@ local function fetch_user_data(menu, cb, opts)
             -- is served as this account's.
             log.debug("identity changed under a live cookie, refreshing")
             require("codewars.cache.cookie").identity_changed()
-            config.user.username = profile.username
-            apply_lang(profile.current_language)
-            profile_cache.update({
-                username = profile.username,
-                lang = profile.current_language,
-            })
+            identity.adopt(profile.username, profile.current_language)
             menu._stats = nil
             fetch_stats(profile.username, false)
         end)

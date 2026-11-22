@@ -80,6 +80,28 @@ describe("utils", function()
         end)
     end)
 
+    describe("detect_duplicate_kata", function()
+        local utils = require("codewars.utils")
+        local saved_state
+
+        before_each(function() saved_state = _Cw_state end)
+        after_each(function() _Cw_state = saved_state end)
+
+        it("returns the tab and the kata already open for that slug and language", function()
+            local open = { slug = "multiply", lang = "python", winid = vim.api.nvim_get_current_win() }
+            local other = { slug = "multiply", lang = "java", winid = vim.api.nvim_get_current_win() }
+            _Cw_state = { katas = { other, open } }
+            local tabp, found = utils.detect_duplicate_kata("multiply", "python")
+            assert.are.equal(vim.api.nvim_get_current_tabpage(), tabp)
+            assert.are.equal(open, found)
+        end)
+
+        it("returns nothing when the kata is not open in that language", function()
+            _Cw_state = { katas = { { slug = "multiply", lang = "java", winid = vim.api.nvim_get_current_win() } } }
+            assert.is_nil(utils.detect_duplicate_kata("multiply", "python"))
+        end)
+    end)
+
     describe("handle_res", function()
         local api_utils = require("codewars.api.utils")
 
