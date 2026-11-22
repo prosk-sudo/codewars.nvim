@@ -260,6 +260,128 @@ describe("cache.backup, a file that was created and then failed", function()
         end)
     end)
 
+    -- The close can fail too, and then the descriptor is gone: what was written cannot be
+    -- emptied through it. The path is unlinked; if that fails, it is reopened (no create, no
+    -- truncate), checked to be the very file that was created, and emptied.
+    describe("when the close of a created file fails", function()
+        local stash_id = "0123456789abcdef01234567"
+
+        --- The close of the descriptor that created `path` fails (after really closing it). The
+        --- reopen that follows is made to fail in the way `second` says: "open", "identity", "truncate".
+        local function close_fails(path, second)
+            local opens, first, again = 0, nil, nil
+            uv.fs_open = function(p, flags, mode)
+                local fd, err, name = real_open(p, flags, mode)
+                if fd and p == path and is_write_open(flags) then
+                    opens = opens + 1
+                    if opens == 1 then
+                        first = fd
+                    elseif second == "open" then
+                        real_close(fd)
+                        return nil, "EACCES: permission denied: " .. p, "EACCES"
+                    else
+                        again = fd
+                    end
+                end
+                return fd, err, name
+            end
+            uv.fs_close = function(fd)
+                local was_first = fd == first
+                if was_first then first = nil end
+                if fd == again then again = nil end
+                local ok = real_close(fd)
+                if was_first then return nil, "EIO: i/o error on close" end
+                return ok
+            end
+            uv.fs_fstat = function(fd)
+                local st = real_fstat(fd)
+                if st and fd == again and second == "identity" then st.ino = st.ino + 1 end
+                return st
+            end
+            uv.fs_ftruncate = function(fd, ...)
+                if fd == again and second == "truncate" then return nil, "EIO: i/o error" end
+                return real_ftruncate(fd, ...)
+            end
+        end
+
+        local function unlink_fails(path)
+            uv.fs_unlink = function(p)
+                if p == path then return nil, "EIO: i/o error: " .. p, "EIO" end
+                return real_unlink(p)
+            end
+        end
+
+        it("empties the file by reopening it when it cannot be unlinked, and says so", function()
+            close_fails(file)
+            unlink_fails(file)
+
+            local ok, err = cache_utils.write_json(P:new(file), fresh, { quiet = true })
+
+            uv.fs_open, uv.fs_close = real_open, real_close
+            assert.is_false(ok)
+            assert.matches("on close", err)
+            assert.matches(vim.pesc(file), err)
+            assert.matches("was emptied", err)
+            assert.equals(0, uv.fs_stat(file).size, "the file that was reported as not written was left populated")
+            assert.is_nil(cache_utils.read_json(P:new(file)))
+        end)
+
+        it("leaves a stash that was reported as not saved unreadable", function()
+            local stash = require("codewars.cache.stash").for_kind("t-stash-")
+            local path = require("codewars.cache.utils").cache_file("t-stash-" .. stash_id .. ".json"):absolute()
+            close_fails(path)
+            unlink_fails(path)
+
+            local saved = stash.save({ id = stash_id, code = "unsaved work" })
+
+            uv.fs_open, uv.fs_close = real_open, real_close
+            assert.is_nil(saved, "a stash whose close failed was reported as saved")
+            assert.is_nil(stash.get(stash_id), "a stash reported as not saved can still be loaded")
+        end)
+
+        for _, second in ipairs({ "open", "identity", "truncate" }) do
+            it(("names the file to delete by hand when it cannot be emptied either (reopen %s)"):format(second), function()
+                close_fails(file, second)
+                unlink_fails(file)
+
+                local ok, err = cache_utils.write_json(P:new(file), fresh, { quiet = true })
+
+                uv.fs_open, uv.fs_close, uv.fs_fstat, uv.fs_ftruncate = real_open, real_close, real_fstat, real_ftruncate
+                assert.is_false(ok)
+                assert.matches("on close", err)
+                assert.matches(vim.pesc(file), err)
+                assert.matches("could not be emptied", err)
+                assert.matches("by hand", err)
+            end)
+        end
+
+        it("leaves no file when it can be unlinked, and says nothing about a clean-up", function()
+            close_fails(file)
+
+            local ok, err = cache_utils.write_json(P:new(file), fresh, { quiet = true })
+
+            uv.fs_open, uv.fs_close = real_open, real_close
+            assert.is_false(ok)
+            assert.matches("on close", err)
+            assert.is_nil(err:match("could not be removed"))
+            assert.is_nil(uv.fs_lstat(file))
+        end)
+
+        it("is the same for a fresh backup: emptied, and never recovered", function()
+            spit(file, vim.json.encode({ old = string.rep("o", 100) }))
+            close_fails(bak)
+            unlink_fails(bak)
+
+            local ok, err = cache_utils.write_json(P:new(file), fresh, { quiet = true })
+
+            uv.fs_open, uv.fs_close = real_open, real_close
+            assert.is_false(ok)
+            assert.matches(vim.pesc(bak), err)
+            assert.matches("was emptied", err)
+            assert.equals(0, uv.fs_stat(bak).size)
+        end)
+    end)
+
     describe("a file that was already there", function()
         it("is not unlinked when the stat of it fails during an in-place write", function()
             spit(file, original)

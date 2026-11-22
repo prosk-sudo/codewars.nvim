@@ -228,7 +228,12 @@ end
 --- and then the descriptor is closed and the path unlinked. If the unlink fails the
 --- file is already empty, which never decodes, so a partial cache or backup cannot
 --- be recovered from; the failure of the clean-up is added to the error, naming the
---- path. A file that was already there is never unlinked because a write to it
+--- path. If the close itself fails the descriptor is gone and the file is full: the
+--- path is unlinked, and if that fails too it is reopened (no create, no truncate),
+--- checked to be the very file that was created (a regular file, same inode and
+--- device), and emptied; if that cannot be done the error says to delete it by hand.
+--- The failure that is reported is always the write's own, with the clean-up
+--- appended. A file that was already there is never unlinked because a write to it
 --- failed.
 ---@param path string
 ---@param data string
@@ -265,6 +270,9 @@ local function write_file(path, data, opts)
     if not ok and opts.create then
         local removed, unlink_err, name = uv.fs_unlink(path)
         if not removed and name ~= "ENOENT" then
+            -- Not emptied through the descriptor (it was closed, or could not): by the path,
+            -- and only if it is still the file that was created.
+            if touched and not emptied then emptied = write_file(path, "", { identity = stat }) end
             local state = "it is empty"
             if touched then
                 state = emptied and "was emptied" or "could not be emptied; delete it by hand"
