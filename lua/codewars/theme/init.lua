@@ -103,14 +103,133 @@ local highlights = {
     codewars_lang_cfml = { fg = "#ED2CD6" },        -- CFML magenta
 }
 
+local colors
+
+--- A `link` override replaces the default spec (merged, it would be link and color).
+--- With style keys it takes the target's fg and ctermfg (explicit ones win), never its bg.
+---@param name string a key of `highlights`
+---@param overrides table the cleaned `theme`
+---@param seen table<string, true> groups already on the link chain
+---@return table
+local function definition(name, overrides, seen)
+    local spec, override = highlights[name], overrides[name]
+    if not override then
+        return spec
+    end
+    if not override.link then
+        return vim.tbl_deep_extend("force", spec, override)
+    end
+
+    local style = {}
+    for key, value in pairs(override) do
+        if key ~= "link" then
+            style[key] = value
+        end
+    end
+    if next(style) == nil then
+        return { link = override.link }
+    end
+    local base = colors(override.link, overrides, seen)
+    return vim.tbl_extend("force", { fg = base.fg, ctermfg = base.ctermfg }, style)
+end
+
+--- The (fg, ctermfg) `target` has once apply() has run. Links are walked by hand, since
+--- apply() order is unspecified: link-only overrides and other groups' links are followed,
+--- any other group gives the fg it ends up with, and one already on the chain gives none.
+---@param target string
+---@param overrides table the cleaned `theme`
+---@param seen table<string, true> groups already on the link chain
+---@return table
+colors = function(target, overrides, seen)
+    -- Lowered: names are case-insensitive and `highlights` keys are lowercase.
+    -- tostring: a non-string `link` is Neovim's to reject.
+    local key = tostring(target):lower()
+    if seen[key] then
+        return {}
+    end
+    local chain = vim.tbl_extend("force", seen, { [key] = true })
+
+    if highlights[key] then
+        local def = definition(key, overrides, chain)
+        if def.link then
+            return colors(def.link, overrides, chain)
+        end
+        return { fg = def.fg, ctermfg = def.ctermfg }
+    end
+
+    -- Not ours: read as it is now (apply() reruns after `:colorscheme`). A link
+    -- wins over the group's own fg, as in Neovim.
+    local group = vim.api.nvim_get_hl(0, { name = target, link = true })
+    if group.link then
+        return colors(group.link, overrides, chain)
+    end
+    return { fg = group.fg, ctermfg = group.ctermfg }
+end
+
+--- Keys that only control how `nvim_set_hl` sets a group, not what it looks like.
+--- `theme` ignores them: an override always applies.
+local IGNORED_KEYS = { "default", "force" }
+
+--- A copy of `theme` for the known groups, minus the IGNORED_KEYS. Warns once
+--- per group that had any.
+---@param overrides table the user's `theme`
+---@return table
+local function clean_overrides(overrides)
+    local cleaned, dropped_by_group = {}, {}
+    for name in pairs(highlights) do
+        local override = overrides[name]
+        if type(override) ~= "table" then
+            cleaned[name] = override
+        else
+            local copy, dropped = vim.deepcopy(override), {}
+            for _, key in ipairs(IGNORED_KEYS) do
+                if copy[key] ~= nil then
+                    copy[key] = nil
+                    table.insert(dropped, "`" .. key .. "`")
+                end
+            end
+            cleaned[name] = copy
+            if #dropped > 0 then
+                dropped_by_group[name] = dropped
+            end
+        end
+    end
+
+    local names = vim.tbl_keys(dropped_by_group)
+    table.sort(names)
+    for _, name in ipairs(names) do
+        local dropped = dropped_by_group[name]
+        local verb = #dropped == 1 and "is" or "are"
+        require("codewars.logger").warn(
+            ("theme.%s: %s %s ignored; theme overrides always apply"):format(name, table.concat(dropped, " and "), verb)
+        )
+    end
+    return cleaned
+end
+
+---@param overrides table the cleaned `theme`
+local function apply(overrides)
+    for name in pairs(highlights) do
+        vim.api.nvim_set_hl(0, name, definition(name, overrides, { [name] = true }))
+    end
+end
+
 function theme.setup()
     local config = require("codewars.config")
-    local overrides = config.user.theme or {}
+    -- Cleaned once so the ColorScheme re-apply never warns again.
+    local overrides = clean_overrides(config.user.theme or {})
+    apply(overrides)
 
-    for name, val in pairs(highlights) do
-        local hl = vim.tbl_deep_extend("force", val, overrides[name] or {})
-        vim.api.nvim_set_hl(0, name, hl)
-    end
+    -- `:colorscheme` clears our groups too, hence the autocmd; clear = true keeps
+    -- a second setup() from stacking another.
+    local group = vim.api.nvim_create_augroup("codewars_theme", { clear = true })
+    vim.api.nvim_create_autocmd("ColorScheme", {
+        group = group,
+        desc = "codewars.nvim: re-apply highlights after a colorscheme change",
+        callback = function()
+            apply(overrides)
+        end,
+    })
 end
 
 --- Unranked (beta) kata carry no numeric rank — JSON null upstream, so

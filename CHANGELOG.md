@@ -5,6 +5,12 @@ All notable changes to codewars.nvim are documented here.
 ## [Unreleased]
 
 ### Added
+- `theme` overrides accept `link = "Group"` to take a group's color from your
+  colorscheme, from #35: `theme = { codewars_breadcrumb = { link = "Comment" } }`.
+  A link on its own replaces the default for that group instead of being
+  merged into it. With style keys alongside, `{ link = "Title", bold = true }`
+  gives that group's foreground color plus the styles, since a link cannot
+  carry styles. The default colors are unchanged.
 - The kata list keeps itself current without rebuilding. Once a day, in the
   background, it reads Codewars' "Newest" listing and merges in kata that
   are new or whose name, rank or languages changed, stopping at the first
@@ -51,6 +57,11 @@ All notable changes to codewars.nvim are documented here.
   back into the kata you opened last, in the language you last used; one that
   is still open in a tab is brought forward. Opens are recorded locally (last
   50, per kata and language).
+- `theme` overrides now ignore the `default` and `force` keys, with a warning
+  naming the group. They used to be passed on to Neovim, where `default` kept
+  whatever definition a group already had, so an override could silently not
+  apply, and a link to such a group could show another color than the group
+  itself. An override now always applies.
 
 ### Changed
 - `:CW completed` lists your most recently completed kata first. A new
@@ -68,6 +79,11 @@ All notable changes to codewars.nvim are documented here.
   session.
 
 ### Fixed
+- `:colorscheme` no longer wipes the codewars colors, from #35. Switching
+  colorscheme clears every highlight group, and the plugin only set its own
+  once at startup, so the header, ranks and language icons lost their colors
+  until you restarted Neovim. They are now set again after every colorscheme
+  change, with your `theme` overrides applied.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

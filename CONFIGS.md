@@ -343,6 +343,22 @@ theme = {
 },
 ```
 
+To follow a group from your colorscheme instead of a fixed color, set `link`.
+A link on its own replaces the default for that group. Add `bold`, `italic` or
+other style keys and the group takes that group's foreground color with those
+styles on top. Either way it follows the colorscheme when you switch.
+
+```lua
+theme = {
+    codewars_breadcrumb = { link = "Comment" },
+    codewars_header = { link = "Title", bold = true },
+},
+```
+
+Highlights are re-applied after every `:colorscheme`, overrides included. The
+`default` and `force` keys are ignored in theme overrides (with a warning): an
+override always applies.
+
 ## Icons
 
 Override Nerd Font icons. See `lua/codewars/icons.lua` for all defaults.
