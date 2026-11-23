@@ -1,12 +1,16 @@
 local api_utils = require("codewars.api.utils")
+local log = require("codewars.logger")
 
 ---@class cw.Api.Search
 local search = {}
 
 --- Fetch a single page of kata search results.
+---
+--- `has_more` is false for a page with no result blocks. A page with blocks that parses to none
+--- is `err` with `err.drift`; a partial parse keeps its results and reports `dropped`.
 ---@param opts table { language?, query?, rank?, order?, cancelled?: fun(): boolean, retry_rate_limited?: boolean }
 ---@param page integer
----@param cb function callback(results[], has_more, err?)
+---@param cb function callback(results[], has_more, err?, dropped?: integer)
 function search.fetch_page(opts, page, cb)
     local lang = opts.language or require("codewars.config").lang
     local query = opts.query or ""
@@ -59,9 +63,12 @@ function search.fetch_page(opts, page, cb)
 
             -- The page is HTML, so handle_res hands back the raw body.
             local body = type(res) == "string" and res or ""
-            local results = search.parse_html(body)
+            local results, drift, dropped = search.parse_html(body)
+            if drift then
+                return cb({}, false, drift)
+            end
 
-            cb(results, #results > 0)
+            cb(results, #results > 0, nil, dropped)
         end,
     })
 end
@@ -74,34 +81,45 @@ function search.kata(opts, cb)
     local max_pages = opts.max_pages or 10
     local all_results = {}
     local current_page = 0
+    local dropped = 0
 
     -- If no rank filter specified, include all ranks (8 kyu through 1 kyu)
     if not opts.rank then
         opts.rank = { -8, -7, -6, -5, -4, -3, -2, -1 }
     end
 
+    --- One warning for the whole search, not one per page.
+    local function finish(err)
+        if dropped > 0 then
+            log.warn(("%d kata on the search pages could not be read and were left out"
+                .. " — the site markup may have changed"):format(dropped))
+        end
+        cb(all_results, err)
+    end
+
     local function fetch_next()
         if current_page >= max_pages then
-            return cb(all_results)
+            return finish()
         end
 
-        search.fetch_page(opts, current_page, function(results, has_more, err)
+        search.fetch_page(opts, current_page, function(results, has_more, err, page_dropped)
             -- Callers already destructure (results, err); dropping it here
             -- turned a rate-limited or expired-session search into a bare
             -- "No kata found", which is the same lie the cache build used
             -- to tell.
             if err then
-                return cb(all_results, err)
+                return finish(err)
             end
 
             vim.list_extend(all_results, results)
+            dropped = dropped + (page_dropped or 0)
 
             if has_more and current_page < max_pages - 1 then
                 current_page = current_page + 1
                 -- Small delay to avoid rate limiting
                 vim.defer_fn(fetch_next, 100)
             else
-                cb(all_results)
+                finish()
             end
         end)
     end
@@ -109,32 +127,184 @@ function search.kata(opts, cb)
     fetch_next()
 end
 
---- Parse the search results HTML to extract kata entries.
+--- A result block: tags `first` to `last` of a page's tag list, and the page text they index
+--- into (see api.htmltags). Fields come from parsed tags and attributes; only the satisfaction
+--- phrase is matched by pattern, over the block's text.
+---@class cw.SearchBlock
+---@field tags cw.HtmlTag[]
+---@field text string
+---@field first integer
+---@field last integer
+
+--- The kata a title link's href points at: `/kata/<id>` with an optional query or fragment,
+--- nothing deeper. `id` must be a whole 24-hex id; `/kata/<id>/train/python` is a button.
+---@param href string?
+---@return string? id
+local function title_id(href)
+    local id, rest = (href or ""):match("^/kata/(" .. api_utils.HEX24 .. ")(.*)$")
+    if not id then return nil end
+    if rest ~= "" and not rest:find("^[?#]") then return nil end
+    return id
+end
+
+---@param tags cw.HtmlTag[]
+---@param from integer
+---@param last integer
+---@param name string
+---@return integer?
+local function next_named(tags, from, last, name)
+    for i = from + 1, last do
+        if tags[i].name == name then return i end
+    end
+end
+
+--- The text between `tags[from]` and the later `tags[to]`, with the tags left out.
+---@param block cw.SearchBlock
+---@param from integer
+---@param to integer
+---@return string
+local function visible_text(block, from, to)
+    local tags, text = block.tags, block.text
+    local parts, at = {}, tags[from].finish + 1
+    for i = from + 1, to - 1 do
+        parts[#parts + 1] = text:sub(at, tags[i].start - 1)
+        at = tags[i].finish + 1
+    end
+    parts[#parts + 1] = text:sub(at, tags[to].start - 1)
+    return table.concat(parts)
+end
+
+--- The text of the element opened by `tags[i]`, decoded and trimmed. nil unless the next tag of
+--- its name in the block is its closing tag.
+---@param block cw.SearchBlock
+---@param i integer
+---@return string?
+local function element_text(block, i)
+    local close = next_named(block.tags, i, block.last, block.tags[i].name)
+    if not close or not block.tags[close].close then return nil end
+    local unescape = require("codewars.api.page").unescape
+    return (unescape(visible_text(block, i, close)):match("^%s*(.-)%s*$"))
+end
+
+--- The id and name of a block's title link: the first `<a>` with a plain `/kata/<id>` href and
+--- some text; links without text, such as language icons, are skipped. nil when none: block dropped.
+---@param block cw.SearchBlock
+---@return string? id
+---@return string? name
+local function read_title_link(block)
+    for i = block.first, block.last do
+        local tag = block.tags[i]
+        local id = tag.name == "a" and not tag.close and title_id(tag.attrs.href)
+        if id then
+            local name = element_text(block, i)
+            if name and name ~= "" then return id, name end
+        end
+    end
+end
+
+--- A result's rank, `8 kyu`: the text of the first span that is exactly a number and a word.
+---@param block cw.SearchBlock
+---@return string?
+local function read_rank(block)
+    for i = block.first, block.last do
+        local tag = block.tags[i]
+        if tag.name == "span" and not tag.close then
+            local rank = (element_text(block, i) or ""):match("^%d+ %w+$")
+            if rank then return rank end
+        end
+    end
+end
+
+---@param block cw.SearchBlock
+---@return string[]
+local function read_languages(block)
+    local languages = {}
+    for i = block.first, block.last do
+        local language = block.tags[i].attrs["data-language"]
+        if language and language ~= "" then languages[#languages + 1] = language end
+    end
+    return languages
+end
+
+local BLOCK_CLASS = "list-item-kata"
+
+--- Whether `tag` is an opening tag with `list-item-kata` as a whole class (not `not-list-item-kata`).
+---@param tag cw.HtmlTag
+---@return boolean
+local function opens_block(tag)
+    local class = not tag.close and tag.attrs.class
+    return class and (" " .. class .. " "):find("%s" .. BLOCK_CLASS:gsub("%-", "%%-") .. "%s") ~= nil
+end
+
+--- The tag that closes the element opened by `tags[first]`: where the open/close count of its
+--- name returns to zero (void and `<name/>` tags do not count). nil when the page ends first.
+---@param tags cw.HtmlTag[]
+---@param first integer
+---@return integer?
+local function closing_tag_of(tags, first)
+    local name, depth = tags[first].name, 1
+    for i = first + 1, #tags do
+        local tag = tags[i]
+        if tag.name == name and not tag.empty then
+            depth = depth + (tag.close and -1 or 1)
+            if depth == 0 then return i end
+        end
+    end
+end
+
+--- Cut a results page into result blocks: each runs from its `list-item-kata` tag to its own
+--- closing tag, never to the next result or a fixed length, which could swallow a footer's links.
+--- A block with no closing tag is counted as left out, and so is each later block with contents.
 ---@param html string
----@return table[]
+---@return cw.SearchBlock[] blocks
+---@return integer unclosed blocks left out
+local function split_blocks(html)
+    local tags, text = require("codewars.api.htmltags").scan(html)
+    local blocks, unclosed, broken = {}, 0, false
+    local i = 1
+    while i <= #tags do
+        local tag = tags[i]
+        if not opens_block(tag) then
+            i = i + 1
+        elseif tag.empty then
+            -- No contents, so no title: a block, and an unreadable one.
+            blocks[#blocks + 1] = { tags = tags, text = text, first = i, last = i }
+            i = i + 1
+        elseif broken then
+            unclosed, i = unclosed + 1, i + 1
+        else
+            local last = closing_tag_of(tags, i)
+            if last then
+                blocks[#blocks + 1] = { tags = tags, text = text, first = i, last = last }
+                i = last + 1
+            else
+                unclosed, broken, i = unclosed + 1, true, i + 1
+            end
+        end
+    end
+    return blocks, unclosed
+end
+
+--- Parse the search results HTML to extract kata entries.
+---
+--- Scope: reads Codewars' kata-search markup (see api.htmltags), not general HTML5. A result it
+--- cannot read counts as dropped, and a page where none can be read is drift, so unreadable
+--- markup is reported instead of silently shortening the list.
+---@param html string
+---@return table[] results
+---@return cw.err? err `err.drift` when result blocks exist but none could be read
+---@return integer dropped result blocks left out
 function search.parse_html(html)
     local results = {}
 
-    -- Split by list-item-kata blocks
-    local blocks = {}
-    local pos = 1
-    while true do
-        local s = html:find("list%-item%-kata", pos)
-        if not s then break end
-        local e = html:find("list%-item%-kata", s + 20)
-        if e then
-            table.insert(blocks, html:sub(s, e - 1))
-        else
-            table.insert(blocks, html:sub(s, math.min(#html, s + 3000)))
-        end
-        pos = e or #html + 1
-    end
+    local blocks, unclosed = split_blocks(html)
+    local total = #blocks + unclosed
 
     for _, block in ipairs(blocks) do
         local entry = {}
 
         -- Rank
-        local rank_name = block:match("<span>(%d+ %w+)</span>")
+        local rank_name = read_rank(block)
         if rank_name then
             entry.rank_name = rank_name
             local num = tonumber(rank_name:match("(%d+)"))
@@ -146,25 +316,25 @@ function search.parse_html(html)
         end
 
         -- Name + slug (ID)
-        local slug, name = block:match('<a[^>]*href="/kata/([a-f0-9]+)">([^<]+)</a>')
+        local slug, name = read_title_link(block)
         if slug and name then
             entry.id = slug
             entry.slug = slug
-            -- Scraped HTML: "Python&#39;s" is how an apostrophe arrives.
-            entry.name = require("codewars.api.page").unescape(name:match("^%s*(.-)%s*$"))
+            -- Already entity-decoded by read_title_link.
+            entry.name = name
         end
 
         -- Satisfaction from tooltip: 'Satisfaction Rating: 89% of users...'
-        local sat_pct = block:match("Satisfaction Rating: (%d+)%%")
+        -- Matched on the block's text, which keeps ordinary tags and attributes (the tooltip is an
+        -- attribute). Only the runs htmltags.scan skips are blanked: comments, raw-text elements, templates.
+        local first, last = block.tags[block.first], block.tags[block.last]
+        local sat_pct = block.text:sub(first.start, last.finish):match("Satisfaction Rating: (%d+)%%")
         if sat_pct then
             entry.satisfaction = tonumber(sat_pct)
         end
 
         -- Supported languages from data-language attributes
-        local languages = {}
-        for lang in block:gmatch('data%-language="([^"]+)"') do
-            table.insert(languages, lang)
-        end
+        local languages = read_languages(block)
         if #languages > 0 then
             entry.languages = languages
         end
@@ -174,7 +344,16 @@ function search.parse_html(html)
         end
     end
 
-    return results
+    local dropped = total - #results
+    if total > 0 and #results == 0 then
+        return results, {
+            drift = true,
+            blocks = total,
+            msg = ("Codewars' search page lists %d kata but none could be read"
+                .. " — the site markup may have changed."):format(total),
+        }, dropped
+    end
+    return results, nil, dropped
 end
 
 return search

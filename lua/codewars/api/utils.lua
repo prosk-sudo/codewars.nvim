@@ -1,6 +1,7 @@
 local curl = require("plenary.curl")
 local log = require("codewars.logger")
 local headers = require("codewars.api.headers")
+local httpdate = require("codewars.api.httpdate")
 local urls = require("codewars.api.urls")
 
 ---@class cw.err
@@ -76,6 +77,22 @@ function utils.header_value(hdrs, name)
     return nil
 end
 
+--- Seconds to wait, from a `Retry-After` value: seconds or an HTTP-date (RFC 9110 10.2.3).
+--- A date is counted from `now`; one already past is 0.
+---@param raw string? the header value
+---@param now? integer epoch seconds, default os.time()
+---@return number? seconds nil when the value is neither form
+function utils.parse_retry_after(raw, now)
+    if type(raw) ~= "string" then return nil end
+    local seconds = tonumber(raw)
+    if seconds then return seconds end
+
+    now = now or os.time()
+    local at = httpdate.parse(raw, now)
+    if not at then return nil end
+    return math.max(0, at - now)
+end
+
 utils.MAX_BACKOFF_MS = 60000
 utils.BASE_BACKOFF_MS = 500
 utils.MAX_EXP_BACKOFF_MS = 8000
@@ -105,8 +122,7 @@ function utils.retry_delay_ms(err, attempt)
         utils.MAX_EXP_BACKOFF_MS
     )
 
-    -- The server sent Retry-After in a form we could not read (RFC allows an
-    -- HTTP-date, not just seconds). It asked for a wait, so start from the
+    -- Retry-After was unreadable but asked for a wait, so start from the
     -- longest backoff rather than the shortest.
     if err and err.retry_after_raw and not after then
         base = utils.MAX_EXP_BACKOFF_MS
@@ -273,10 +289,8 @@ function utils.handle_res(out)
             code = 0,
             status = 429,
             rate_limited = true,
-            retry_after = tonumber(retry_after),
-            -- Kept even when unparseable (HTTP-date form) so the backoff can
-            -- tell "server asked for a wait we could not read" apart from
-            -- "server said nothing".
+            retry_after = utils.parse_retry_after(retry_after),
+            -- Kept even when unparseable: the backoff tells an unreadable wait from none.
             retry_after_raw = retry_after,
             -- This text is only ever SEEN once retrying is over (budget
             -- exhausted, or a mutating request that does not retry), so it

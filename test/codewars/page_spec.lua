@@ -7,6 +7,17 @@ describe("api.page", function()
     package.loaded["codewars.api.headers"] = { get = function() return {} end }
     package.loaded["codewars.api.page"] = nil
     local page = require("codewars.api.page")
+    -- The fetch tests stub this out to keep waits short; keep the real one to read the wait.
+    local real_retry_delay_ms = require("codewars.api.utils").retry_delay_ms
+
+    local DAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+    local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+    --- An IMF-fixdate for `at`. Built by hand: os.date's names follow the locale.
+    local function http_date(at)
+        local t = os.date("!*t", at)
+        return ("%s, %02d %s %04d %02d:%02d:%02d GMT"):format(
+            DAYS[t.wday], t.day, MONTHS[t.month], t.year, t.hour, t.min, t.sec)
+    end
 
     describe("parse_header_dump", function()
         it("takes the LAST hop's status after redirects, and its Retry-After", function()
@@ -41,9 +52,18 @@ describe("api.page", function()
             local e = page.status_err(429, "30")
             assert.is_true(e.rate_limited)
             assert.are.equal(30, e.retry_after)
-            local d = page.status_err(429, "Wed, 21 Oct 2026 07:28:00 GMT")
+            local d = page.status_err(429, "next Tuesday, probably")
             assert.is_nil(d.retry_after)
-            assert.are.equal("Wed, 21 Oct 2026 07:28:00 GMT", d.retry_after_raw)
+            assert.are.equal("next Tuesday, probably", d.retry_after_raw)
+        end)
+
+        -- Same header as the JSON transport: a date is seconds from now; the raw value is kept.
+        it("reads a Retry-After given as an HTTP-date, as seconds from now", function()
+            local raw = http_date(os.time() + 30)
+            local e = page.status_err(429, raw)
+            assert.is_not_nil(e.retry_after, "the date was not read")
+            assert.is_true(e.retry_after >= 28 and e.retry_after <= 30, e.retry_after)
+            assert.are.equal(raw, e.retry_after_raw)
         end)
 
         it("classifies 401/403 as auth, others by status", function()
@@ -126,6 +146,27 @@ describe("api.page", function()
             assert.is_nil(err)
             assert.are.equal("<html>ok</html>", body)
             assert.are.equal(3, runs)
+        end)
+
+        -- Nothing sleeps: this asserts the computed delay, not elapsed time.
+        it("waits as long as an HTTP-date Retry-After says before retrying a 429", function()
+            local delays = {}
+            require("codewars.api.utils").retry_delay_ms = function(err, attempt)
+                delays[#delays + 1] = real_retry_delay_ms(err, attempt)
+                return 1
+            end
+            local retry_after = http_date(os.time() + 30)
+            script = function(n)
+                if n == 1 then
+                    return { headers = "HTTP/2 429\r\nRetry-After: " .. retry_after .. "\r\n\r\n", body = "" }
+                end
+                return { headers = "HTTP/2 200\r\n\r\n", body = "<html>ok</html>" }
+            end
+            local body, err = drive()
+            assert.is_nil(err)
+            assert.are.equal("<html>ok</html>", body)
+            assert.are.equal(1, #delays)
+            assert.is_true(delays[1] >= 28000 and delays[1] <= 30000, delays[1])
         end)
 
         it("gives up on a persistent 429 with a rate_limited error, never an empty page", function()

@@ -136,6 +136,16 @@ local function differs(old, new)
     return false
 end
 
+--- Warn once when a run is over about result blocks the search parser could not read.
+---@param count integer
+local function warn_dropped(count)
+    if count <= 0 then return end
+    require("codewars.logger").warn(
+        ("%d kata on the search pages could not be read and were left out"
+            .. " — the site markup may have changed"):format(count)
+    )
+end
+
 local checking = false
 
 --- Merge in the kata published or changed since the list was built or last
@@ -143,7 +153,7 @@ local checking = false
 ---
 --- A full build is ~290 pages under a rate limit -- minutes -- to pick up
 --- what is usually a handful of new kata. Codewars' "Newest" listing puts
---- them first, so this reads it until a page brings nothing the list does
+--- them first, so this reads it until a page, read whole, brings nothing the list does
 --- not already have. Kept to CHECK_MAX_PAGES; the full rebuild every
 --- `cache.update_interval` still catches anything this misses.
 ---@return boolean started false when not due, already running, or there is no list
@@ -163,12 +173,13 @@ function problemlist.check_for_new()
         local key = item.id or item.slug
         if key then index[key] = i end
     end
-    local added, updated = 0, 0
+    local added, updated, dropped = 0, 0, 0
 
     --- Only a look that finished is recorded: a failed one leaves
-    --- checked_at alone, so the next open tries again.
+    --- checked_at alone, so the next open tries again. So does one that dropped blocks.
     local function finish(ok)
         checking = false
+        warn_dropped(dropped)
         if not ok then return end
         -- A full build that ran meanwhile wrote a newer list; this one,
         -- read before it, would put the old one back.
@@ -176,7 +187,11 @@ function problemlist.check_for_new()
         if build or type(current) ~= "table" or current.timestamp ~= data.timestamp then
             return
         end
-        data.checked_at = os.time()
+        if dropped == 0 then
+            data.checked_at = os.time()
+        elseif added + updated == 0 then
+            return
+        end
         cache_utils.write_json(cache_file(), data)
         if added + updated > 0 then
             log.info(("Kata list: %d new, %d updated"):format(added, updated))
@@ -187,11 +202,17 @@ function problemlist.check_for_new()
         search.fetch_page({
             language = "", -- every kata, as the full build has
             order = "sort_date+desc", -- the site's "Newest"
-        }, page, function(results, has_more, err)
+        }, page, function(results, has_more, err, page_dropped)
             if err then
                 log.debug("kata list check failed: " .. tostring(err.msg))
+                -- Warn: the markup moved, so every look fails until it is fixed.
+                if err.drift then
+                    log.warn("Kata list check stopped: the search results could not be read"
+                        .. " — the site markup may have changed. Nothing was merged.")
+                end
                 return finish(false)
             end
+            dropped = dropped + (page_dropped or 0)
             local changes = 0
             for _, entry in ipairs(results or {}) do
                 local key = entry.id or entry.slug
@@ -205,7 +226,10 @@ function problemlist.check_for_new()
                     updated, changes = updated + 1, changes + 1
                 end
             end
-            if changes == 0 or not has_more or page + 1 >= problemlist.CHECK_MAX_PAGES then
+            -- "Nothing new" ends the look only for a page read whole: one that dropped
+            -- blocks may have dropped the new kata.
+            local nothing_new = changes == 0 and (page_dropped or 0) == 0
+            if nothing_new or not has_more or page + 1 >= problemlist.CHECK_MAX_PAGES then
                 return finish(true)
             end
             vim.defer_fn(function() look(page + 1) end, problemlist.PACE_MS)
@@ -281,6 +305,12 @@ function problemlist.update(opts, cb)
     local checkpoint = load_checkpoint()
     local resumed = checkpoint ~= nil
     checkpoint = checkpoint or { timestamp = os.time(), ranks = {} }
+    -- Dropped-block count per checkpointed rank. A resume skips fetched ranks, so this is the
+    -- only record of what they left out; an older checkpoint has none.
+    if type(checkpoint.dropped) ~= "table" then checkpoint.dropped = {} end
+
+    -- Unreadable result blocks over the whole run, checkpointed ranks included.
+    local dropped = 0
 
     ---@type table<integer, table[]>
     local by_rank = {}
@@ -289,6 +319,8 @@ function problemlist.update(opts, cb)
         if type(saved) == "table" and #saved > 0 then
             by_rank[rank] = saved
             this.found = this.found + #saved
+            local saved_dropped = tonumber(checkpoint.dropped[tostring(rank)]) or 0
+            if saved_dropped > 0 then dropped = dropped + math.floor(saved_dropped) end
         end
     end
 
@@ -301,6 +333,7 @@ function problemlist.update(opts, cb)
     -- by_rank until it finishes (by_rank is what resumes skip), but an
     -- aborted run still hands these to the caller.
     local current_rank, current_items = nil, nil ---@type integer?, table[]?
+    local current_dropped = 0
 
     local function collected()
         local all = {}
@@ -328,6 +361,8 @@ function problemlist.update(opts, cb)
     ---@param partial boolean? true when we stopped early and must not
     --- pretend the cache is complete
     local function finish(partial)
+        warn_dropped(dropped)
+
         -- Deduplicate
         local seen = {}
         local unique = {}
@@ -339,10 +374,8 @@ function problemlist.update(opts, cb)
             end
         end
 
-        -- Every page parsing as empty is not "Codewars has no kata": it is
-        -- search-markup drift or an interstitial page that returned 200.
-        -- fetch_page reports parse-empty as an ordinary end of rank, so this
-        -- is the one place that can tell the two apart.
+        -- Every page empty is not "Codewars has no kata": it is an interstitial 200, or markup
+        -- that left no result blocks. A page whose blocks all fail to parse aborts earlier as drift.
         if not partial and #unique == 0 then
             spinner:error("No kata found on any search page — the site markup may have changed; cache left as is.")
             partial = true
@@ -396,6 +429,7 @@ function problemlist.update(opts, cb)
             if #items > 0 then
                 by_rank[rank] = items
                 checkpoint.ranks[tostring(rank)] = items
+                checkpoint.dropped[tostring(rank)] = current_dropped
                 cache_utils.write_json(checkpoint_file(), checkpoint)
             end
             return fetch_rank()
@@ -415,7 +449,7 @@ function problemlist.update(opts, cb)
                 -- Once the run has given up, a 5xx retry still in flight
                 -- inside the request layer must not keep going.
                 cancelled = function() return aborted end,
-            }, page, function(results, has_more, err)
+            }, page, function(results, has_more, err, page_dropped)
                 if aborted then return end
 
                 -- Every abort is partial: writing here would stamp a
@@ -443,6 +477,12 @@ function problemlist.update(opts, cb)
                     end, wait)
                 end
 
+                if err and err.drift then
+                    -- Blocks present but none readable: not the end of the rank, and
+                    -- retrying cannot help.
+                    return abort(("Search results could not be read after %d kata — the site markup may have changed; cache left as is."):format(this.found))
+                end
+
                 if err then
                     -- Any other failure (5xx after retries, curl could
                     -- not connect, unexpected status). Treating it as an
@@ -453,6 +493,8 @@ function problemlist.update(opts, cb)
                 end
 
                 cooldowns = 0
+                dropped = dropped + (page_dropped or 0)
+                current_dropped = current_dropped + (page_dropped or 0)
 
                 if results and #results > 0 then
                     vim.list_extend(items, results)
@@ -481,7 +523,7 @@ function problemlist.update(opts, cb)
         if rank_idx > #ranks then
             return finish()
         end
-        current_rank, current_items = ranks[rank_idx], {}
+        current_rank, current_items, current_dropped = ranks[rank_idx], {}, 0
         fetch_page(current_rank, 0, current_items)
     end
 

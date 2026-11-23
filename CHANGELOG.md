@@ -186,6 +186,34 @@ All notable changes to codewars.nvim are documented here.
   stop for the rest of the session, silently.
 - The menu no longer jumps as the stats arrive: the row is reserved from the
   first draw rather than appearing and pushing the block down.
+- A rate limit that says when to retry as a date (`Retry-After: Wed, 21 Oct
+  2026 07:28:00 GMT`) is now honoured like one that says it in seconds,
+  instead of always waiting the longest backoff. The two obsolete date forms
+  are read too (#26).
+- A search page whose results Codewars marked up a little differently is no
+  longer dropped without a word. Kata links with more attributes, single
+  quotes, a trailing query or a title wrapped in a tag are read; a "Train"
+  button is never taken for the title. Each result is read from its own
+  element and no further, so a link in a footer after the last one is never
+  taken for its title, and its language list is no longer cut short; a result
+  with no closing tag counts as dropped. Only real tags count: text that
+  merely looks like one, in a comment, a script, a style, a textarea, a title,
+  a template, `xmp`, `iframe`, `noembed`, `noframes`, `noscript`, after a
+  `plaintext` or in a quoted attribute value, neither makes a result nor
+  changes where one ends, and a result is the element with `list-item-kata`
+  as a whole class name. A result's link and languages are read from the
+  parsed attributes of its tags, with character references decoded, so a
+  link written `href="&#47;kata&#47;..."` is read, and a `>` or an `href=`
+  inside another attribute's value cannot hide a title or stand in for one.
+  The reader is for Codewars' search markup, not a general HTML parser:
+  what it cannot read is dropped or, for a whole page, drift. A
+  page with results that all fail to
+  read now stops the kata list build (the cache is left as it was) and the
+  daily check with a warning that the markup may have changed, instead of
+  passing for the end of a rank. When only some are dropped, the rest are
+  kept and one warning says how many, counting those dropped before a build
+  was cut short and resumed; the daily check then reads on past that page and
+  looks again at the next open (#27).
 
 ## [0.3.4] - 2026-08-29
 

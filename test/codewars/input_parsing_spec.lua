@@ -170,6 +170,22 @@ describe("page.unescape", function()
         assert.equals("Tom’s <clan> & co ©", page.unescape("Tom&#8217;s &lt;clan&gt; &amp; co &#xA9;"))
         assert.equals("&bogus; &#; &#55296;", page.unescape("&bogus; &#; &#55296;"))
     end)
+
+    -- Characters a link is made of, which an attribute can spell as references.
+    it("decodes the numeric and named forms of the characters a link is made of", function()
+        assert.equals("/kata/a1?x=1#top", page.unescape("&#47;kata&#x2F;a1&quest;x&equals;1&num;top"))
+        assert.equals("/kata/a1", page.unescape("&sol;kata&sol;a1"))
+        assert.equals("it's a:b", page.unescape("it&apos;s a&colon;b"))
+        assert.equals("/k", page.unescape("&#x2f;k"))
+    end)
+
+    it("decodes once, so an escaped ampersand stays a reference", function()
+        assert.equals("&#47;kata", page.unescape("&amp;#47;kata"))
+    end)
+
+    it("leaves what it does not know as written", function()
+        assert.equals("a&unknown;b &sol c &#x110000; &#0;", page.unescape("a&unknown;b &sol c &#x110000; &#0;"))
+    end)
 end)
 
 describe("user.parse_literal", function()
