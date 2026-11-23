@@ -188,8 +188,17 @@ end
 --- Peek the queue head, popping past kata that are already completed.
 --- The queue only advances on dequeue, so without this a kata solved in a
 --- previous session stays at the head forever.
-local function resolve_head(category, strategy, language, finish)
+---
+--- `cancelled` is polled before each request so a caller can stop the run when the
+--- account changes (the self-heal's pop is irreversible). Cancelled: no kata, no error.
+---@param cancelled? fun(): boolean
+local function resolve_head(category, strategy, language, finish, cancelled)
     local advanced = 0
+
+    local function send(dequeue, cb)
+        if cancelled and cancelled() then return finish(nil, nil) end
+        request(category, strategy, language, dequeue, cb)
+    end
     -- Read the completed cache once per resolve, not once per iteration.
     -- `or {}` keeps it a table even when the cache is unavailable, so
     -- _is_completed never falls back to re-reading it per iteration.
@@ -204,7 +213,7 @@ local function resolve_head(category, strategy, language, finish)
     --- @param known table? a head already fetched, so we do not re-peek it
     local function peek_head(known)
         if known then return judge(known) end
-        request(category, strategy, language, false, judge)
+        send(false, judge)
     end
 
     --- Decide whether the head is servable or must be advanced past.
@@ -235,7 +244,7 @@ local function resolve_head(category, strategy, language, finish)
             log.debug(("focus: '%s' is already completed, advancing the %s queue"):format(
                 tostring(kata.slug), category))
             local dropped = kata
-            request(category, strategy, language, true, function(_, perr)
+            send(true, function(_, perr)
                 if perr then return finish(nil, perr) end
                 -- The pop's own response shape is not something we can rely
                 -- on (it may echo the old head or the new one), so verify by
@@ -243,7 +252,7 @@ local function resolve_head(category, strategy, language, finish)
                 -- not, the pop had no effect — keep popping and we would just
                 -- burn requests, or worse, destroy kata once it starts
                 -- working again. Stop and hand back what is there.
-                request(category, strategy, language, false, function(next_head, nerr)
+                send(false, function(next_head, nerr)
                     if nerr then return finish(nil, nerr) end
                     if same_kata(next_head, dropped) then
                         log.warn(("The %s queue did not advance past a kata you have already completed. Run :CW focus skip to move it manually."):format(category))
@@ -272,7 +281,8 @@ end
 ---@param category string plugin-internal key (see picker.focus_categories)
 ---@param language string
 ---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
-function trainer.next_kata(category, language, cb)
+---@param opts? { cancelled?: fun(): boolean } stops between requests; calls back with no kata and no error
+function trainer.next_kata(category, language, cb, opts)
     local strategy, serr = strategy_for(category)
     if serr then return cb(nil, serr) end
 
@@ -284,7 +294,7 @@ function trainer.next_kata(category, language, cb)
     resolve_head(category, strategy, language, function(kata, err)
         pending = false
         cb(kata, err)
-    end)
+    end, opts and opts.cancelled)
 end
 
 --- Skip the current kata: pop the queue, then resolve the new head. The
@@ -293,7 +303,8 @@ end
 ---@param category string
 ---@param language string
 ---@param cb fun(kata: { slug: string, id: string? }?, err: cw.err?)
-function trainer.skip(category, language, cb)
+---@param opts? { cancelled?: fun(): boolean } as for next_kata; first polled after the pop
+function trainer.skip(category, language, cb, opts)
     local strategy, serr = strategy_for(category)
     if serr then return cb(nil, serr) end
 
@@ -310,7 +321,7 @@ function trainer.skip(category, language, cb)
         resolve_head(category, strategy, language, function(kata, rerr)
             pending = false
             cb(kata, rerr)
-        end)
+        end, opts and opts.cancelled)
     end)
 end
 

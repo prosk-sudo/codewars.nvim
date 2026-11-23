@@ -3,6 +3,9 @@ local cache_utils = require("codewars.cache.utils")
 
 local cached_cookie = nil
 
+-- 384 is 0600 (Lua has no octal literals).
+local OWNER_ONLY = 384
+
 ---@class cw.cache.Cookie
 ---@field csrf_token string
 ---@field session_id string
@@ -150,6 +153,44 @@ local function tell_menu()
     if ok and menu then pcall(menu.session_changed) end
 end
 
+--- Write the cookie (a live session) readable by its owner only: a new exclusive
+--- file, fchmod'd (immune to the umask) BEFORE any data, then renamed over the old.
+--- The existing file is never opened, because:
+---  - open's mode applies only on creation, so a world-readable file keeps its mode;
+---  - a read-only file cannot be opened, and write mode truncates before a failure;
+---  - check-then-open races other processes.
+--- Raises on failure, with the old cookie intact and the new file removed.
+---@param path string
+---@param str string
+local function write_private(path, str)
+    local uv = vim.uv or vim.loop
+    local tmp = ("%s.tmp.%d.%.0f"):format(path, uv.os_getpid(), uv.hrtime())
+    local fd = assert(uv.fs_open(tmp, "wx", OWNER_ONLY))
+    local ok, err = pcall(function()
+        assert(uv.fs_fchmod(fd, OWNER_ONLY))
+        -- fs_write can store fewer bytes than given, and a partial file renamed over
+        -- the cookie would lose the session. Loop; a zero-byte write is an error.
+        local written = 0
+        while written < #str do
+            local count = assert(uv.fs_write(fd, str:sub(written + 1), written))
+            assert(count > 0, "short write: could not store the whole cookie")
+            written = written + count
+        end
+    end)
+    -- Closed whether or not the writes worked, so a failure leaks nothing.
+    local closed, close_err = uv.fs_close(fd)
+    if ok then
+        ok, err = closed, close_err
+    end
+    if ok then
+        ok, err = uv.fs_rename(tmp, path)
+    end
+    if not ok then
+        uv.fs_unlink(tmp)
+        error(err, 0)
+    end
+end
+
 ---@param str string
 ---@return string? error
 function Cookie.set(str)
@@ -158,7 +199,7 @@ function Cookie.set(str)
         return cerr
     end
 
-    file():write(str, "w")
+    write_private(file():absolute(), str)
     cached_cookie = nil
     Cookie.identity_changed()
     tell_menu()

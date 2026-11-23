@@ -538,9 +538,8 @@ function KataEditor:adopt(model)
         model.code_challenge.description, self.versions)
 end
 
---- Lock or unlock every pane. Panes are locked while a save/publish is in
---- flight (the states codewars.kata.state marks `locked`), so the buffers
---- cannot drift from the payload already on its way to the server.
+--- Lock or unlock every pane. set_state locks them in the saving, publishing,
+--- unpublishing, deleting and deleted states, not during the language-ID readback.
 ---@param locked boolean
 function KataEditor:set_panes_locked(locked)
     ui_utils.set_bufs_modifiable(vim.tbl_values(self.bufs or {}), locked)
@@ -553,6 +552,47 @@ end
 function KataEditor:set_state(next_state)
     self.state = next_state
     self:set_panes_locked(kstate.is_locked(next_state))
+end
+
+--- Kata id -> locked state of an unpublish or delete in flight, so a workspace
+--- reopened for the same kata refuses a save the reply would cross.
+---@type table<string, string>
+local requests_in_flight = {}
+
+--- `kstate.step` that also honours an unpublish or delete in flight from another
+--- workspace of the same kata.
+---@param action string
+---@return string? next_state
+---@return string? err
+function KataEditor:_step(action)
+    return kstate.step(requests_in_flight[self.model.id] or self.state, action)
+end
+
+--- Apply a finished unpublish: the kata is a draft now.
+function KataEditor:_apply_unpublished()
+    self:set_state(kstate.step("unpublishing", "unpublish_done")) -- "draft"
+    self.model.published = false
+    self:refresh_title()
+end
+
+--- Apply a finished delete: lock for good. No snapshot or close, so a later close
+--- of unsaved text still goes through _unmount's stash-or-rescue.
+function KataEditor:_apply_deleted()
+    self:set_state(kstate.step("deleting", "delete_done")) -- "deleted"
+    self:refresh_title()
+end
+
+--- Apply an outcome to the sender (it may be closed, so directly) and every
+--- other open workspace of the kata. One still mounting misses it.
+---@param sender cw.ui.KataEditor
+---@param apply fun(ws: cw.ui.KataEditor)
+local function apply_outcome(sender, apply)
+    apply(sender)
+    for _, ws in ipairs(_Cw_state.kata_editors or {}) do
+        if ws ~= sender and ws.model.id == sender.model.id then
+            apply(ws)
+        end
+    end
 end
 
 --- Codewars requires a kata name to be free. The rejection names the field and
@@ -579,7 +619,7 @@ end
 --- Save the kata in place (`POST /kata/{id}`). Publication is unaffected, so
 --- the state machine reverts to whichever state we came from.
 function KataEditor:save()
-    local _, err = kstate.step(self.state, "save")
+    local _, err = self:_step("save")
     if err then
         return log.warn(err)
     end
@@ -671,7 +711,7 @@ end
 --- Publish the kata. Outward-facing and slow to undo, so it
 --- confirms first and refuses to publish content the server has not seen.
 function KataEditor:publish()
-    local _, err = kstate.step(self.state, "publish")
+    local _, err = self:_step("publish")
     if err then
         return log.warn(err)
     end
@@ -694,9 +734,15 @@ function KataEditor:publish()
     end)
 end
 
+--- Both callers wait on the user first, so a save, unpublish or delete may have
+--- started since publish() checked. Ask again.
 function KataEditor:_do_publish()
+    local in_flight, blocked = self:_step("publish")
+    if blocked then
+        return log.warn(blocked)
+    end
     local prev = self.state
-    self:set_state("publishing")
+    self:set_state(in_flight) -- "publishing"
     self:refresh_title()
     log.info("Publishing — Codewars runs your tests server-side, this can take a moment…")
 
@@ -728,20 +774,28 @@ end
 
 --- Un-publish (hide) a published kata. Reversible by publishing again.
 function KataEditor:unpublish()
-    local next_state, err = kstate.step(self.state, "unpublish")
+    local in_flight, err = self:_step("unpublish")
     if err then
         return log.warn(err)
     end
-    require("codewars.api.kata").unpublish(self.model.id, function(uerr)
+    -- Locked until the reply: a save now would restore `published` after it.
+    local prev = self.state
+    local id = self.model.id
+    self:set_state(in_flight) -- "unpublishing"
+    requests_in_flight[id] = in_flight
+    self:refresh_title()
+
+    require("codewars.api.kata").unpublish(id, function(uerr)
+        requests_in_flight[id] = nil -- whatever the outcome, the request is over
         if uerr then
             if uerr.auth then
                 require("codewars.cache.cookie").delete()
             end
+            self:set_state(prev) -- unpublish_failed REVERTs
+            self:refresh_title()
             return log.error("Unpublish failed — " .. (uerr.msg or "unknown error"))
         end
-        self:set_state(next_state) -- "draft"
-        self.model.published = false
-        self:refresh_title()
+        apply_outcome(self, function(ws) ws:_apply_unpublished() end)
         log.info("Unpublished — the kata is a draft again.")
     end)
 end
@@ -749,7 +803,7 @@ end
 --- Delete the kata. Irreversible, so it confirms with the kata's name and
 --- closes the workspace on success.
 function KataEditor:delete()
-    local _, err = kstate.step(self.state, "delete")
+    local _, err = self:_step("delete")
     if err then
         return log.warn(err)
     end
@@ -761,15 +815,32 @@ function KataEditor:delete()
         if not confirmed then
             return log.info("Delete cancelled.")
         end
-        require("codewars.api.kata").delete(self.model.id, function(derr)
+        -- Locked only now (the prompt may sit open); ask again in case a save started.
+        local in_flight, blocked = self:_step("delete")
+        if blocked then
+            return log.warn(blocked)
+        end
+        local prev = self.state
+        local id = self.model.id
+        self:set_state(in_flight) -- "deleting"
+        requests_in_flight[id] = in_flight
+        self:refresh_title()
+
+        require("codewars.api.kata").delete(id, function(derr)
+            requests_in_flight[id] = nil -- whatever the outcome, the request is over
             if derr then
+                self:set_state(prev) -- delete_failed REVERTs
                 if derr.auth then
                     require("codewars.cache.cookie").delete()
                 end
+                self:refresh_title()
                 return log.error("Delete failed — " .. (derr.msg or "unknown error"))
             end
+            -- Terminal: a pending rename prompt must find the kata gone.
+            apply_outcome(self, function(ws) ws:_apply_deleted() end)
             log.info("Kata deleted.")
-            self:snapshot() -- the kata is gone; nothing to warn about on close
+            -- Only the sender closes; snapshot so the close does not warn.
+            self:snapshot()
             self:close()
         end)
     end)

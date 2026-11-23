@@ -26,6 +26,9 @@ Kumite.__index = Kumite
 
 local INSERT_KEYS = { "i", "I", "a", "A", "o", "O", "c", "C", "s", "S", "R" }
 
+-- Tags the guard's own mappings, so clearing never removes a user's on the same keys.
+local GUARD_DESC = "codewars: read-only kumite"
+
 
 --- The always-visible key legend shown at the top of the description panel,
 --- adapted to the current state so users know what they can do right now.
@@ -161,19 +164,18 @@ function Kumite:close()
     end
 end
 
---- Apply the read-only insert-key guards for the current state. Cleared
---- when the workspace becomes editable (fork). Also binds `q` to close, so
---- a read-only view behaves like the other read-only panels.
+--- Apply the read-only insert-key guards and `q` to close; set_state clears them
+--- when the workspace becomes editable.
 function Kumite:apply_readonly_guard()
     local _, edit_err = kstate.step(self.state, "edit")
     for _, key in ipairs(INSERT_KEYS) do
         vim.keymap.set("n", key, function()
             log.warn(edit_err)
-        end, { buffer = self.bufnr, nowait = true })
+        end, { buffer = self.bufnr, nowait = true, desc = GUARD_DESC })
     end
     vim.keymap.set("n", "q", function()
         self:close()
-    end, { buffer = self.bufnr, nowait = true })
+    end, { buffer = self.bufnr, nowait = true, desc = GUARD_DESC })
 end
 
 --- Lock or unlock the editable buffers. Used while a save/publish is in
@@ -198,7 +200,11 @@ function Kumite:set_state(next_state)
     -- buffers writable while is_dirty() said "clean" -- edits typed after
     -- publishing were silently dropped on close.
     self:set_buffers_locked(not kstate.is_editable(next_state))
-    if not kstate.is_editable(next_state) and not kstate.is_locked(next_state) then
+    if kstate.is_editable(next_state) then
+        -- Unpublish and convert make it editable again; a leftover guard would make
+        -- i/a/o warn "read-only". Removes only the guard's own mappings.
+        self:clear_readonly_guard()
+    elseif not kstate.is_locked(next_state) then
         -- Entering a read-only resting state (from editing, or from an
         -- in-flight publish): put the insert-key guard back so a keypress
         -- explains itself instead of Vim's E21. Idempotent.
@@ -206,12 +212,19 @@ function Kumite:set_state(next_state)
     end
 end
 
+--- Remove only the guard's mappings (found by GUARD_DESC, not by key); frees `q`.
 function Kumite:clear_readonly_guard()
-    for _, key in ipairs(INSERT_KEYS) do
-        pcall(vim.keymap.del, "n", key, { buffer = self.bufnr })
+    -- Unmounted or closed: deleting by key without a buffer would hit the user's
+    -- GLOBAL mappings (leap and flash bind s and S).
+    local ok, maps = pcall(api.nvim_buf_get_keymap, self.bufnr, "n")
+    if not ok then
+        return
     end
-    -- Editing needs `q` back as the normal macro-record key.
-    pcall(vim.keymap.del, "n", "q", { buffer = self.bufnr })
+    for _, map in ipairs(maps) do
+        if map.desc == GUARD_DESC then
+            pcall(vim.keymap.del, "n", map.lhs, { buffer = self.bufnr })
+        end
+    end
 end
 
 --- Fork this kumite into an editable local copy. Pure local
@@ -314,9 +327,7 @@ function Kumite:fork()
     end
 
     self.parent_id = self.snippet.id
-    self:set_state(next_state)
-
-    self:clear_readonly_guard()
+    self:set_state(next_state) -- also lifts the read-only guard
     ui_utils.buf_set_opts(self.bufnr, { modifiable = true })
     if self.fixture_split and self.fixture_split.bufnr then
         ui_utils.buf_set_opts(self.fixture_split.bufnr, { modifiable = true })
@@ -844,17 +855,26 @@ function Kumite:_unmount()
     end
 
     vim.schedule(function()
+        local rescue_label = rescued
+            and ("RESCUED kumite %s"):format(tostring(self.snippet.id):sub(1, 6)) or nil
         if self.console then
             self.console:unmount()
         end
         if self.fixture_split then
-            self.fixture_split:unmount()
+            if rescue_label then
+                -- unmount() would force-delete the typed fixture text: hide the window
+                -- and hand over the buffer. pcall: a stuck window must not stop it.
+                local fixture_bufnr = self.fixture_split.bufnr
+                pcall(self.fixture_split.hide, self.fixture_split)
+                ui_utils.rescue_or_delete(fixture_bufnr, rescue_label .. " fixture")
+            else
+                self.fixture_split:unmount()
+            end
         end
         if self.description then
             self.description:unmount()
         end
-        ui_utils.rescue_or_delete(self.bufnr, rescued
-            and ("RESCUED kumite %s"):format(tostring(self.snippet.id):sub(1, 6)) or nil)
+        ui_utils.rescue_or_delete(self.bufnr, rescue_label)
         _Cw_state.kumite = vim.tbl_filter(function(ws)
             return ws.bufnr ~= self.bufnr
         end, _Cw_state.kumite or {})

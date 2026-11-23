@@ -67,7 +67,37 @@ All notable changes to codewars.nvim are documented here.
   cached identity, refresh your auto-detected language and notice an expired
   session.
 
+### Security
+- The saved session cookie is now readable and writable only by you (0600).
+  It is written to a new private file and renamed into place, so a failed
+  save never leaves a readable copy behind or destroys the session you had.
+  An older world-readable cookie is replaced the next time you sign in; run
+  `chmod 600 ~/.cache/nvim/codewars/cookie` to fix yours right away.
+- The unsaved-draft stash refuses any id that is not a Codewars id (24 hex
+  characters) or a new kumite draft's `local-<digits>` id, so a malformed
+  server reply can no longer make a dirty close write outside the cache
+  directory. When a stash is refused, every buffer (code, fixture, kata
+  panes) is kept as a rescued buffer that `:write` really saves and that
+  Vim will not drop without `:bd!`.
+- `:CW open` refuses a kata whose slug holds anything but letters, digits,
+  `-` and `_`, on every platform, and its fallback for Neovim older than 0.10
+  passes the URL as an argument instead of through the shell.
+
 ### Fixed
+- After `:CW kumite unpublish` or `:CW kumite convert` turns a published
+  kumite back into a draft, `i`/`a`/`o` and `q` work again instead of still
+  warning that it is read-only. Your own buffer-local mappings of those keys
+  are left alone.
+- Signing in as a different account while `:CW focus` or `:CW focus skip` is
+  fetching no longer lets that fetch carry on under the new account (it could
+  pop the new account's queue) or become the remembered focus.
+- The kata editor now locks while an unpublish or delete is in flight, as it
+  already did for a save or publish, so a save can no longer cross an
+  unpublish and leave the editor showing Published for a kata that is a
+  draft. Other open editors of the same kata get the result too; after a
+  delete they stay open, read-only and marked Deleted, so unsaved text is
+  not lost. An editor that finishes opening after the reply arrives still
+  shows the state it loaded with until you reopen it.
 - Kata names in the list no longer show HTML codes: `Python&#39;s` now reads
   `Python's`, `&amp;` reads `&`. A list cached before this keeps the old
   names until its next full rebuild; the daily check corrects the ones it

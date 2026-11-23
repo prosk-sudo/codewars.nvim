@@ -593,4 +593,133 @@ describe("api.trainer", function()
             assert.are.equal(HEX, got.slug)
         end)
     end)
+
+    -- After forget_focus, follow-up requests go out under the NEW account and the
+    -- self-heal's pop is irreversible, so `cancelled` must stop the run between them.
+    describe("cancellation between requests", function()
+        -- Answer one parked request. Consumed entries are blanked so the drain below
+        -- frees only what a failing test left in flight (else the lock sticks).
+        local function reply(i, res)
+            local cb = held[i]
+            held[i] = false
+            cb(res)
+        end
+
+        after_each(function()
+            hold = false
+            for _, cb in ipairs(held) do
+                if cb then cb(nil, { msg = "drained" }) end
+            end
+        end)
+
+        local function dequeues()
+            local n = 0
+            for _, c in ipairs(get_calls) do
+                if c.endpoint:match("dequeue=true") then n = n + 1 end
+            end
+            return n
+        end
+
+        it("next_kata sends no self-heal pop once cancelled", function()
+            completed["solved-one"] = true
+            local stop = false
+            hold = true
+            local called, got, got_err = false, nil, nil
+            trainer.next_kata("fundamentals", "python", function(kata, err)
+                called, got, got_err = true, kata, err
+            end, { cancelled = function() return stop end })
+
+            stop = true -- the account changed while the peek was out
+            reply(1, { success = true, slug = "solved-one" })
+
+            assert.are.equal(1, #get_calls, "a follow-up request went out under the new account")
+            assert.are.equal(0, dequeues())
+            assert.is_true(called)
+            assert.is_nil(got)
+            assert.is_nil(got_err)
+        end)
+
+        it("next_kata sends no verifying re-peek once cancelled after the pop", function()
+            completed["solved-one"] = true
+            local stop = false
+            hold = true
+            local called, got, got_err = false, nil, nil
+            trainer.next_kata("fundamentals", "python", function(kata, err)
+                called, got, got_err = true, kata, err
+            end, { cancelled = function() return stop end })
+
+            reply(1, { success = true, slug = "solved-one" }) -- peek: solved, so pop
+            assert.are.equal(1, dequeues())
+            stop = true
+            reply(2, { success = true, slug = "solved-one" }) -- the pop's reply
+
+            assert.are.equal(2, #get_calls)
+            assert.is_true(called)
+            assert.is_nil(got)
+            assert.is_nil(got_err)
+        end)
+
+        it("next_kata releases the in-flight lock when cancelled", function()
+            completed["solved-one"] = true
+            local stop = false
+            hold = true
+            trainer.next_kata("fundamentals", "python", function() end,
+                { cancelled = function() return stop end })
+            stop = true
+            reply(1, { success = true, slug = "solved-one" })
+
+            hold = false
+            get_responses = { { res = { success = true, slug = "fresh-one" } } }
+            local got
+            trainer.next_kata("fundamentals", "python", function(kata) got = kata end)
+            assert.are.equal("fresh-one", got.slug)
+        end)
+
+        it("skip sends no follow-up peek once cancelled after the pop", function()
+            local stop = false
+            hold = true
+            local called, got, got_err = false, nil, nil
+            trainer.skip("rank_up", "python", function(kata, err)
+                called, got, got_err = true, kata, err
+            end, { cancelled = function() return stop end })
+
+            stop = true
+            reply(1, { success = true, slug = "popped-one" })
+
+            assert.are.equal(1, #get_calls)
+            assert.is_true(called)
+            assert.is_nil(got)
+            assert.is_nil(got_err)
+        end)
+
+        it("skip sends no self-heal pop once cancelled during the follow-up", function()
+            completed["solved-one"] = true
+            local stop = false
+            hold = true
+            trainer.skip("rank_up", "python", function() end,
+                { cancelled = function() return stop end })
+
+            reply(1, { success = true, slug = "popped-one" }) -- the skip's own pop
+            assert.are.equal(2, #get_calls)
+            stop = true
+            reply(2, { success = true, slug = "solved-one" }) -- head is solved
+
+            assert.are.equal(2, #get_calls, "a self-heal pop went out under the new account")
+            assert.are.equal(1, dequeues()) -- only the skip's own pop
+        end)
+
+        it("a predicate that never fires leaves the self-heal unchanged", function()
+            completed["solved-one"] = true
+            get_responses = {
+                { res = { success = true, slug = "solved-one" } },
+                { res = { success = true, slug = "solved-one" } },
+                { res = { success = true, slug = "fresh-one" } },
+            }
+            local got
+            trainer.next_kata("fundamentals", "python", function(kata) got = kata end,
+                { cancelled = function() return false end })
+            assert.are.equal("fresh-one", got.slug)
+            assert.are.equal(3, #get_calls)
+        end)
+    end)
 end)

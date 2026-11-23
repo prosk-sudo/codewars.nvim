@@ -800,10 +800,24 @@ end
 -- focus pointer itself.
 local _last_focus = nil ---@type { lang: string, category: string, slug: string?, kata: table? }?
 
+-- Bumped by forget_focus: a fetch in flight when the account changes drops its
+-- reply (like the picker's _kumite_gen).
+local _focus_gen = 0
+
+--- True once forget_focus has run since `gen`. The trainer polls it between
+--- requests, since later ones go out under the new account.
+---@param gen integer
+---@return fun(): boolean
+local function focus_cancelled(gen)
+    return function() return gen ~= _focus_gen end
+end
+
 --- Forget the remembered focus kata. Called on an identity change: the
 --- queue it came from belongs to the previous account, so a `:CW focus
 --- skip` after signing in as someone else must not act on it.
+--- A fetch still in flight is dropped too.
 function cmd.forget_focus()
+    _focus_gen = _focus_gen + 1
     _last_focus = nil
 end
 
@@ -885,17 +899,19 @@ local function focus_run(lang, category, on_mounted)
         return log.warn("Already fetching a focus kata — try again in a moment.")
     end
     _focus_inflight = true
+    local gen = _focus_gen
 
     log.info(("Fetching the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").next_kata(category, lang, function(kata, err)
         _focus_inflight = false
+        if gen ~= _focus_gen then return end
         if err then return log.err(err) end
         -- Only now is this the current focus. Recording it earlier is what
         -- let a rejected second request point a later skip at the wrong queue.
         local lf = { lang = lang, category = category }
         _last_focus = lf
         mount_focus_kata(lf, lang, kata, on_mounted)
-    end)
+    end, { cancelled = focus_cancelled(gen) })
 end
 
 --- Validate positional args for :CW focus.
@@ -975,15 +991,17 @@ function cmd.focus_skip()
         return log.warn("Already fetching a focus kata — try again in a moment.")
     end
     _focus_inflight = true
+    local gen = _focus_gen
 
     log.info(("Skipping the current '%s' kata for %s..."):format(category, lang))
     require("codewars.api.trainer").skip(category, lang, function(kata, err)
         _focus_inflight = false
+        if gen ~= _focus_gen then return end
         if err then return log.err(err) end
         local lf = { lang = lang, category = category }
         _last_focus = lf
         mount_focus_kata(lf, lang, kata, close_prev)
-    end)
+    end, { cancelled = focus_cancelled(gen) })
 end
 
 --- Called by the runner after a kata is finalized. The trainer queue only
@@ -1157,6 +1175,10 @@ function cmd.template_status()
     log.info(table.concat(parts, " "))
 end
 
+-- Codewars slugs are letters, digits, - and _. The slug reaches an OS opener (cmd.exe
+-- acts on & | ^ % even inside one argv element), so others are refused, not escaped.
+local OPEN_SLUG_PATTERN = "^[A-Za-z0-9_%-]+$"
+
 function cmd.open()
     local utils = require("codewars.utils")
     local k = utils.curr_kata()
@@ -1164,18 +1186,28 @@ function cmd.open()
         return
     end
 
-    local url = "https://www.codewars.com/kata/" .. k.slug
+    local slug = k.slug
+    if type(slug) ~= "string" or not slug:match(OPEN_SLUG_PATTERN) then
+        return log.error(
+            ("Won't open this kata: its slug %q has characters other than letters, digits, - and _"):format(tostring(slug))
+        )
+    end
+
+    local url = "https://www.codewars.com/kata/" .. slug
     if vim.ui.open then
         vim.ui.open(url)
     else
+        -- An argv table, never a shell string.
         local os_name = vim.loop.os_uname().sysname
         local open_cmd
         if os_name == "Darwin" then
-            open_cmd = ("open '%s'"):format(url)
+            open_cmd = { "open", url }
         elseif os_name == "Linux" then
-            open_cmd = ("xdg-open '%s'"):format(url)
+            open_cmd = { "xdg-open", url }
         else
-            open_cmd = ('start "" "%s"'):format(url)
+            -- cmd.exe's `start` reads & and | as separators even from argv; the slug
+            -- check keeps them out. "" is the window title start would take from the URL.
+            open_cmd = { "cmd.exe", "/c", "start", "", url }
         end
         vim.fn.jobstart(open_cmd, { detach = true })
     end

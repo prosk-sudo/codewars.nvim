@@ -131,24 +131,28 @@ describe("cache.kumite_stash", function()
         for k in pairs(store) do store[k] = nil end
     end)
 
+    -- The stash takes 24-hex Codewars ids (or local-<ms> ones).
+    local ID = "5a1b2c3d4e5f60718293a4b5"
+    local OTHER_ID = "6b2c3d4e5f60718293a4b5c6"
+
     it("saves an entry keyed by id, stamping saved_at (UTC ISO)", function()
-        local path = stash.save({ id = "abc", title = "T", language = "python",
+        local path = stash.save({ id = ID, title = "T", language = "python",
             parent_id = nil, code = "x", fixture = "y" })
-        assert.are.equal("/cache/kumite-stash-abc.json", path)
-        local got = stash.get("abc")
+        assert.are.equal("/cache/kumite-stash-" .. ID .. ".json", path)
+        local got = stash.get(ID)
         assert.are.equal("x", got.code)
         assert.truthy(got.saved_at:match("^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$"))
     end)
 
     it("returns nil for a missing stash", function()
-        assert.is_nil(stash.get("nope"))
+        assert.is_nil(stash.get(OTHER_ID))
     end)
 
     it("deletes an existing stash and reports absence", function()
-        stash.save({ id = "gone", title = "T", language = "python", code = "c", fixture = "f" })
-        assert.is_true(stash.delete("gone"))
-        assert.is_nil(stash.get("gone"))
-        assert.is_false(stash.delete("gone"))
+        stash.save({ id = ID, title = "T", language = "python", code = "c", fixture = "f" })
+        assert.is_true(stash.delete(ID))
+        assert.is_nil(stash.get(ID))
+        assert.is_false(stash.delete(ID))
     end)
 end)
 
