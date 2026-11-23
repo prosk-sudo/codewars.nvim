@@ -137,12 +137,7 @@ function M.check()
 
     local session_dir = config.storage.cache and config.storage.cache:joinpath("sessions")
     if session_dir and session_dir:exists() then
-        local count = 0
-        local scan = vim.loop.fs_scandir(session_dir:absolute())
-        if scan then
-            while vim.loop.fs_scandir_next(scan) do count = count + 1 end
-        end
-        ok(("%d session cache files"):format(count))
+        ok(("%d session cache files"):format(require("codewars.cache.session").count()))
     else
         ok("No session cache files")
     end

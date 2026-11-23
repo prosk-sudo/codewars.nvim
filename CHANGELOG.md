@@ -186,6 +186,14 @@ All notable changes to codewars.nvim are documented here.
   stop for the rest of the session, silently.
 - The menu no longer jumps as the stats arrive: the row is reserved from the
   first draw rather than appearing and pushing the block down.
+- A cache write that fails partway now keeps the previous cache; the file
+  itself, with its owner, permissions and read-only state, is never swapped out.
+  A cache that cannot be backed up first, because the directory cannot be
+  written or the disk is full, is left as it is and the write is reported as
+  failed, not done without a backup. A cache you deleted is never brought back
+  from a backup left beside it. This guards against failed writes and
+  crashes, and assumes the cache directory is yours: anyone who can write there
+  can already change your caches.
 
 ## [0.3.4] - 2026-08-29
 
