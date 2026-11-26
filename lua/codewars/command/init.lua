@@ -59,7 +59,7 @@ function cmd._help_lines()
         { "next [lang] [kyu]", "Next unsolved kata matching your list filters" },
         { "focus [lang] [category]", "Choose Today's Focus (re-run returns the same kata)" },
         { "focus skip", "Skip the current focus kata and open the next" },
-        { "recent",         "Reopen the kata you opened last" },
+        { "recent [lang]",  "Reopen the kata you opened last" },
         { "test",           "Quick test with example fixtures" },
         { "attempt",        "Full attempt with all tests" },
         { "submit",         "Finalize solution (after passing attempt)" },
@@ -690,18 +690,29 @@ local function parse_kyu(values)
     return ranks
 end
 
---- Back into the kata you opened last, in the language you last used. One
---- that is still open is brought forward rather than fetched again.
-function cmd.recent()
+--- Back into the kata you opened last, in the language you last used, or in
+--- `[lang]` when given. One that is still open is brought forward rather than
+--- fetched again.
+---@param options? table
+function cmd.recent(options)
+    local utils = require("codewars.utils")
+    local lang_arg = options and options._positional and options._positional[1]
+    if lang_arg and not utils.resolve_lang_arg(lang_arg) then
+        return
+    end
     local last = require("codewars.cache.recent").get()[1]
     if not last then
         return log.info("No recent kata yet. Open one with :CW train, :CW list or :CW focus.")
     end
-    local tabp = require("codewars.utils").detect_duplicate_kata(last.slug, last.lang)
+    local lang = lang_arg or last.lang
+    local tabp = utils.detect_duplicate_kata(last.slug, lang)
     if tabp then
         return vim.api.nvim_set_current_tabpage(tabp)
     end
-    require("codewars-ui.kata"):new(last.slug, last.lang):mount()
+    local k = require("codewars-ui.kata"):new(last.slug, lang)
+    -- An explicit language the kata lacks is an error, not a silent fallback.
+    k._lang_explicit = lang_arg ~= nil
+    k:mount()
 end
 
 --- Open a random kata from the cached problem list (client-side).
@@ -1595,7 +1606,10 @@ cmd.commands = {
     info = { cmd.info },
     stats = { cmd.stats },
     completed = { cmd.completed },
-    recent = { cmd.recent },
+    recent = {
+        cmd.recent,
+        _positional_complete = { lang_slugs },
+    },
     list = {
         cmd.list,
         _args = arguments.list,
