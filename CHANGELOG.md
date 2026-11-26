@@ -50,7 +50,8 @@ All notable changes to codewars.nvim are documented here.
 - `:CW recent` (also Menu > Katas > Reopen Last Kata, `r`) takes you straight
   back into the kata you opened last, in the language you last used; one that
   is still open in a tab is brought forward. Opens are recorded locally (last
-  50, per kata and language).
+  50, per kata and language). `:CW recent <lang>` reopens it in another
+  language instead, without changing your default language.
 
 ### Changed
 - `:CW completed` lists your most recently completed kata first. A new

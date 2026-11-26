@@ -11,7 +11,11 @@ describe(":CW recent", function()
         package.loaded["codewars.cache.recent"] = { get = function() return history end }
         package.loaded["codewars-ui.kata"] = {
             new = function(_, slug, lang)
-                return { mount = function() mounted[#mounted + 1] = { slug = slug, lang = lang } end }
+                local k = {}
+                k.mount = function()
+                    mounted[#mounted + 1] = { slug = slug, lang = lang, explicit = k._lang_explicit or nil }
+                end
+                return k
             end,
         }
         package.loaded["codewars.logger"] = setmetatable({}, {
@@ -52,6 +56,39 @@ describe(":CW recent", function()
         cmd.recent()
         assert.are.equal(tab, vim.api.nvim_get_current_tabpage())
         assert.are.same({}, mounted)
+    end)
+
+    it("reopens it in the language given, which then must exist on the kata", function()
+        history = { { slug = "fake-binary", lang = "rust", opened_at = os.time() } }
+        cmd.recent({ _positional = { "python" } })
+        assert.are.same({ { slug = "fake-binary", lang = "python", explicit = true } }, mounted)
+    end)
+
+    it("brings forward the tab open in the language given", function()
+        history = { { slug = "fake-binary", lang = "rust", opened_at = os.time() } }
+        vim.cmd("tabnew")
+        local tab = vim.api.nvim_get_current_tabpage()
+        vim.cmd("tabfirst")
+        utils.detect_duplicate_kata = function(slug, lang)
+            if slug == "fake-binary" and lang == "python" then return tab end
+        end
+        cmd.recent({ _positional = { "python" } })
+        assert.are.equal(tab, vim.api.nvim_get_current_tabpage())
+        assert.are.same({}, mounted)
+    end)
+
+    it("refuses an unknown language without opening anything", function()
+        history = { { slug = "fake-binary", lang = "rust", opened_at = os.time() } }
+        local asked
+        utils.detect_duplicate_kata = function() asked = true end
+        cmd.recent({ _positional = { "klingon" } })
+        assert.are.same({}, mounted)
+        assert.is_nil(asked)
+    end)
+
+    it("completes a language after :CW recent", function()
+        local got = cmd.complete(nil, "CW recent py")
+        assert.truthy(vim.tbl_contains(got, "python"), vim.inspect(got))
     end)
 
     it("says so when you have not opened a kata yet", function()
