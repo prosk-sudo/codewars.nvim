@@ -305,7 +305,7 @@ local function build_pages(menu)
     return {
         signin = {
             { icon = I.signin,  label = "Sign In (Cookie)", sc = "i", fn = signin_fn },
-            { icon = I.exit,    label = "Exit",             sc = "qa", fn = function()
+            { icon = I.exit,    label = "Exit",             sc = "q", fn = function()
                 require("codewars").stop()
             end },
         },
@@ -329,7 +329,7 @@ local function build_pages(menu)
             { icon = I.cache,   label = "Cache",       sc = "c", expandable = true, fn = function()
                 menu:set_page("cache")
             end },
-            { icon = I.exit,    label = "Exit",        sc = "qa", fn = function()
+            { icon = I.exit,    label = "Exit",        sc = "q", fn = function()
                 require("codewars").stop()
             end },
         },

@@ -39,6 +39,10 @@ All notable changes to codewars.nvim are documented here.
   or `"select"` to choose; unset, telescope is used when it is installed.
 
 ### Changed
+- The dashboard's Exit is now `q` instead of `qa`, matching `q` in every
+  popup. `qa` made Neovim wait `timeoutlen` after `q`; pausing longer than
+  that ran the built-in `q`, so the `a` started recording a macro instead
+  of exiting.
 - `:CW submit` right after a passing `:CW attempt` now waits for Codewars to
   register the attempt and then submits on its own, instead of refusing with
   "Still registering your last attempt — try :CW submit again in a moment".
