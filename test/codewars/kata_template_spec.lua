@@ -110,4 +110,17 @@ describe("Kata template operations", function()
         assert.is_false(kata:retemplate("strip"))
         assert.are.equal("def f(): pass", text(kata))
     end)
+
+    it("writes into a storage.path subdirectory that does not exist yet", function()
+        cfg.user = {
+            templates = { solution = {} },
+            storage = { path = function(ctx) return ("%s/%s.%s"):format(ctx.lang, ctx.slug, ctx.ext) end },
+        }
+        local kata = open("def f(): pass")
+
+        local want = tmp .. "/python/" .. kata.slug .. ".py"
+        assert.are.equal(want, vim.api.nvim_buf_get_name(kata.bufnr))
+        assert.are.equal(1, vim.fn.filereadable(want))
+        assert.are.equal("def f(): pass", text(kata))
+    end)
 end)

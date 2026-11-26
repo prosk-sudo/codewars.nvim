@@ -118,7 +118,8 @@ function M.check()
     local lang_source = config.lang_persisted and "persisted" or "config/auto-detected"
     ok(("Default language: %s (%s)"):format(config.lang, lang_source))
     ok(("Username: %s"):format(config.user.username ~= "" and config.user.username or "(not yet detected)"))
-    ok(("Storage: %s"):format(config.storage.home and config.storage.home:absolute() or "not set"))
+    local custom_path = ((config.user or {}).storage or {}).path and " (custom storage.path)" or ""
+    ok(("Storage: %s%s"):format(config.storage.home and config.storage.home:absolute() or "not set", custom_path))
     ok(("Cache: %s"):format(config.storage.cache and config.storage.cache:absolute() or "not set"))
 
     -- Problem list cache

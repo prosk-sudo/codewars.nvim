@@ -41,7 +41,10 @@ end
 function config.setup()
     config.validate()
 
-    config.user.storage = vim.tbl_map(vim.fn.expand, config.user.storage)
+    -- Only the directory strings; storage.path is a function.
+    config.user.storage = vim.tbl_map(function(v)
+        return type(v) == "string" and vim.fn.expand(v) or v
+    end, config.user.storage)
 
     config.debug = config.user.debug or false
     config.lang = config.user.lang
@@ -94,6 +97,11 @@ function config.validate()
         config.user.lang = config.lang
     end
     local lang = config.user.lang or config.lang
+
+    local path_fn = (config.user.storage or {}).path
+    if path_fn ~= nil and type(path_fn) ~= "function" then
+        error(("storage.path must be a function, got %s"):format(type(path_fn)))
+    end
 
     local provider = (config.user.picker or {}).provider
     if provider ~= nil and provider ~= "telescope" and provider ~= "select" then

@@ -65,6 +65,20 @@ describe("config.validate", function()
         end
     end)
 
+    it("rejects a storage.path that is not a function", function()
+        config.apply({ storage = { path = "python/%s.py" } })
+        local ok, err = pcall(config.validate)
+        assert.is_false(ok)
+        assert.truthy(tostring(err):find("storage.path", 1, true))
+    end)
+
+    it("accepts a storage.path function", function()
+        config.apply({ storage = { path = function(ctx) return ctx.slug end } })
+        assert.has_no.errors(function()
+            config.validate()
+        end)
+    end)
+
     it("accepts the shipped default when the user sets no language", function()
         config.apply({})
         assert.has_no.errors(function()

@@ -30,6 +30,10 @@ All notable changes to codewars.nvim are documented here.
   shuffle it picks at random within the slice. `focus` remains Codewars' curated queue;
   this is your own slice of the catalogue. A successful submit now ends with
   `:CW next for another.`
+- `storage.path`: a function that decides where each solution file goes,
+  given the kata's language, slug and extension, as a path inside
+  `storage.home`. Use it to file solutions into per-language folders of a
+  repository. Unset, files stay `<slug>.<ext>` flat in `storage.home`.
 - telescope.nvim is now optional. Without it every picker goes through
   `vim.ui.select`, so the kata list, kumite browser and language menus open in
   whatever picker you registered globally (fzf-lua, snacks.picker, dressing,
